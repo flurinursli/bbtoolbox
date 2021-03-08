@@ -1,0 +1,48 @@
+# Input file for BBTOOLBOX v1.0
+# tmax is given by tmax of lf-seis
+# rupture and source are mutually exclusive
+
+# set coda parameters (coherency parameters are optional)
+coda fmax = 10.0, matching frequency = 1.0, bandwidth = 0.2, seed = 759203,  samples = 1, +
+# coherency
+model = 'lw', alpha = 2.5e-04, threshold = 0.2,
+
+# info for input low-frequency synthetics
+input folder = '/home/walter/Software/bbtolbox/test/lf', format = 'sw4', variable = 'velocity',
+
+# info for output hybrid synthetics
+output folder = '/home/walter/Software/bbtolbox/test/hf', variable = 'acceleration',
+
+# define (point-)source
+source x= , y=, z= , strike=, dip=, rake=, m0=1.0e+19, type='Brune', freq=6.28,
+
+# ... or extended source (incl. roughness and RIK parameters)
+# file format is determined from file extension
+rupture file = '/home/iwalter/Desktop/srcV2.0/run/banana/s1999HECTOR01JONS.fsp', x=, y=, type='Brune', azimuth=, roughness=-2.0,  +
+# rik
+corr=0.7, l0=0.3, aparam=1.0, vrfact=0.85, seed = 74921, samples = 1,
+
+# define velocity model(s)
+# first model
+layer vp = 1400, vs = 800,  rho = 2000,
+layer vp = 2400, vs = 1400, rho = 2400, z = 500,
+layer vp = 3800, vs = 2200, rho = 2700, z = 2100,
+
+# second model
+layer vp = 850,  vs = 500,  rho = 1800,
+layer vp = 2600, vs = 1500, rho = 2400, z = 350,
+layer vp = 4650, vs = 2700, rho = 2800, z = 1800,
+
+# define attenuation model(s) (all fields are mandatory)
+# first model
+attenuation gpp = [], gps = [], gss = [], b = [], frequency = {2,4; 4,8; 8,16; 16,32},
+
+# second model
+attenuation gpp = [], gps = [], gss = [], b = [], frequency = {2,4; 4,8; 8,16; 16,32},
+
+# set receiver-related fields (all fields are mandatory; "velocity" and "attenuation" are not if only one model available)
+rec x=, y=, z=, file ='', velocity = 1, attenuation = 1,
+rec x=, y=, z=, file= '', velocity = 1, attenuation = 2,
+
+# set optional parameters (all fields are optional)
+advanced pmw = 4, vrfact = 0.85, avecuts = 2, sheets = 0, waves = 2, verbose = 1,
