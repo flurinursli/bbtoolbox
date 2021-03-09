@@ -17,12 +17,14 @@ PROGRAM main
   !     ====                    =====================
   !   18/12/20                  original version
   !
+! mpirun -np 1 -x OMP_NUM_THREADS=8 --bind-to socket ./debug.exe deby.par
+
 
 #ifdef MPI
   USE, NON_INTRINSIC :: mpi
 #endif
-  USE, INTRINSIC     :: iso_fortran_env, only: compiler_version
   USE, NON_INTRINSIC :: m_precisions
+  USE, NON_INTRINSIC :: m_toolbox
   USE, NON_INTRINSIC :: m_logfile
 
   IMPLICIT none
@@ -44,7 +46,7 @@ PROGRAM main
   CALL mpi_comm_size(mpi_comm_world, ntasks, ierr)
 #endif
 
-  CALL watch_start(tictoc(1), mpi_comm_world)
+  CALL watch_start(tictoc(1))
 
   ! IF (world_rank .eq. 0) CALL set_log_module(ok, screen = .true.)
   CALL set_log_module(ok, screen = .true.)
@@ -67,153 +69,12 @@ PROGRAM main
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
   ! ------------------------------------------- broadcast relevant input parameters  -----------------------------------------------
+
 #ifdef MPI
   CALL broadcast()
 #endif
 
 END PROGRAM main
-
-! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
-!===================================================================================================================================
-! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
-
-SUBROUTINE echo_input()
-
-  ! Purpose:
-  !   to report input parameters to standard output.
-  !
-  ! Revisions:
-  !     Date                    Description of change
-  !     ====                    =====================
-  !   08/03/21                  original version
-  !
-
-  USE, NON_INTRINSIC :: m_precisions
-  USE, NON_INTRINSIC :: m_logfile
-
-  IMPLICIT none
-
-  !---------------------------------------------------------------------------------------------------------------------------------
-
-  CALL update_log('**********************************************************************************************')
-  CALL update_log('BBTOOLBOX v1.0')
-  CALL update_log('Compiled with ' + COMPILER_VERSION())
-  CALL update_log('----------------------------------------------------------------------------------------------')
-  CALL update_log('Summary of input parameters', blankline = .false.)
-
-
-
-
-  CALL update_log(num2char('Inversion mode', width=29, fill='.') + num2char(mode, width=17, justify='r') + '|')
-  IF (mode .eq. 2) &
-      CALL update_log(num2char('Receivers threshold', width=29, fill='.') + num2char(threshold), blankline = .false.)
-
-    CALL update_log(num2char('NA parameters', width=29, fill='.') + num2char('InitialModels', width=17, justify='r') + '|' +    &
-                    num2char('Models', width=13, justify='r') + '|' + num2char('Resampled', width=13, justify='r') + '|' +  &
-                    num2char('Iterations', width=13, justify='r') + '|' + num2char('Seed', width=13, justify='r') + '|',    &
-                    blankline = .false.)
-
-    CALL update_log(num2char('', width=29) + num2char(nsi, width=17, justify='r') + '|' +                           &
-                    num2char(ns, width=13, justify='r') + '|' + num2char(nr, width=13, justify='r') + '|' +         &
-                    num2char(itermax, width=13, justify='r') + '|' + num2char(seed, width=13, justify='r') + '|',   &
-                    blankline = .false.)
-
-    CALL update_log(num2char('Shear-wave speed', width=29, fill='.') + num2char(beta, notation='f', precision = 3, width=17, &
-                    justify='r') + '|', blankline = .false.)
-    CALL update_log(num2char('Frequency band', width=29, fill='.') + num2char('low (Hz)', width=17, justify = 'r') + '|' +   &
-                    num2char('high (Hz)', width=13, justify = 'r') + '|', blankline = .false.)
-    DO i = 1, SIZE(fbands, 2)
-      CALL update_log(num2char('', width=29) + num2char(fbands(1,i), notation='f', width=17, precision=2) + '|' +   &
-                      num2char(fbands(2,i), notation='f', width=13, precision=2) + '|', blankline = .false.)
-    ENDDO
-    CALL update_log(num2char('Number of receivers found', width = 29, fill='.') + num2char(SIZE(recvr), width=17, justify='r') +  &
-                    '|', blankline = .false.)
-    CALL update_log(num2char('Weighting of direct waves', width=29, fill='.')+ num2char(.not.noweight, width=17, justify='r') +  &
-                    '|', blankline = .false.)
-    CALL update_log(num2char('Elastic RTT', width=29, fill='.') + num2char(elastic, width=17, justify='r') + '|',  &
-                    blankline = .false.)
-
-    IF (elastic) THEN
-      CALL update_log(num2char('Window width direct waves', width=29, fill='.') + num2char('P', width=17, justify='r') + '|' +  &
-                      num2char('S', width=13, justify='r') + '|' + num2char('Factor (%)', width=13, justify='r') + '|',         &
-                      blankline = .false.)
-      CALL update_log(num2char('', width=29) + num2char(pdwindow, notation = 'f', width=17, precision=3, justify='r') + '|' +  &
-                      num2char(sdwindow, notation='f', width=13, precision=3, justify='r') + '|' + num2char(fwin*100._r32,     &
-                      notation='f', width=13, precision=1, justify='r') + '|', blankline = .false.)
-      CALL update_log(num2char('Window width coda waves', width=29, fill='.') + num2char('P', width=17, justify='r') + '|' +  &
-                      num2char('S', width=13, justify='r') + '|' + num2char('Tlim', width=13, justify='r') + '|',    &
-                      blankline = .false.)
-      CALL update_log(num2char('', width=29) + num2char(pcwindow, notation = 'f', width=17, precision=3, justify='r') + '|' +  &
-                      num2char(scwindow, notation='f', width=13, precision=3, justify='r') + '|' + num2char(tlim, notation='f',  &
-                      width=13, precision=1, justify='r') + '|', blankline = .false.)
-      CALL update_log(num2char('Parameters search range', width=29, fill='.') + num2char('EtaSS', width=17, justify='r') + '|' + &
-                      num2char('EtaSS/PP', width=13, justify='r') + '|' + num2char('EtaPS/PP', width=13, justify='r') + '|',  &
-                      blankline = .false.)
-      CALL update_log(num2char('', width=29) + num2char(etass(1),    notation='s', width=8, precision=1, justify='r') + ',' + &
-                                               num2char(etass(2),    notation='s', width=8, precision=1) + '|' + &
-                                               num2char(etass2pp(1), notation='f', width=6, precision=1, justify='r') + ',' + &
-                                               num2char(etass2pp(2), notation='f', width=6, precision=1) + '|' + &
-                                               num2char(etaps2pp(1), notation='f', width=6, precision=1, justify='r') + ',' + &
-                                               num2char(etaps2pp(2), notation='f', width=6, precision=1) + '|', blankline = .false.)
-
-    ELSE
-      CALL update_log(num2char('Window width direct S-wave', width=29, fill='.') + num2char('S', width=17, justify='r') + '|' +  &
-                      num2char('Factor (%)', width=13, justify='r') + '|', blankline = .false.)
-      CALL update_log(num2char('', width=29) + num2char(sdwindow, notation='f', width=17, precision=3, justify='r') + '|' +  &
-                      num2char(fwin*100._r32, notation='f', width=13, precision=1, justify='r') + '|', blankline = .false.)
-      CALL update_log(num2char('Window width S-coda waves', width=29, fill='.') + num2char('S', width=17, justify='r') + '|' +  &
-                      num2char('Tlim', width=13, justify='r') + '|', blankline = .false.)
-      CALL update_log(num2char('', width=29) + num2char(scwindow, notation = 'f', width=17, precision=3, justify='r') + '|' +   &
-                      num2char(tlim, notation='f', width=13, precision=1) + '|', blankline = .false.)
-      CALL update_log(num2char('Parameters search range', width=29, fill='.') + num2char('EtaSS', width=17, justify='r') + '|' +  &
-                      num2char('Nu', width=13, justify='r') + '|' + num2char('Hurst', width=13, justify='r') + '|',               &
-                      blankline = .false.)
-      CALL update_log(num2char('', width=29) + num2char(etass(1), notation='s', width=8, precision=1, justify='r') + ',' +  &
-                      num2char(etass(2),    notation='s', width=8, precision=1) + '|' +                      &
-                      num2char(nu(1), notation='f', width=6, precision=2, justify='r') + ',' +         &
-                      num2char(nu(2), notation='f', width=6, precision=2) + '|' +                      &
-                      num2char(hurst(1), notation='f', width=6, precision=2, justify='r') + ',' +      &
-                      num2char(hurst(2), notation='f', width=6, precision=2) + '|', blankline = .false.)
-      IF (ANY(nu .ne. 0._r32)) THEN
-        CALL update_log(num2char('acf of choice', width=29, fill='.') + num2char(acf, width=17, justify='r') + '|',    &
-                        blankline = .false.)
-      ENDIF
-    ENDIF
-
-    CALL update_log('----------------------------------------------------------------------------------------------')
-
-
-
-END SUBROUTINE echo_input
-
-! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
-!===================================================================================================================================
-! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
-
-SUBROUTINE broadcast()
-
-  ! Purpose:
-  !   to broadcast all input parameters to all processes.
-  !
-  ! Revisions:
-  !     Date                    Description of change
-  !     ====                    =====================
-  !   08/03/21                  original version
-  !
-
-#ifdef MPI
-  USE                :: mpi
-#endif
-  USE, NON_INTRINSIC :: m_precisions
-  USE, NON_INTRINSIC :: m_logfile
-
-  IMPLICIT none
-
-  !---------------------------------------------------------------------------------------------------------------------------------
-
-
-
-END SUBROUTINE broadcast
 
 ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
 !===================================================================================================================================

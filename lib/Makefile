@@ -1,4 +1,4 @@
-lib : common llsq fft filter interpolation rtt na 
+lib : common llsq fft filter interpolation rtt
 
 common:
 	cd $@; $(MAKE) $@ $<
@@ -18,9 +18,6 @@ interpolation:
 rtt:
 	cd $@; $(MAKE) $@ $<
 
-na:
-	cd $@; $(MAKE) $@ $<
-
 clean:
 	cd common; $(MAKE) $@
 	cd filter; $(MAKE) $@
@@ -28,8 +25,7 @@ clean:
 	cd llsq; $(MAKE) $@
 	cd interpolation; $(MAKE) $@
 	cd rtt; $(MAKE) $@
-	cd na; $(MAKE) $@
 	rm -rf *.mod
 	rm -rf *.o
 
-.PHONY : common filter fft llsq interpolation rtt na clean
+.PHONY : common filter fft llsq interpolation rtt clean

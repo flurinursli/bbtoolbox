@@ -66,7 +66,7 @@ MODULE m_strings
       !     precision = any positive integer such that (width - precision) > 6 (default = 0)
       !     sign      = .true. or .false. (default is .false.)
       !     separator = ',' or '.' (default is '.')
-      !     justify   = 'l' or 'r' (default is 'r')
+      !     justify   = 'l', 'r' or 'c' (default is 'r')
       !     fill      = any character, it will be repeated to fill "width-len(char)" spaces
       !
       !   If no options are specified, default format descriptors are "A" (characters), "I0.0" (integers), "G0" (floats)
@@ -75,6 +75,7 @@ MODULE m_strings
       !     Date                    Description of change
       !     ====                    =====================
       !   02/09/20                  original version
+      !   08/03/21                  added justify center
       !
 
       CLASS(*),                           INTENT(IN) :: x
@@ -256,6 +257,12 @@ MODULE m_strings
             char = ADJUSTL(char)
           CASE('r')
             char = ADJUSTR(char)
+          CASE('c')
+            r = (LEN(char) - LEN_TRIM(ADJUSTL(char))) / 2
+            p = LEN(char) - LEN_TRIM(ADJUSTL(char)) - r
+            pat = '(' + num2char(r) + 'A,A,' + num2char(p) + 'A)'
+            temp = TRIM(ADJUSTL(char))
+            WRITE(char, (pat)) [(' ', i = 1,r)], temp, [(' ', i = 1,p)]
         END SELECT
       ENDIF
 
@@ -274,7 +281,13 @@ MODULE m_strings
               pat = '(' + num2char(r) + 'A,A)'
               temp = TRIM(ADJUSTL(char))                       !< adjustl required because trim remove trailing blanks
               WRITE(char, (pat)) [(fill, i = 1,r)], temp
-          END SELECT
+            CASE('c')
+              r = (LEN(char) - LEN_TRIM(ADJUSTL(char))) / 2
+              p = LEN(char) - LEN_TRIM(ADJUSTL(char)) - r
+              pat = '(' + num2char(r) + 'A,A,' + num2char(p) + 'A)'
+              temp = TRIM(ADJUSTL(char))
+              WRITE(char, (pat)) [(fill, i = 1,r)], temp, [(fill, i = 1,p)]
+            END SELECT
         ELSE
           pat = '(A,' + num2char(r) + 'A)'
           WRITE(char, (pat)) TRIM(char), [(fill, i = 1,r)]

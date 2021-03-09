@@ -843,13 +843,14 @@ MODULE m_parser
     LOGICAL FUNCTION verify_key(buffer, key, keycount, nkey, com)
 
       ! Purpose:
-      !   to determine if string "key" is present inside string "buffer" as a single (isolated) word and, if so, if it is corresponds
-      !   to the "nkey"-th entry.
+      !   to determine if string "key" is present inside string "buffer" as the first single (isolated) word and, if so, if it
+      !   corresponds to the "nkey"-th entry.
       !
       ! Revisions:
       !     Date                    Description of change
       !     ====                    =====================
       !   02/09/20                  original version
+      !   08/03/21                  added ADJUSTL since "key" must be first word
       !
 
       CHARACTER(*),                        INTENT(IN)    :: buffer, key
@@ -862,10 +863,10 @@ MODULE m_parser
 
       verify_key = .true.
 
-      ! find "key" inside buffer
-      pos = position(buffer, key)
+      ! find "key" inside buffer (remove leading spaces)
+      pos = position(ADJUSTL(buffer), key)
 
-      IF (ALL(pos .eq. 0)) THEN
+      IF (ALL(pos .eq. 0) .or. (pos(1) .ne. 1)) THEN             !< "key" not present or not first word
         verify_key = .false.
       ELSE
         keycount = keycount + 1                                  !< update keyword counter

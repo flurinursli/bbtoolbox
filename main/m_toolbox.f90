@@ -9,18 +9,24 @@ MODULE m_toolbox
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
-  INTERFACE wrong_par
-    MODULE PROCEDURE wrong_par_i32, wrong_par_r32
-  END INTERFACE wrong_par
+  PRIVATE
+
+  PUBLIC :: input, read_input_file, echo_input, broadcast, watch_start, watch_stop
+
+  ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+
+  INTERFACE assert
+    MODULE PROCEDURE assert_i32, assert_r32
+  END INTERFACE assert
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
   TYPE :: src
-    CHARACTER(16)  :: mrf
+    CHARACTER(8)   :: type
     CHARACTER(256) :: file
     INTEGER(i32)   :: seed, samples
-    LOGICAL        :: is_point, add_roughness
-    REAL(r32)      :: x, y, z, m0, strike, dip, rake, freq
+    LOGICAL        :: is_point = .false., add_roughness = .true., add_rik = .true.
+    REAL(r32)      :: x, y, z, m0, strike, dip, rake, freq, azimuth
     REAL(r32)      :: roughness, correlation, l0, aparam, vrfact
   END TYPE src
 
@@ -41,12 +47,13 @@ MODULE m_toolbox
   TYPE :: io
     CHARACTER(8)   :: format
     CHARACTER(16)  :: variable
-    CHARACTER(256) :: file
+    CHARACTER(256) :: folder
   END TYPE io
 
   TYPE :: hf
     CHARACTER(4) :: model
     INTEGER(i32) :: seed, samples
+    LOGICAL      :: add_coherency = .true.
     REAL(r32)    :: fmax, matching, bandwidth, alpha, threshold
   END TYPE hf
 
@@ -88,12 +95,14 @@ MODULE m_toolbox
       !   08/03/21                  original version
       !
 
-      INTEGER(i32),             INTENT(OUT) :: ok
-      CHARACTER(64)                         :: fo
-      CHARACTER(:), ALLOCATABLE             :: str
-      INTEGER(i32)                          :: lu, n, i, p
+      INTEGER(i32),                             INTENT(OUT) :: ok
+      CHARACTER(64)                                         :: fo
+      CHARACTER(:), ALLOCATABLE                             :: str
+      INTEGER(i32)                                          :: lu, n, i, p
+      REAL(r32)                                             :: z, vp, vs, rho
+      REAL(r32),    ALLOCATABLE, DIMENSION(:,:)             :: fbands
 
-      !---------------------------------------------------------------------------------------------------------------------------------
+      !-----------------------------------------------------------------------------------------------------------------------------
 
       ok = 0
 
@@ -111,18 +120,119 @@ MODULE m_toolbox
         RETURN
       ENDIF
 
-      n = recurrences(ok, lu, 'rec', com = '#')                        !< find number of receivers
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+      ! --------------------------------------------------- attenuation ------------------------------------------------------------
 
-      IF (ok .ne. 0) THEN
-        CALL report_error(parser_error(ok))
-        RETURN
-      ENDIF
+      n = recurrences(ok, lu, 'attenuation', key = 'attenuation', com = '#')                        !< number of attenuation models
+      CALL missing_arg(ok, is_empty(n) .or. (n .le. 0), 'No attenuation model(s) found in input file')
 
-      IF (is_empty(n) .or. (n .le. 0)) THEN
-        CALL report_error('No stations found in input file')
-        ok = 1
-        RETURN
-      ENDIF
+      IF (ok .ne. 0) RETURN
+
+      ALLOCATE(input%attenuation(n))
+
+
+      DO i = 1, n
+
+        CALL parse(ok, input%attenuation(i)%gpp, lu, 'gpp', ['[', ']'], ',', 'attenuation', nkey = i, com = '#')     !< gpp
+        CALL missing_arg(ok, ALL(is_empty(input%attenuation(i)%gpp)), 'Argument "gpp" for attenuation model #' + num2char(i) +  &
+        'not found')
+
+        IF (ok .ne. 0) RETURN
+
+        CALL parse(ok, input%attenuation(i)%gps, lu, 'gps', ['[', ']'], ',', 'attenuation', nkey = i, com = '#')     !< gps
+        CALL missing_arg(ok, ALL(is_empty(input%attenuation(i)%gps)), 'Argument "gps" for attenuation model #' + num2char(i) +  &
+        'not found')
+
+        IF (ok .ne. 0) RETURN
+
+        CALL parse(ok, input%attenuation(i)%gss, lu, 'gss', ['[', ']'], ',', 'attenuation', nkey = i, com = '#')     !< gss
+        CALL missing_arg(ok, ALL(is_empty(input%attenuation(i)%gss)), 'Argument "gss" for attenuation model #' + num2char(i) +  &
+        'not found')
+
+        IF (ok .ne. 0) RETURN
+
+        CALL parse(ok, input%attenuation(i)%b, lu, 'b', ['[', ']'], ',', 'attenuation', nkey = i, com = '#')     !< b
+        CALL missing_arg(ok, ALL(is_empty(input%attenuation(i)%b)), 'Argument "b" for attenuation model #' + num2char(i) +  &
+        'not found')
+
+        IF (ok .ne. 0) RETURN
+
+        CALL parse(ok, fbands, lu, 'frequency', ['[', ']'], ',', ';', 'attenuation', nkey = i, com = '#')
+        CALL missing_arg(ok, ALL(is_empty(fbands)), 'Argument "frequency" for attenuation model #' + num2char(i) + 'not found')
+
+        IF (ok .ne. 0) RETURN
+
+        input%attenuation(i)%lcut = fbands(1, :)
+        input%attenuation(i)%hcut = fbands(2, :)
+
+      ENDDO
+
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+      ! ----------------------------------------------------- velocity -------------------------------------------------------------
+
+      n = recurrences(ok, lu, 'layer', key = 'layer', com = '#')                        !< number of layers
+      CALL missing_arg(ok, is_empty(n) .or. (n .le. 0), 'No velocity model(s) found in input file')
+
+      IF (ok .ne. 0) RETURN
+
+      p = 0
+
+      ! find number of velocity models by counting how many times a "layer" command without "depth" field is present
+      DO i = 1, n
+        CALL parse(ok, z, lu, 'depth', ['=', ','], 'layer', nkey = i, com = '#')
+        IF (is_empty(z)) p = p + 1
+      ENDDO
+
+      ALLOCATE(input%velocity(p))
+
+      p = 0
+
+      DO i = 1, n
+
+        CALL parse(ok, z, lu, 'depth', ['=', ','], 'layer', nkey = i, com = '#')
+
+        IF (is_empty(z)) THEN
+          p = p + 1
+          z = 0._r32
+        ENDIF
+
+        CALL parse(ok, vp, lu, 'vp', ['=', ','], 'layer', nkey = i, com = '#')     !< vp
+        CALL missing_arg(ok, is_empty(vp), 'Argument "vp" for layer keyword #' + num2char(i) + 'not found')
+
+        IF (ok .ne. 0) RETURN
+
+        CALL parse(ok, vs, lu, 'vs', ['=', ','], 'layer', nkey = i, com = '#')     !< vs
+        CALL missing_arg(ok, is_empty(vs), 'Argument "vs" for layer keyword #' + num2char(i) + 'not found')
+
+        IF (ok .ne. 0) RETURN
+
+        CALL parse(ok, rho, lu, 'rho', ['=', ','], 'layer', nkey = i, com = '#')    !< rho
+        CALL missing_arg(ok, is_empty(rho), 'Argument "rho" for layer keyword #' + num2char(i) + 'not found')
+
+        IF (ok .ne. 0) RETURN
+
+        IF (.not.ALLOCATED(input%velocity(p)%depth)) THEN
+          input%velocity(p)%depth = [z]
+          input%velocity(p)%vp    = [vp]
+          input%velocity(p)%vs    = [vs]
+          input%velocity(p)%rho   = [rho]
+        ELSE
+          input%velocity(p)%depth = [input%velocity(p)%depth, z]
+          input%velocity(p)%vp    = [input%velocity(p)%vp, vp]
+          input%velocity(p)%vs    = [input%velocity(p)%vs, vs]
+          input%velocity(p)%rho   = [input%velocity(p)%rho, rho]
+        ENDIF
+
+      ENDDO
+
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+      ! ----------------------------------------------------- receivers ------------------------------------------------------------
+
+      n = recurrences(ok, lu, 'rec', key = 'rec', com = '#')                        !< number of receivers
+
+      CALL missing_arg(ok, is_empty(n) .or. (n .le. 0), 'No stations found in input file')
+
+      IF (ok .ne. 0) RETURN
 
       ALLOCATE(input%receiver(n))
 
@@ -130,592 +240,853 @@ MODULE m_toolbox
       DO i = 1, n
 
         CALL parse(ok, str, lu, 'file', ["'", "'"], 'rec', nkey = i, com = '#')
+        CALL missing_arg(ok, is_empty(str), 'Argument "file" for receiver #' + num2char(i) + ' not found')
 
-        IF (ok .ne. 0) THEN
-          CALL report_error(parser_error(ok))
-          RETURN
-        ENDIF
+        IF (ok .ne. 0) RETURN
 
-        IF (is_empty(str)) THEN
-          CALL report_error('Argument "file" for receiver #' + num2char(i) + ' not found')
-          ok = 1
-          RETURN
-        ENDIF
-
-        input%receiver(i)%file = TRIM(str)                                         !< file
+        input%receiver(i)%file = TRIM(str)      !< file
 
         CALL parse(ok, input%receiver(i)%velocity, lu, 'velocity', ['=', ','], 'rec', nkey = i, com = '#')   !< velocity
+        CALL missing_arg(ok, is_empty(input%receiver(i)%velocity), 'Argument "velocity" for receiver #' + num2char(i) +  &
+        ' not found')
 
-        IF (ok .ne. 0) THEN
-          CALL report_error(parser_error(ok))
-          RETURN
-        ENDIF
-
-        IF (is_empty(input%receiver(i)%velocity) .eqv. .false.) input%receiver(i)%velocity = 1
+        IF (ok .ne. 0) RETURN
 
         CALL parse(ok, input%receiver(i)%attenuation, lu, 'attenuation', ['=', ','], 'rec', nkey = i, com = '#')  !< attenuation
+        CALL missing_arg(ok, is_empty(input%receiver(i)%attenuation), 'Argument "attenuation" for receiver #' + num2char(i) +  &
+        ' not found')
 
-        IF (ok .ne. 0) THEN
-          CALL report_error(parser_error(ok))
-          RETURN
-        ENDIF
-
-        IF (is_empty(input%receiver(i)%attenuation)) input%receiver(i)%attenuation = 1
+        IF (ok .ne. 0) RETURN
 
         CALL parse(ok, input%receiver(i)%x, lu, 'x', ['=', ','], 'rec', nkey = i, com = '#')       !< x
+        CALL missing_arg(ok, is_empty(input%receiver(i)%x), 'Argument "x" for receiver #' + num2char(i) + ' not found')
 
-        IF (ok .ne. 0) THEN
-          CALL report_error(parser_error(ok))
-          RETURN
-        ENDIF
-
-        IF (is_empty(input%receiver(i)%x)) THEN
-          CALL report_error('Argument "x" for receiver #' + num2char(i) + ' not found')
-          ok = 1
-          RETURN
-        ENDIF
+        IF (ok .ne. 0) RETURN
 
         CALL parse(ok, input%receiver(i)%y, lu, 'y', ['=', ','], 'rec', nkey = i, com = '#')       !< y
+        CALL missing_arg(ok, is_empty(input%receiver(i)%y), 'Argument "y" for receiver #' + num2char(i) + ' not found')
 
-        IF (ok .ne. 0) THEN
-          CALL report_error(parser_error(ok))
-          RETURN
-        ENDIF
-
-        IF (is_empty(input%receiver(i)%y)) THEN
-          CALL report_error('Argument "y" for receiver #' + num2char(i) + ' not found')
-          ok = 1
-          RETURN
-        ENDIF
+        IF (ok .ne. 0) RETURN
 
         CALL parse(ok, input%receiver(i)%z, lu, 'z', ['=', ','], 'rec', nkey = i, com = '#')    !< z
+        CALL missing_arg(ok, is_empty(input%receiver(i)%z), 'Argument "z" for receiver #' + num2char(i) + ' not found')
 
-        IF (ok .ne. 0) THEN
-          CALL report_error(parser_error(ok))
-          RETURN
-        ENDIF
-
-        IF (is_empty(input%receiver(i)%z)) THEN
-          CALL report_error('Argument "z" for receiver #' + num2char(i) + ' not found')
-          ok = 1
-          RETURN
-        ENDIF
+        IF (ok .ne. 0) RETURN
 
       ENDDO
 
-      CALL parse(ok, input%coda%fmax, lu, 'fmax', ['=', ','], 'coda', com = '#')               !< fmax
-      IF (ok .ne. 0) THEN
-        CALL report_error(parser_error(ok))
-        RETURN
-      ENDIF
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+      ! ------------------------------------------------ coda parameters -----------------------------------------------------------
 
-      IF (is_empty(input%coda%fmax)) THEN
-        CALL report_error('Argument "fmax" for keyword "coda" not found')
-        ok = 1
-        RETURN
-      ENDIF
+      CALL parse(ok, input%coda%fmax, lu, 'fmax', ['=', ','], 'coda', com = '#')               !< fmax
+      CALL missing_arg(ok, is_empty(input%coda%fmax), 'Argument "fmax" for keyword "coda" not found')
+
+      IF (ok .ne. 0) RETURN
 
       CALL parse(ok, input%coda%matching, lu, 'matching frequency', ['=', ','], 'coda', com = '#')    !< matching
-      IF (ok .ne. 0) THEN
-        CALL report_error(parser_error(ok))
-        RETURN
-      ENDIF
+      CALL missing_arg(ok, is_empty(input%coda%matching), 'Argument "matching frequency" for keyword "coda" not found')
 
-      IF (is_empty(input%coda%matching)) THEN
-        CALL report_error('Argument "matching frequency" for keyword "coda" not found')
-        ok = 1
-        RETURN
-      ENDIF
+      IF (ok .ne. 0) RETURN
 
       CALL parse(ok, input%coda%bandwidth, lu, 'bandwidth', ['=', ','], 'coda', com = '#')     !< bandwidth
-      IF (ok .ne. 0) THEN
-        CALL report_error(parser_error(ok))
-        RETURN
-      ENDIF
+      CALL missing_arg(ok, is_empty(input%coda%bandwidth), 'Argument "bandwidth" for keyword "coda" not found')
 
-      IF (is_empty(input%coda%bandwidth)) THEN
-        CALL report_error('Argument "bandwidth" for keyword "coda" not found')
-        ok = 1
-        RETURN
-      ENDIF
+      IF (ok .ne. 0) RETURN
 
       CALL parse(ok, input%coda%seed, lu, 'seed', ['=', ','], 'coda', com = '#')     !< seed
-      IF (ok .ne. 0) THEN
-        CALL report_error(parser_error(ok))
-        RETURN
-      ENDIF
+      CALL missing_arg(ok, is_empty(input%coda%seed), 'Argument "seed" for keyword "coda" not found')
 
-      IF (is_empty(input%coda%seed)) THEN
-        CALL report_error('Argument "seed" for keyword "coda" not found')
-        ok = 1
-        RETURN
-      ENDIF
+      IF (ok .ne. 0) RETURN
 
       CALL parse(ok, input%coda%samples, lu, 'samples', ['=', ','], 'coda', com = '#')    !< samples
-      IF (ok .ne. 0) THEN
-        CALL report_error(parser_error(ok))
-        RETURN
-      ENDIF
+      CALL missing_arg(ok, is_empty(input%coda%samples), 'Argument "samples" for keyword "coda" not found')
 
-      IF (is_empty(input%coda%samples)) THEN
-        CALL report_error('Argument "samples" for keyword "coda" not found')
-        ok = 1
-        RETURN
-      ENDIF
+      IF (ok .ne. 0) RETURN
 
       CALL parse(ok, str, lu, 'model', ["'", "'"], 'coda', com = '#')
-      IF (ok .ne. 0) THEN
-        CALL report_error(parser_error(ok))
-        RETURN
-      ENDIF
+      CALL missing_arg(ok, .false., 'Argument "model" for keyword "coda" not found')
+
+      IF (ok .ne. 0) RETURN
 
       input%coda%model = TRIM(str)       !< model
 
-      CALL parse(ok, input%coda%alpha, lu, 'alpha', ['=', ','], 'coda', com = '#')     !< alpha
-      IF (ok .ne. 0) THEN
-        CALL report_error(parser_error(ok))
-        RETURN
+      IF (is_empty(input%coda%model)) input%coda%add_coherency = .false.
+
+      IF (input%coda%add_coherency) THEN
+        CALL parse(ok, input%coda%alpha, lu, 'alpha', ['=', ','], 'coda', com = '#')     !< alpha
+        CALL missing_arg(ok, is_empty(input%coda%alpha), 'Argument "alpha" for keyword "coda" not found')
+
+        IF (ok .ne. 0) RETURN
+
+        CALL parse(ok, input%coda%threshold, lu, 'threshold', ['=', ','], 'coda', com = '#')     !< threshold
+        CALL missing_arg(ok, is_empty(input%coda%threshold), 'Argument "threshold" for keyword "coda" not found')
+
+        IF (ok .ne. 0) RETURN
       ENDIF
 
-      CALL parse(ok, input%coda%threshold, lu, 'threshold', ['=', ','], 'coda', com = '#')     !< threshold
-      IF (ok .ne. 0) THEN
-        CALL report_error(parser_error(ok))
-        RETURN
-      ENDIF
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+      ! --------------------------------------------------- input files ------------------------------------------------------------
 
       CALL parse(ok, str, lu, 'folder', ["'", "'"], 'input', com = '#')
-      IF (ok .ne. 0) THEN
-        CALL report_error(parser_error(ok))
-        RETURN
-      ENDIF
+      CALL missing_arg(ok, is_empty(str), 'Argument "folder" for keyword "input" not found')
 
-      IF (is_empty(str)) THEN
-        CALL report_error('Argument "folder" for keyword "input" not found')
-        ok = 1
-        RETURN
-      ENDIF
+      IF (ok .ne. 0) RETURN
 
       input%input%folder = TRIM(str)     !< folder
 
       CALL parse(ok, str, lu, 'format', ["'", "'"], 'input', com = '#')
-      IF (ok .ne. 0) THEN
-        CALL report_error(parser_error(ok))
-        RETURN
-      ENDIF
+      CALL missing_arg(ok, is_empty(str), 'Argument "format" for keyword "input" not found')
 
-      IF (is_empty(str)) THEN
-        CALL report_error('Argument "format" for keyword "input" not found')
-        ok = 1
-        RETURN
-      ENDIF
+      IF (ok .ne. 0) RETURN
 
       input%input%format = TRIM(str)     !< format
 
       CALL parse(ok, str, lu, 'variable', ["'", "'"], 'input', com = '#')
-      IF (ok .ne. 0) THEN
-        CALL report_error(parser_error(ok))
-        RETURN
-      ENDIF
+      CALL missing_arg(ok, is_empty(str), 'Argument "variable" for keyword "input" not found')
 
-      IF (is_empty(str)) THEN
-        CALL report_error('Argument "variable" for keyword "input" not found')
-        ok = 1
-        RETURN
-      ENDIF
+      IF (ok .ne. 0) RETURN
 
       input%input%variable = TRIM(str)     !< variable
 
-      CALL parse(ok, str, lu, 'folder', ["'", "'"], 'output', com = '#')
-      IF (ok .ne. 0) THEN
-        CALL report_error(parser_error(ok))
-        RETURN
-      ENDIF
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+      ! -------------------------------------------------- output files ------------------------------------------------------------
 
-      IF (is_empty(str)) THEN
-        CALL report_error('Argument "folder" for keyword "output" not found')
-        ok = 1
-        RETURN
-      ENDIF
+      CALL parse(ok, str, lu, 'folder', ["'", "'"], 'output', com = '#')
+      CALL missing_arg(ok, is_empty(str), 'Argument "folder" for keyword "output" not found')
+
+      IF (ok .ne. 0) RETURN
 
       input%output%folder = TRIM(str)     !< folder
 
       CALL parse(ok, str, lu, 'variable', ["'", "'"], 'output', com = '#')
+      CALL missing_arg(ok, is_empty(str), 'Argument "variable" for keyword "output" not found')
+
+      IF (ok .ne. 0) RETURN
+
+      input%output%variable = TRIM(str)     !< variable
+
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+      ! ------------------------------------------------------ source --------------------------------------------------------------
+
+      n = recurrences(ok, lu, 'source', key = 'source', com = '#')                        !< find number of sources
+
       IF (ok .ne. 0) THEN
         CALL report_error(parser_error(ok))
         RETURN
       ENDIF
 
-      IF (is_empty(str)) THEN
-        CALL report_error('Argument "variable" for keyword "output" not found')
+      IF (n .ge. 2) THEN
+        CALL report_error('Only one point-source can be specified')
         ok = 1
         RETURN
       ENDIF
 
-      input%output%variable = TRIM(str)     !< variable
+      IF (n .eq. 1) input%source%is_point = .true.
 
+      IF (input%source%is_point) THEN
 
-! down here!!!!!
+        CALL parse(ok, input%source%x, lu, 'x', ['=', ','], 'source', com = '#')     !< x
+        CALL missing_arg(ok, is_empty(input%source%x), 'Argument "x" for keyword "source" not found')
 
+        IF (ok .ne. 0) RETURN
 
+        CALL parse(ok, input%source%y, lu, 'y', ['=', ','], 'source', com = '#')     !< y
+        CALL missing_arg(ok, is_empty(input%source%y), 'Argument "y" for keyword "source" not found')
 
+        IF (ok .ne. 0) RETURN
 
+        CALL parse(ok, input%source%z, lu, 'z', ['=', ','], 'source', com = '#')     !< z
+        CALL missing_arg(ok, is_empty(input%source%z), 'Argument "z" for keyword "source" not found')
 
+        IF (ok .ne. 0) RETURN
 
-      ! scan for frequency bands
-      CALL parse(ok, fbands, lu, 'Bands', ['{', '}'], ',', ';', com = '#')                       !< fbands`
-      IF (ok .ne. 0) CALL report_error(parser_error(ok))
+        CALL parse(ok, input%source%m0, lu, 'm0', ['=', ','], 'source', com = '#')     !< m0
+        CALL missing_arg(ok, is_empty(input%source%m0), 'Argument "m0" for keyword "source" not found')
 
-      IF (ALL(is_empty(fbands))) THEN
-        CALL report_error('Argument "Bands" not found')
+        IF (ok .ne. 0) RETURN
+
+        CALL parse(ok, input%source%m0, lu, 'm0', ['=', ','], 'source', com = '#')     !< m0
+        CALL missing_arg(ok, is_empty(input%source%m0), 'Argument "m0" for keyword "source" not found')
+
+        IF (ok .ne. 0) RETURN
+
+        CALL parse(ok, input%source%strike, lu, 'strike', ['=', ','], 'source', com = '#')     !< strike
+        CALL missing_arg(ok, is_empty(input%source%strike), 'Argument "strike" for keyword "source" not found')
+
+        IF (ok .ne. 0) RETURN
+
+        CALL parse(ok, input%source%dip, lu, 'dip', ['=', ','], 'source', com = '#')     !< dip
+        CALL missing_arg(ok, is_empty(input%source%dip), 'Argument "dip" for keyword "source" not found')
+
+        IF (ok .ne. 0) RETURN
+
+        CALL parse(ok, input%source%rake, lu, 'rake', ['=', ','], 'source', com = '#')     !< rake
+        CALL missing_arg(ok, is_empty(input%source%rake), 'Argument "rake" for keyword "source" not found')
+
+        IF (ok .ne. 0) RETURN
+
+        CALL parse(ok, input%source%freq, lu, 'freq', ['=', ','], 'source', com = '#')     !< freq
+        CALL missing_arg(ok, is_empty(input%source%freq), 'Argument "freq" for keyword "source" not found')
+
+        IF (ok .ne. 0) RETURN
+
+        CALL parse(ok, str, lu, 'type', ["'", "'"], 'source', com = '#')     !< type
+        CALL missing_arg(ok, is_empty(str), 'Argument "type" for keyword "source" not found')
+
+        IF (ok .ne. 0) RETURN
+
+        input%source%type = TRIM(str)
+
+        input%source%add_rik = .false.
+        input%source%add_roughness = .false.
+
+      ENDIF
+
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+      ! ----------------------------------------------------- rupture --------------------------------------------------------------
+
+      n = recurrences(ok, lu, 'rupture', key = 'rupture', com = '#')
+
+      IF ((n .gt. 0) .and. input%source%is_point) THEN
+        CALL report_error('Either point-source or extended-source can be specified')
         ok = 1
         RETURN
       ENDIF
 
-      ! scan for inversion parameters
-      CALL parse(ok, etass, lu, 'EtaSS', ['{', '}'], ',', com = '#')                             !< etass
-      IF (ok .ne. 0) CALL report_error(parser_error(ok))
+      IF (.not.input%source%is_point) THEN
 
-      IF (ALL(is_empty(etass))) THEN
-        CALL report_error('Argument "EtaS" not found')
-        ok = 1
-        RETURN
-      ENDIF
+        CALL missing_arg(ok, is_empty(n) .or. (n .le. 0), 'No source found in input file')
 
-      CALL parse(ok, nu, lu, 'Nu', ['{', '}'], ',', com = '#')                                   !< nu
-      IF (ok .ne. 0) CALL report_error(parser_error(ok))
+        IF (ok .ne. 0) RETURN
 
-      CALL parse(ok, mode, lu, 'Mode', ['=', ','], com = '#')                                    !< mode
-      IF (ok .ne. 0) CALL report_error(parser_error(ok))
-
-      IF (is_empty(mode)) THEN
-        CALL report_error('Argument "Mode" not found')
-        ok = 1
-        RETURN
-      ENDIF
-
-      IF (mode .eq. 2) THEN
-
-        CALL parse(ok, threshold, lu, 'Threshold', ['=', ','], com = '#')                       !< threshold
-        IF (ok .ne. 0) CALL report_error(parser_error(ok))
-
-        IF (is_empty(threshold)) THEN
-          CALL report_error('Argument "Threshold" not found')
+        IF (n .ge. 2) THEN
+          CALL report_error('Only one rupture model can be specified')
           ok = 1
           RETURN
         ENDIF
 
+        CALL parse(ok, str, lu, 'file', ["'", "'"], 'rupture', com = '#')     !< file
+        CALL missing_arg(ok, is_empty(str), 'Argument "file" for keyword "rupture" not found')
+
+        IF (ok .ne. 0) RETURN
+
+        input%source%file = TRIM(str)
+
+        CALL parse(ok, str, lu, 'type', ["'", "'"], 'rupture', com = '#')     !< type
+        CALL missing_arg(ok, is_empty(str), 'Argument "type" for keyword "rupture" not found')
+
+        IF (ok .ne. 0) RETURN
+
+        input%source%type = TRIM(str)
+
+        CALL parse(ok, input%source%x, lu, 'x', ['=', ','], 'rupture', com = '#')     !< x
+        CALL missing_arg(ok, is_empty(input%source%x), 'Argument "x" for keyword "rupture" not found')
+
+        IF (ok .ne. 0) RETURN
+
+        CALL parse(ok, input%source%y, lu, 'y', ['=', ','], 'rupture', com = '#')     !< y
+        CALL missing_arg(ok, is_empty(input%source%y), 'Argument "y" for keyword "rupture" not found')
+
+        IF (ok .ne. 0) RETURN
+
+        CALL parse(ok, input%source%azimuth, lu, 'azimuth', ['=', ','], 'rupture', com = '#')     !< azimuth
+        CALL missing_arg(ok, is_empty(input%source%azimuth), 'Argument "azimuth" for keyword "rupture" not found')
+
+        IF (ok .ne. 0) RETURN
+
+        CALL parse(ok, input%source%roughness, lu, 'roughness', ['=', ','], 'rupture', com = '#')     !< roughness
+        CALL missing_arg(ok, .false., '')
+
+        IF (ok .ne. 0) RETURN
+
+        IF (is_empty(input%source%roughness)) input%source%add_roughness = .false.
+
+        CALL parse(ok, input%source%correlation, lu, 'corr', ['=', ','], 'rupture', com = '#')     !< correlation
+        CALL missing_arg(ok, .false., '')
+
+        IF (ok .ne. 0) RETURN
+
+        IF (is_empty(input%source%correlation)) input%source%add_rik = .false.
+
+        IF (input%source%add_rik) THEN
+
+          CALL parse(ok, input%source%l0, lu, 'l0', ['=', ','], 'rupture', com = '#')     !< l0
+          CALL missing_arg(ok, is_empty(input%source%l0), 'Argument "l0" for keyword "rupture" not found')
+
+          IF (ok .ne. 0) RETURN
+
+          CALL parse(ok, input%source%aparam, lu, 'aparam', ['=', ','], 'rupture', com = '#')     !< aparam
+          CALL missing_arg(ok, is_empty(input%source%aparam), 'Argument "aparam" for keyword "rupture" not found')
+
+          IF (ok .ne. 0) RETURN
+
+          CALL parse(ok, input%source%vrfact, lu, 'vrfact', ['=', ','], 'rupture', com = '#')     !< vrfact
+          CALL missing_arg(ok, is_empty(input%source%vrfact), 'Argument "vrfact" for keyword "rupture" not found')
+
+          IF (ok .ne. 0) RETURN
+
+          CALL parse(ok, input%source%seed, lu, 'seed', ['=', ','], 'rupture', com = '#')     !< seed
+          CALL missing_arg(ok, is_empty(input%source%seed), 'Argument "seed" for keyword "rupture" not found')
+
+          IF (ok .ne. 0) RETURN
+
+          CALL parse(ok, input%source%samples, lu, 'samples', ['=', ','], 'rupture', com = '#')     !< samples
+          CALL missing_arg(ok, is_empty(input%source%samples), 'Argument "samples" for keyword "rupture" not found')
+
+          IF (ok .ne. 0) RETURN
+
+        ENDIF
+
       ENDIF
 
-      CALL parse(ok, sdwindow, lu, 'Swin', ['=', ','], 'DIRECT', com = '#')               !< sdwindow (for direct)
-      IF (ok .ne. 0) CALL report_error(parser_error(ok))
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+      ! ----------------------------------------------------- advanced -------------------------------------------------------------
 
-      IF (is_empty(sdwindow)) THEN
-        CALL report_error('Argument "Swin" for direct waves not found')
-        ok = 1
-        RETURN
-      ENDIF
+      CALL parse(ok, z, lu, 'pmw', ['=', ','], 'advanced', com = '#')     !< pmw
+      CALL missing_arg(ok, .false., '')
 
-      CALL parse(ok, fwin, lu, 'Factor', ['=', '%'], 'DIRECT', com = '#')                !< fwin
-      IF (ok .ne. 0) CALL report_error(parser_error(ok))
+      IF (ok .ne. 0) RETURN
 
-      ! by default, window starts at Tp and Ts
-      IF (is_empty(fwin)) fwin = 100._r32
+      IF (.not.is_empty(z)) input%advanced%pmw = z
 
-      fwin = fwin / 100._r32
+      CALL parse(ok, z, lu, 'vrfact', ['=', ','], 'advanced', com = '#')     !< vrfact
+      CALL missing_arg(ok, .false., '')
 
-      CALL parse(ok, scwindow, lu, 'Swin', ['=', ','], 'CODA', com = '#')                 !< scwindow (for coda)
-      IF (ok .ne. 0) CALL report_error(parser_error(ok))
+      IF (ok .ne. 0) RETURN
 
-      IF (is_empty(scwindow)) THEN
-        CALL report_error('Argument "Swin" for coda waves not found')
-        ok = 1
-        RETURN
-      ENDIF
+      IF (.not.is_empty(z)) input%advanced%vrfact = z
 
-      CALL parse(ok, tlim, lu, 'Tlim', ['=', ','], 'CODA', com = '#')                 !< tlim (for coda)
-      IF (ok .ne. 0) CALL report_error(parser_error(ok))
+      CALL parse(ok, p, lu, 'avecuts', ['=', ','], 'advanced', com = '#')     !< avecuts
+      CALL missing_arg(ok, .false., '')
 
-      ! by default, take whole time-series
-      IF (is_empty(tlim)) tlim = 0._r32
+      IF (ok .ne. 0) RETURN
 
-      CALL parse(ok, nsi, lu, 'InitialModels', ['=', ','], com = '#')                           !< nsi
-      IF (ok .ne. 0) CALL report_error(parser_error(ok))
+      IF (.not.is_empty(p)) input%advanced%avecuts = p
 
-      IF (is_empty(nsi)) THEN
-        CALL report_error('Argument "InitialModels" not found')
-        ok = 1
-        RETURN
-      ENDIF
+      CALL parse(ok, p, lu, 'sheets', ['=', ','], 'advanced', com = '#')     !< sheets
+      CALL missing_arg(ok, .false., '')
 
-      CALL parse(ok, ns, lu, 'Models', ['=', ','], com = '#')                                   !< ns
-      IF (ok .ne. 0) CALL report_error(parser_error(ok))
+      IF (ok .ne. 0) RETURN
 
-      IF (is_empty(ns)) THEN
-        CALL report_error('Argument "Models" not found')
-        ok = 1
-        RETURN
-      ENDIF
+      IF (.not.is_empty(p)) input%advanced%sheets = p
 
-      CALL parse(ok, nr, lu, 'Resampled', ['=', ','], com = '#')                                !< nr
-      IF (ok .ne. 0) CALL report_error(parser_error(ok))
+      CALL parse(ok, p, lu, 'waves', ['=', ','], 'advanced', com = '#')     !< waves
+      CALL missing_arg(ok, .false., '')
 
-      IF (is_empty(nr)) THEN
-        CALL report_error('Argument "Resampled" not found')
-        ok = 1
-        RETURN
-      ENDIF
+      IF (ok .ne. 0) RETURN
 
-      CALL parse(ok, itermax, lu, 'Iterations', ['=', ','], com = '#')                          !< itermax
-      IF (ok .ne. 0) CALL report_error(parser_error(ok))
+      IF (.not.is_empty(p)) input%advanced%waves = p
 
-      IF (is_empty(itermax)) THEN
-        CALL report_error('Argument "Iterations" not found')
-        ok = 1
-        RETURN
-      ENDIF
+      CALL parse(ok, p, lu, 'verbose', ['=', ','], 'advanced', com = '#')     !< verbose
+      CALL missing_arg(ok, .false., '')
 
-      CALL parse(ok, seed, lu, 'Seed', ['=', ','], com = '#')                                  !< seed
-      IF (ok .ne. 0) CALL report_error(parser_error(ok))
+      IF (ok .ne. 0) RETURN
 
-      IF (is_empty(seed)) THEN
-        CALL report_error('Argument "Seed" not found')
-        ok = 1
-        RETURN
-      ENDIF
+      IF (.not.is_empty(p)) input%advanced%verbose = p
 
-      CALL parse(ok, beta, lu, 'Beta', ['=', ','], com = '#')                                  !< beta
-      IF (ok .ne. 0) CALL report_error(parser_error(ok))
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+      ! -------------------------------------- check whether all input parameters make sense ---------------------------------------
 
-      IF (is_empty(beta)) THEN
-        CALL report_error('Argument "Beta" not found')
-        ok = 1
-        RETURN
-      ENDIF
-
-      CALL parse(ok, str, lu, 'Weight', ["'", "'"], com = '#')                                 !< noweight
-      IF (ok .ne. 0) CALL report_error(parser_error(ok))
-
-      IF (is_empty(str)) THEN
-        CALL report_error('Argument "Weight" not found')
-        ok = 1
-        RETURN
-      ENDIF
-
-      noweight = .false.
-      noweight = lowercase(str) .eq. 'n'
-
-      ! if "nu" is not present, we are dealing with elastic RTT
-      elastic = ALL(is_empty(nu))
-
-      IF (elastic) THEN
-
-        CALL parse(ok, etass2pp, lu, 'EtaSS/PP', ['{', '}'], ',', com = '#')                !< etass2pp
-        IF (ok .ne. 0) CALL report_error(parser_error(ok))
-
-        IF (ALL(is_empty(etass2pp))) THEN
-          CALL report_error('Argument "EtaSS/PP" not found')
+      DO i = 1, SIZE(input%attenuation)
+        IF (assert(input%attenuation(i)%gpp, 0._r32) .or. assert(input%attenuation(i)%gps, 0._r32) .or.   &
+            assert(input%attenuation(i)%gss, 0._r32) .or. assert(input%attenuation(i)%b, 0._r32)) THEN
+          CALL report_error('All attenuation parameters must be larger than or equal to zero')
           ok = 1
           RETURN
         ENDIF
 
-        CALL parse(ok, etaps2pp, lu, 'EtaPS/PP', ['{', '}'], ',', com = '#')                !< etaps2pp
-        IF (ok .ne. 0) CALL report_error(parser_error(ok))
-
-        IF (ALL(is_empty(etaps2pp))) THEN
-          CALL report_error('Argument "EtaPS" not found')
+        IF (assert(input%attenuation(i)%lcut, 0._r32, strict = .true.) .or. assert(input%attenuation(i)%hcut, 0._r32,  &
+            strict = .true.)) THEN
+          CALL report_error('All attenuation frequency values must be larger than zero')
           ok = 1
           RETURN
         ENDIF
 
-        CALL parse(ok, pdwindow, lu, 'Pwin', ['=', ','], 'DIRECT', com = '#')               !< pdwindow (for direct)
-        IF (ok .ne. 0) CALL report_error(parser_error(ok))
-
-        IF (is_empty(pdwindow)) THEN
-          CALL report_error('Argument "Pwin" for direct waves not found')
-          ok = 1
-          RETURN
-        ENDIF
-
-        CALL parse(ok, pcwindow, lu, 'Pwin', ['=', ','], 'CODA', com = '#')                 !< pcwindow (for coda)
-        IF (ok .ne. 0) CALL report_error(parser_error(ok))
-
-        IF (is_empty(pcwindow)) THEN
-          CALL report_error('Argument "Pwin" for coda waves not found')
-          ok = 1
-          RETURN
-        ENDIF
-
-      ELSE
-
-        ! assign some values to "acf" and "hurst" for acoustic isotropic RTT. Note: in such case, these are irrelevant
-        IF (ALL(nu .eq. 0._r32)) THEN
-
-          acf   = 'vk'
-          hurst = [0.5_r32, 0.5_r32]
-
-        ELSE
-
-          CALL parse(ok, acf, lu, 'acf', ["'", "'"], com = '#')                                 !< acf
-          IF (ok .ne. 0) CALL report_error(parser_error(ok))
-
-          IF (is_empty(acf)) THEN
-            CALL report_error('Argument "acf" not found')
-            ok = 1
-            RETURN
-          ENDIF
-
-          IF (acf .eq. 'vk') THEN
-            CALL parse(ok, hurst, lu, 'Hurst', ['{', '}'], ',', com = '#')                     !< hurst
-            IF (ok .ne. 0) CALL report_error(parser_error(ok))
-
-            IF (ALL(is_empty(hurst))) THEN
-              CALL report_error('Argument "hurst" not found')
-              ok = 1
-              RETURN
-            ENDIF
-          ELSE
-            ! for Gaussian media, set Hurst exponent to any value to avoid triggering errors
-            hurst = [0.5_r32, 0.5_r32]
-          ENDIF
-
-        ENDIF
-
-      ENDIF
-
-      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
-      ! -------------------------------------- check whether all input parameters make sense -------------------------------------------
-
-      DO i = 1, SIZE(fbands, 2)
-        IF (wrong_par(fbands(:, i), 0._r32, strict = .true.)) THEN
-          CALL report_error('All frequency bands must be positive')
-          ok = 1
-          RETURN
-        ENDIF
-        IF (wrong_par(fbands(:, i), strict = .true.)) THEN
-          CALL report_error('Lower bound for frequency bands must be smaller than upper bound')
+        IF (assert(input%attenuation(i)%hcut - input%attenuation(i)%lcut, 0._r32, strict = .true.)) THEN
+          CALL report_error('Upper limit of attenuation frequency bands cannot be lower than lower limit')
           ok = 1
           RETURN
         ENDIF
       ENDDO
 
-      IF (wrong_par([beta], 0._r32, strict = .true.)) THEN
-        CALL report_error('Shear wave velocity ("beta") must be positive')
+      DO i = 1, SIZE(input%velocity)
+        IF (assert(input%velocity(i)%vp, 0._r32, strict = .true.) .or. assert(input%velocity(i)%vs, 0._r32, strict = .true.) .or. &
+            assert(input%velocity(i)%rho, 0._r32, strict = .true.)) THEN
+          CALL report_error('Physical parameters for velocity model(s) must be larger than zero')
+          ok = 1
+          RETURN
+        ENDIF
+
+        IF (assert(input%velocity(i)%depth, 0._r32)) THEN
+          CALL report_error('Depth of layer(s) must be equal to or larger than zero')
+          ok = 1
+          RETURN
+        ENDIF
+      ENDDO
+
+      IF (assert(input%receiver(:)%z, 0._r32)) THEN
+        CALL report_error('Receiver(s) depth must be equal to or larger than zero')
         ok = 1
         RETURN
       ENDIF
 
-      IF (wrong_par([nsi, ns, nr, itermax], 0, strict = .true.)) THEN
-        CALL report_error('NA parameters must be positive')
+      IF (assert(input%receiver(:)%attenuation, 1, SIZE(input%attenuation))) THEN
+        CALL report_error('Wrong attenuation model specified for receiver(s)')
         ok = 1
         RETURN
       ENDIF
 
-      IF (wrong_par([mode], 0, 2)) THEN
-        CALL report_error('Mode parameter must lie in the range [0, 2]')
+      IF (assert(input%receiver(:)%velocity, 1, SIZE(input%velocity))) THEN
+        CALL report_error('Wrong velocity model specified for receiver(s)')
         ok = 1
         RETURN
       ENDIF
 
-      IF (mode .eq. 2) THEN
-        IF (wrong_par([threshold], 1)) THEN
-          CALL report_error('Parameter "Threshold" must be larger than or equal to 1')
-          ok = 1
-          RETURN
-        ENDIF
-      ENDIF
-
-      IF (wrong_par([sdwindow], 0._r32)) THEN
-        CALL report_error('Parameter "Swin" for direct wave must be positive')
-        ok = 1
-        RETURN
-      ENDIF
-      IF (wrong_par([scwindow], 0._r32)) THEN
-        CALL report_error('Parameter "Swin" for coda wave must be positive')
-        ok = 1
-        RETURN
-      ENDIF
-      IF (wrong_par([tlim], 0._r32)) THEN
-        CALL report_error('Parameter "Tlim" for coda wave must be positive')
+      IF (assert([input%coda%fmax, input%coda%matching, input%coda%bandwidth], 0._r32, strict = .true.)) THEN
+        CALL report_error('Frequency parameters for coda must be larger than zero')
         ok = 1
         RETURN
       ENDIF
 
-      IF (wrong_par([fwin], 0._r32)) THEN
-        CALL report_error('Parameter "Factor" for direct wave must be positive')
-        ok = 1
-        RETURN
-      ENDIF
-
-      IF (wrong_par(etass, 0._r32, strict = .true.)) THEN
-        CALL report_error('Parameter "EtaSS" must be positive')
-        ok = 1
-        RETURN
-      ENDIF
-      IF (wrong_par(etass)) THEN
-        CALL report_error('Lower bound for parameter "EtaSS" must be smaller than or equal to upper bound')
-        ok = 1
-        RETURN
-      ENDIF
-
-      IF (elastic) THEN
-        IF (wrong_par(etaps2pp, 0._r32, strict = .true.)) THEN
-          CALL report_error('Parameter "EtaPS/PP" must be positive')
-          ok = 1
-          RETURN
-        ENDIF
-        IF (wrong_par(etaps2pp)) THEN
-          CALL report_error('Lower bound for parameter "EtaPS/PP" must be smaller than or equal to upper bound')
+      IF (input%source%is_point) THEN
+        IF (assert([input%source%z], 0._r32)) THEN
+          CALL report_error('Source depth must be equal to or larger than zero')
           ok = 1
           RETURN
         ENDIF
 
-        IF (wrong_par(etass2pp, 0._r32, strict = .true.)) THEN
-          CALL report_error('Parameter "EtaSS/PP" must be positive')
-          ok = 1
-          RETURN
-        ENDIF
-        IF (wrong_par(etass2pp)) THEN
-          CALL report_error('Lower bound for parameter "EtaSS/PP" must be smaller than or equal to upper bound')
+        IF (assert([input%source%m0], 0._r32, strict = .true.)) THEN
+          CALL report_error('Source moment must be larger than zero')
           ok = 1
           RETURN
         ENDIF
 
-        IF (wrong_par([pdwindow], 0._r32)) THEN
-          CALL report_error('Parameter "Pwin" for direct wave must be positive')
-          ok = 1
-          RETURN
-        ENDIF
-        IF (wrong_par([pcwindow], 0._r32)) THEN
-          CALL report_error('Parameter "Pwin" for coda wave must be positive')
-          ok = 1
-          RETURN
-        ENDIF
-
-      ELSE
-        IF (wrong_par(nu, 0._r32)) THEN
-          CALL report_error('"Nu" must be positive')
-          ok = 1
-          RETURN
-        ENDIF
-        IF (wrong_par(nu)) THEN
-          CALL report_error('Lower bound for "Nu" must be smaller than or equal to upper bound')
-          ok = 1
-          RETURN
-        ENDIF
-        IF (wrong_par(hurst, 0._r32, 1._r32, .true.)) THEN
-          CALL report_error('Hurst exponent must be in the interval (0, 1)')
-          ok = 1
-          RETURN
-        ENDIF
-        IF ( (acf .ne. 'vk') .and. (acf .ne. 'gs') ) THEN
-          CALL report_error('Unknown value for "acf": ' + acf)
+        IF (assert([input%source%freq], 0._r32, strict = .true.)) THEN
+          CALL report_error('Source frequency parameter must be larger than zero')
           ok = 1
           RETURN
         ENDIF
       ENDIF
+
+      ! missing checks for rik, roughness, coherency and advanced
 
     END SUBROUTINE read_input_file
 
-! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
-!===================================================================================================================================
-! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !==============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    SUBROUTINE missing_arg(ok, flag, text)
+
+      INTEGER(i32), INTENT(INOUT) :: ok
+      LOGICAL,      INTENT(IN)    :: flag
+      CHARACTER(*), INTENT(IN)    :: text
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      IF (ok .ne. 0) THEN
+        CALL report_error(parser_error(ok))
+      ELSE
+        IF (flag) THEN
+          CALL report_error(text)
+          ok = 1
+        ENDIF
+      ENDIF
+
+    END SUBROUTINE missing_arg
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !==============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    FUNCTION assert_i32(par, v1, v2, strict) RESULT(assert)
+
+      ! Purpose:
+      !   To determine if variable "par" belongs to range [v1, v2]. Square brackets are replaced by round brackets if "strict=.true."
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   18/12/20                  original version
+      !
+
+      INTEGER(i32), DIMENSION(:),           INTENT(IN) :: par
+      INTEGER(i32),               OPTIONAL, INTENT(IN) :: v1, v2
+      LOGICAL,                    OPTIONAL, INTENT(IN) :: strict
+      LOGICAL                                          :: flag, assert
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+#include "assert_incl.f90"
+
+    END FUNCTION assert_i32
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    FUNCTION assert_r32(par, v1, v2, strict) RESULT(assert)
+
+      ! Purpose:
+      !   To determine if variable "par" belongs to range [v1, v2]. Square brackets are replaced by round brackets if "strict=.true."
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   18/12/20                  original version
+      !
+
+      REAL(r32), DIMENSION(:),           INTENT(IN) :: par
+      REAL(r32),               OPTIONAL, INTENT(IN) :: v1, v2
+      LOGICAL,                 OPTIONAL, INTENT(IN) :: strict
+      LOGICAL                                       :: flag, assert
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+#include "assert_incl.f90"
+
+    END FUNCTION assert_r32
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    SUBROUTINE echo_input()
+
+      ! Purpose:
+      !   to report input parameters to standard output.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      USE, INTRINSIC     :: iso_fortran_env, only: compiler_version
+      USE, NON_INTRINSIC :: m_logfile
+
+      INTEGER(i32) :: i, j
+
+      !---------------------------------------------------------------------------------------------------------------------------------
+
+      CALL update_log('***********************************************************************************************************')
+      CALL update_log('BBTOOLBOX v1.0')
+      CALL update_log('Compiled with ' + COMPILER_VERSION())
+      CALL update_log('-----------------------------------------------------------------------------------------------------------')
+      CALL update_log('Summary of input parameters', blankline = .false.)
+
+      CALL update_log(num2char('Input folder LF seismograms', width=30, fill='.') +  &
+                      num2char(TRIM(input%input%folder), width=79, justify = 'c') + '|')
+      CALL update_log(num2char('Format LF seismograms', width=30, fill='.') +  &
+                      num2char(TRIM(input%input%format), width=79, justify='c') + '|', blankline = .false.)
+      CALL update_log(num2char('Variable LF seismograms', width=30, fill='.') +  &
+                      num2char(TRIM(input%input%variable), width=79, justify='c') + '|', blankline = .false.)
+
+      CALL update_log(num2char('Output folder HF seismograms', width=30, fill='.') +  &
+                      num2char(TRIM(input%output%folder), width=79, justify = 'c') + '|')
+      CALL update_log(num2char('Variable HF seismograms', width=30, fill='.') +  &
+                      num2char(TRIM(input%output%variable), width=79, justify='c') + '|', blankline = .false.)
+
+      CALL update_log(num2char('Coda parameters', width=30, fill='.') + num2char('Fmax', width=15, justify='r') + '|' +  &
+                      num2char('Matching fr.', width=15, justify='r') + '|' + num2char('Bandwidth', width=15, justify='r') + '|' + &
+                      num2char('Seed', width=15, justify='r') + '|' + num2char('Samples', width=15, justify='r') + '|')
+      CALL update_log(num2char('', width=30) + &
+                      num2char(input%coda%fmax, notation='f', precision=3, width=15, justify='r')      + '|' +  &
+                      num2char(input%coda%matching, notation='f', precision=3, width=15, justify='r')  + '|' +  &
+                      num2char(input%coda%bandwidth, notation='f', precision=3, width=15, justify='r') + '|' +  &
+                      num2char(input%coda%seed, width=15, justify='r')                                 + '|' +  &
+                      num2char(input%coda%samples, width=15, justify='r')                              + '|', blankline = .false.)
+
+      IF (input%coda%add_coherency) THEN
+        CALL update_log(num2char('Coherency parameters', width=30, fill='.') +     &
+                        num2char('Model', width=15, justify='r')       + '|' +     &
+                        num2char('Alpha', width=15, justify='r')       + '|' +     &
+                        num2char('Threshold', width=15, justify='r')   + '|')
+        CALL update_log(num2char('', width=30) +  &
+                        num2char(input%coda%model, width=15, justify='r') + '|' + &
+                        num2char(input%coda%alpha, notation='s', precision=3, width=15, justify='r') + '|' + &
+                        num2char(input%coda%threshold, notation='f', precision=3, width=15, justify='r') + '|', blankline = .false.)
+      ENDIF
+
+      IF (input%source%is_point) THEN
+        CALL update_log(num2char('Source parameters', width=30, fill='.') +     &
+                        num2char('x', width=15, justify='r') + '|' +  &
+                        num2char('y', width=15, justify='r') + '|' +  &
+                        num2char('z', width=15, justify='r') + '|' +  &
+                        num2char('Strike', width=15, justify='r') + '|' +  &
+                        num2char('Dip', width=15, justify='r')    + '|')
+        CALL update_log(num2char('', width=30) + &
+                        num2char(input%source%x, notation='f', width=15, precision=3, justify='r') + '|' + &
+                        num2char(input%source%y, notation='f', width=15, precision=3, justify='r') + '|' + &
+                        num2char(input%source%z, notation='f', width=15, precision=3, justify='r') + '|' + &
+                        num2char(input%source%strike, notation='f', width=15, precision=1, justify='r') + '|' + &
+                        num2char(input%source%dip, notation='f', width=15, precision=1, justify='r')    + '|', blankline = .false.)
+        CALL update_log(num2char('(continued)', width=30, fill='.', justify='c') +  &
+                        num2char('Rake', width=15, justify='r')   + '|' + &
+                        num2char('Moment', width=15, justify='r')     + '|' +  &
+                        num2char('Type', width=15, justify='r') + '|' +  &
+                        num2char('Frequency', width=15, justify='r') + '|', blankline = .false.)
+        CALL update_log(num2char('', width=30) +  &
+                        num2char(input%source%rake, notation='f', width=15, precision=1, justify='r')   + '|' + &
+                        num2char(input%source%m0, notation='s', width=15, precision=3, justify='r')     + '|' + &
+                        num2char(input%source%type, width=15, justify='r') + '|' + &
+                        num2char(input%source%freq, notation='f', width=15, precision=3, justify='r') + '|', blankline = .false.)
+      ELSE
+        CALL update_log(num2char('Rupture file', width=30, fill='.')   +   &
+                        num2char(TRIM(input%source%file), width=79, justify='c') + '|')
+        CALL update_log(num2char('Rupture parameters', width=30, fill='.')  + &
+                        num2char('x', width=15, justify='r') + '|' + &
+                        num2char('y', width=15, justify='r') + '|' + &
+                        num2char('Azimuth', width=15, justify='r') + '|' + &
+                        num2char('Type', width=15, justify='r') + '|' + &
+                        num2char('Roughness', width=15, justify='r') + '|', blankline = .false.)
+        IF (input%source%add_roughness) THEN
+          CALL update_log(num2char('', width=30) +  &
+                          num2char(input%source%x, width=15, notation='f', precision=3, justify='r') + '|' + &
+                          num2char(input%source%y, width=15, notation='f', precision=3, justify='r') + '|' + &
+                          num2char(input%source%azimuth, width=15, notation='f', precision=3, justify='r') + '|' + &
+                          num2char(input%source%type, width=15, justify='r') + '|' + &
+                          num2char(input%source%roughness, width=15, notation='f', precision=1, justify='r') + '|',  &
+                          blankline = .false.)
+        ELSE
+          CALL update_log(num2char('', width=30) +  &
+                          num2char(input%source%x, width=15, notation='f', precision=3, justify='r') + '|' + &
+                          num2char(input%source%y, width=15, notation='f', precision=3, justify='r') + '|' + &
+                          num2char(input%source%azimuth, width=15, notation='f', precision=3, justify='r') + '|' + &
+                          num2char(input%source%type, width=15, justify='r') + '|' + &
+                          num2char('None', width=15, justify='r') + '|', blankline = .false.)
+        ENDIF
+        IF (input%source%add_rik) THEN
+          CALL update_log(num2char('RIK parameters', width=30, fill='.') +  &
+                          num2char('Correlation', width=15, justify='r') + '|' + &
+                          num2char('L0', width=15, justify='r')      + '|' + &
+                          num2char('Aparam', width=15, justify='r')  + '|' + &
+                          num2char('Vrfact', width=15, justify='r')  + '|' + &
+                          num2char('Seed', width=15, justify='r')    + '|' + &
+                          num2char('Samples', width=15, justify='r') + '|')
+          CALL update_log(num2char('', width=30) +  &
+                          num2char(input%source%correlation, width=15, notation='f', precision=2, justify='r') + '|' + &
+                          num2char(input%source%l0, width=15, notation='f', precision=1, justify='r')          + '|' + &
+                          num2char(input%source%aparam, width=15, notation='f', precision=1, justify='r')      + '|' + &
+                          num2char(input%source%vrfact, width=15, notation='f', precision=2, justify='r')      + '|' + &
+                          num2char(input%source%seed, width=15, justify='r')                                   + '|' + &
+                          num2char(input%source%samples, width=15, justify='r') + '|', blankline = .false.)
+        ENDIF
+
+      ENDIF
+
+      DO i = 1, SIZE(input%velocity)
+        CALL update_log(num2char('Velocity Model ' + num2char(i), width=30, fill='.') +   &
+                        num2char('Vp', width=15, justify='r') + '|' + &
+                        num2char('Vs', width=15, justify='r') + '|' + &
+                        num2char('Rho', width=15, justify='r') + '|' + &
+                        num2char('Depth', width=15, justify='r') + '|')
+        DO j = 1, SIZE(input%velocity(i)%vp)
+          CALL update_log(num2char('', width=30)  +  &
+                          num2char(input%velocity(i)%vp(j), width=15, notation='f', precision=3, justify='r') + '|' + &
+                          num2char(input%velocity(i)%vs(j), width=15, notation='f', precision=3, justify='r') + '|' + &
+                          num2char(input%velocity(i)%rho(j), width=15, notation='f', precision=3, justify='r') + '|' + &
+                          num2char(input%velocity(i)%depth(j), width=15, notation='f', precision=3, justify='r') + '|',  &
+                          blankline = .false.)
+        ENDDO
+      ENDDO
+
+      DO i = 1, SIZE(input%attenuation)
+        CALL update_log(num2char('Attenuation Model ' + num2char(i), width=30, fill='.') +   &
+                        num2char('Low Freq', width=15, justify='r') + '|' + &
+                        num2char('High Freq', width=15, justify='r') + '|' + &
+                        num2char('Gpp', width=15, justify='r') + '|' + &
+                        num2char('Gps', width=15, justify='r') + '|' + &
+                        num2char('Gss', width=15, justify='r') + '|' + &
+                        num2char('b', width=15, justify='r') + '|')
+        DO j = 1, SIZE(input%attenuation(i)%gpp)
+          CALL update_log(num2char('', width=30)  +  &
+                          num2char(input%attenuation(i)%lcut(j), width=15, notation='f', precision=1, justify='r') + '|' + &
+                          num2char(input%attenuation(i)%hcut(j), width=15, notation='f', precision=1, justify='r') + '|' + &
+                          num2char(input%attenuation(i)%gpp(j), width=15, notation='f', precision=3, justify='r') + '|' + &
+                          num2char(input%attenuation(i)%gps(j), width=15, notation='f', precision=3, justify='r') + '|' + &
+                          num2char(input%attenuation(i)%gss(j), width=15, notation='f', precision=3, justify='r') + '|' + &
+                          num2char(input%attenuation(i)%b(j), width=15, notation='f', precision=3, justify='r') + '|',  &
+                          blankline = .false.)
+        ENDDO
+      ENDDO
+
+      CALL update_log(num2char('Receivers List', width=30, fill='.') + &
+                      num2char('x', width=15, justify='r') + '|' +  &
+                      num2char('y', width=15, justify='r') + '|' +  &
+                      num2char('z', width=15, justify='r') + '|' +  &
+                      num2char('File', width=15, justify='r') + '|' + &
+                      num2char('Vel Model', width=15, justify='r') + '|' + &
+                      num2char('Att Model', width=15, justify='r') + '|')
+
+      DO i = 1, SIZE(input%receiver)
+        CALL update_log(num2char('', width=30)  +   &
+                        num2char(input%receiver(i)%x, width=15, notation='f', precision=3, justify='r') + '|' + &
+                        num2char(input%receiver(i)%y, width=15, notation='f', precision=3, justify='r') + '|' + &
+                        num2char(input%receiver(i)%z, width=15, notation='f', precision=3, justify='r') + '|' + &
+                        num2char(TRIM(input%receiver(i)%file), width=15, justify='r') + '|' + &
+                        num2char(input%receiver(i)%velocity, width=15, justify='r')   + '|' + &
+                        num2char(input%receiver(i)%attenuation, width=15, justify='r') + '|', blankline = .false.)
+      ENDDO
+
+      CALL update_log(num2char('Advanced settings', width=30, fill='.') +   &
+                      num2char('Pmw', width=15, justify = 'r') + '|' +   &
+                      num2char('Avg cuts', width=15, justify = 'r')           + '|' +   &
+                      num2char('Vr factor', width=15, justify = 'r')          + '|' +   &
+                      num2char('Sheets', width=15, justify = 'r')             + '|' +   &
+                      num2char('Waves', width=15, justify = 'r')              + '|' +   &
+                      num2char('Verbose', width=15, justify = 'r')            + '|')
+
+      CALL update_log(num2char('', width=30) + &
+                      num2char(input%advanced%pmw, width=15, justify='r')     + '|' + &
+                      num2char(input%advanced%avecuts, width=15, justify='r') + '|' + &
+                      num2char(input%advanced%vrfact, width=15, notation='f', precision=2, justify='r') + '|' +  &
+                      num2char(input%advanced%sheets, width=15, justify='r')  + '|' + &
+                      num2char(input%advanced%waves, width=15, justify='r') + '|' + &
+                      num2char(input%advanced%verbose, width=15, justify='r') + '|', blankline=.false.)
+
+
+      CALL update_log('-----------------------------------------------------------------------------------------------------------')
+
+    END SUBROUTINE echo_input
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    SUBROUTINE broadcast()
+
+      ! Purpose:
+      !   to broadcast all input parameters to all processes.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+#ifdef MPI
+      USE                :: mpi
+      USE, NON_INTRINSIC :: m_precisions
+      USE, NON_INTRINSIC :: m_logfile
+
+      INTEGER(i32) :: ierr
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      ! coda
+      CALL mpi_bcast(input%coda%fmax, 1, mpi_real, 0, mpi_comm_world, ierr)
+      CALL mpi_bcast(input%coda%matching, 1, mpi_real, 0, mpi_comm_world, ierr)
+      CALL mpi_bcast(input%coda%bandwidth, 1, mpi_real, 0, mpi_comm_world, ierr)
+      CALL mpi_bcast(input%coda%seed, 1, mpi_int, 0, mpi_comm_world, ierr)
+      CALL mpi_bcast(input%coda%samples, 1, mpi_int, 0, mpi_comm_world, ierr)
+      CALL mpi_bcast(input%coda%model, 4, mpi_character, 0, mpi_comm_world, ierr)
+      CALL mpi_bcast(input%coda%alpha, 1, mpi_real, 0, mpi_comm_world, ierr)
+      CALL mpi_bcast(input%coda%threshold, 1, mpi_real, 0, mpi_comm_world, ierr)
+
+      ! input
+      CALL mpi_bcast(input%input%folder, 256, mpi_character, 0, mpi_comm_world, ierr)
+      CALL mpi_bcast(input%input%format, 8, mpi_character, 0, mpi_comm_world, ierr)
+      CALL mpi_bcast(input%input%variable, 16, mpi_character, 0, mpi_comm_world, ierr)
+
+      ! output
+      CALL mpi_bcast(input%output%folder, 256, mpi_character, 0, mpi_comm_world, ierr)
+      CALL mpi_bcast(input%input%variable, 16, mpi_character, 0, mpi_comm_world, ierr)
+
+      ! source
+      CALL mpi_bcast(input%source%file, 256, mpi_character, 0, mpi_comm_world, ierr)
+      CALL mpi_bcast(input%source%type, 8, mpi_character, 0, mpi_comm_world, ierr)
+
+#endif
+
+    END SUBROUTINE broadcast
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    SUBROUTINE watch_start(tictoc, comm)
+
+      ! Purpose:
+      !   To start the stopwatch. Timing is in double-precision. For mpi, if specific communicator handle not given, mpi_comm_world
+      !   is used.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+#ifdef MPI
+      USE                :: mpi
+#endif
+      USE, NON_INTRINSIC :: m_precisions
+
+      REAL(r64),              INTENT(OUT) :: tictoc                            !< initial time
+      INTEGER(i32), OPTIONAL, INTENT(IN)  :: comm                              !< communicator handle (mpi-only)
+      INTEGER(i32)                        :: ierr
+      INTEGER(i64)                        :: t0, rate
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+#ifdef MPI
+      IF (PRESENT(comm)) THEN
+        CALL mpi_barrier(comm, ierr)
+      ELSE
+        CALL mpi_barrier(mpi_comm_world, ierr)
+      ENDIF
+      tictoc = mpi_wtime()
+#else
+      CALL SYSTEM_CLOCK(t0, rate)
+      tictoc = REAL(t0, r64) / rate
+#endif
+
+    END SUBROUTINE watch_start
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    SUBROUTINE watch_stop(tictoc, comm)
+
+      ! Purpose:
+      !   To stop the stopwatch and return elapsed time. Timing is in double-precision. For mpi, if specific communicator handle not
+      !   given, mpi_comm_world is used.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+#ifdef MPI
+      USE                :: mpi
+#endif
+      USE, NON_INTRINSIC :: m_precisions
+
+      REAL(r64),              INTENT(INOUT) :: tictoc                          !< elapsed time
+      INTEGER(i32), OPTIONAL, INTENT(IN)    :: comm                            !< communicator handle
+      INTEGER(i32)                          :: ierr
+      INTEGER(i64)                          :: t0, rate
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+#ifdef MPI
+      IF (PRESENT(comm)) THEN
+        CALL mpi_barrier(comm, ierr)
+      ELSE
+        CALL mpi_barrier(mpi_comm_world, ierr)
+      ENDIF
+      tictoc = mpi_wtime() - tictoc
+#else
+      CALL SYSTEM_CLOCK(t0, rate)
+      tictoc = REAL(t0, r64) / rate - tictoc
+#endif
+
+    END SUBROUTINE watch_stop
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+END MODULE m_toolbox
