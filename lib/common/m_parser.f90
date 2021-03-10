@@ -62,7 +62,7 @@ MODULE m_parser
 
   PRIVATE
 
-  PUBLIC :: parse, parser_error, recurrences, is_empty, read_miniseed
+  PUBLIC :: parse, parser_error, recurrences, is_empty, read_miniseed, parse_columns
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * -
 
@@ -222,9 +222,8 @@ MODULE m_parser
 
             ELSE
 
-
-              ! fix case when one delimiter is missing and uncorrectly assigns next one (e.g. avoid returning "x" when "field1 x, field2= y,")
-              IF (INDEX(buffer(loc:), del(1)) .gt. INDEX(buffer(loc:), del(2))) THEN
+              ! fix case when one delimiter is missing and uncorrectly assigns next one (e.g. avoid returning "y" when "field1 x, field2= y,")
+              IF ((del(2) .ne. void) .and. (INDEX(buffer(loc:), del(1)) .gt. INDEX(buffer(loc:), del(2)))) THEN
 
                 position(:) = 0
 
@@ -1075,6 +1074,43 @@ MODULE m_parser
       ENDDO
 
     END SUBROUTINE read_miniseed
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    SUBROUTINE parse_columns(line, numeric)
+
+      ! Purpose:
+      !   to read a line containing an arbitrary number of numeric values and returning each entry separately.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      CHARACTER(*),                                        INTENT(IN)  :: line
+      REAL(r32),    ALLOCATABLE, DIMENSION(:),             INTENT(OUT) :: numeric
+      INTEGER(i32)                                                     :: n
+      REAL(r32),                 DIMENSION(LEN_TRIM(line))             :: x
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      n = 1
+
+      DO
+        READ(line, *, ERR = 10, END = 10) x(1:n)
+        n = n + 1
+      ENDDO
+
+      10 CONTINUE
+
+      n = n - 1
+
+      numeric = x(1:n)
+
+    END SUBROUTINE parse_columns
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================

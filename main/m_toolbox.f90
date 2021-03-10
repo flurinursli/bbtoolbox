@@ -11,7 +11,7 @@ MODULE m_toolbox
 
   PRIVATE
 
-  PUBLIC :: input, read_input_file, echo_input, broadcast, watch_start, watch_stop
+  PUBLIC :: input, read_input_file, echo_input, broadcast, watch_start, watch_stop, missing_arg
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -945,7 +945,6 @@ MODULE m_toolbox
                       num2char(input%advanced%waves, width=15, justify='r') + '|' + &
                       num2char(input%advanced%verbose, width=15, justify='r') + '|', blankline=.false.)
 
-
       CALL update_log('-----------------------------------------------------------------------------------------------------------')
 
     END SUBROUTINE echo_input
@@ -957,7 +956,7 @@ MODULE m_toolbox
     SUBROUTINE broadcast()
 
       ! Purpose:
-      !   to broadcast all input parameters to all processes.
+      !   to broadcast all input parameters to all processes. Make use of some manual packing/unpacking to minimize mpi calls.
       !
       ! Revisions:
       !     Date                    Description of change
@@ -970,32 +969,116 @@ MODULE m_toolbox
       USE, NON_INTRINSIC :: m_precisions
       USE, NON_INTRINSIC :: m_logfile
 
-      INTEGER(i32) :: ierr
+      INTEGER(i32)                            :: ierr, i, n
+      CHARACTER(:), ALLOCATABLE               :: string
+      INTEGER(i32), ALLOCATABLE, DIMENSION(:) :: intg
+      LOGICAL,      ALLOCATABLE, DIMENSION(:) :: lg
+      REAL(r32),    ALLOCATABLE, DIMENSION(:) :: float
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
-      ! coda
-      CALL mpi_bcast(input%coda%fmax, 1, mpi_real, 0, mpi_comm_world, ierr)
-      CALL mpi_bcast(input%coda%matching, 1, mpi_real, 0, mpi_comm_world, ierr)
-      CALL mpi_bcast(input%coda%bandwidth, 1, mpi_real, 0, mpi_comm_world, ierr)
-      CALL mpi_bcast(input%coda%seed, 1, mpi_int, 0, mpi_comm_world, ierr)
-      CALL mpi_bcast(input%coda%samples, 1, mpi_int, 0, mpi_comm_world, ierr)
-      CALL mpi_bcast(input%coda%model, 4, mpi_character, 0, mpi_comm_world, ierr)
-      CALL mpi_bcast(input%coda%alpha, 1, mpi_real, 0, mpi_comm_world, ierr)
-      CALL mpi_bcast(input%coda%threshold, 1, mpi_real, 0, mpi_comm_world, ierr)
+      float = [input%coda%fmax, input%coda%matching, input%coda%bandwidth, input%coda%alpha, input%coda%threshold, input%source%x, &
+               input%source%y, input%source%z, input%source%strike, input%source%dip, input%source%rake, input%source%m0,  &
+               input%source%freq, input%source%azimuth, input%source%roughness, input%source%correlation, input%source%l0, &
+               input%source%aparam, input%source%vrfact, input%advanced%vrfact]
 
-      ! input
-      CALL mpi_bcast(input%input%folder, 256, mpi_character, 0, mpi_comm_world, ierr)
-      CALL mpi_bcast(input%input%format, 8, mpi_character, 0, mpi_comm_world, ierr)
-      CALL mpi_bcast(input%input%variable, 16, mpi_character, 0, mpi_comm_world, ierr)
+      CALL mpi_bcast(float, SIZE(float), mpi_real, 0, mpi_comm_world, ierr)
 
-      ! output
-      CALL mpi_bcast(input%output%folder, 256, mpi_character, 0, mpi_comm_world, ierr)
-      CALL mpi_bcast(input%input%variable, 16, mpi_character, 0, mpi_comm_world, ierr)
+      input%coda%fmax = float(1); input%coda%matching = float(2); input%coda%bandwidth = float(3); input%coda%alpha = float(4)
+      input%coda%threshold = float(5); input%source%x = float(6); input%source%y = float(7); input%source%z = float(8)
+      input%source%strike = float(9); input%source%dip = float(10); input%source%rake = float(11); input%source%m0 = float(12)
+      input%source%freq = float(13); input%source%azimuth = float(14); input%source%roughness = float(15);
+      input%source%correlation = float(16); input%source%l0 = float(17); input%source%aparam = float(17)
+      input%source%vrfact = float(18); input%advanced%vrfact = float(19)
 
-      ! source
-      CALL mpi_bcast(input%source%file, 256, mpi_character, 0, mpi_comm_world, ierr)
-      CALL mpi_bcast(input%source%type, 8, mpi_character, 0, mpi_comm_world, ierr)
+      ALLOCATE(intg(12))
+
+      IF (ALLOCATED(input%receiver)) THEN
+        intg = [SIZE(input%velocity), SIZE(input%attenuation), SIZE(input%receiver), input%coda%seed, input%coda%samples,   &
+                input%source%seed, input%source%samples, input%advanced%pmw, input%advanced%avecuts, input%advanced%sheets,  &
+                input%advanced%waves, input%advanced%verbose]
+      ENDIF
+
+      CALL mpi_bcast(intg, 12, mpi_int, 0, mpi_comm_world, ierr)
+
+      IF (.not.ALLOCATED(input%receiver)) THEN
+        ALLOCATE(input%velocity(intg(1)), input%attenuation(intg(2)), input%receiver(intg(3)))
+        input%coda%seed = intg(4); input%coda%samples = intg(5); input%source%seed = intg(6); input%source%samples = intg(7)
+        input%advanced%pmw = intg(8); input%advanced%avecuts = intg(9); input%advanced%sheets = intg(10)
+        input%advanced%waves = intg(11); input%advanced%verbose = intg(12)
+      ENDIF
+
+      DO i = 1, SIZE(input%velocity)
+        IF (ALLOCATED(input%velocity(i)%vp)) n = SIZE(input%velocity(i)%vp)
+        CALL mpi_bcast(n, 1, mpi_int, 0, mpi_comm_world, ierr)
+        IF (.not.ALLOCATED(input%velocity(i)%vp)) THEN
+          ALLOCATE(input%velocity(i)%vp(n), input%velocity(i)%vs(n), input%velocity(i)%rho(n), input%velocity(i)%depth(n))
+        ENDIF
+        float = [input%velocity(i)%vp(:), input%velocity(i)%vs(:), input%velocity(i)%rho(:), input%velocity(i)%depth(:)]
+        CALL mpi_bcast(float, SIZE(float), mpi_real, 0, mpi_comm_world, ierr)
+        input%velocity(i)%vp = float(1:n)
+        input%velocity(i)%vs = float(n+1:2*n)
+        input%velocity(i)%rho = float(2*n+1:3*n)
+        input%velocity(i)%depth = float(3*n+1:4*n)
+      ENDDO
+
+      DO i = 1, SIZE(input%attenuation)
+        IF (ALLOCATED(input%attenuation(i)%gpp)) n = SIZE(input%attenuation(i)%gpp)
+        CALL mpi_bcast(n, 1, mpi_int, 0, mpi_comm_world, ierr)
+        IF (.not.ALLOCATED(input%attenuation(i)%gpp)) THEN
+          ALLOCATE(input%attenuation(i)%gpp(n), input%attenuation(i)%gps(n), input%attenuation(i)%gss(n), input%attenuation(i)%b(n))
+          ALLOCATE(input%attenuation(i)%lcut(n), input%attenuation(i)%hcut(n))
+        ENDIF
+        float = [input%attenuation(i)%gpp(:), input%attenuation(i)%gps(:), input%attenuation(i)%gss(:), input%attenuation(i)%b(:), &
+                 input%attenuation(i)%lcut(:), input%attenuation(i)%hcut(:)]
+        CALL mpi_bcast(float, SIZE(float), mpi_real, 0, mpi_comm_world, ierr)
+        input%attenuation(i)%gpp  = float(1:n)
+        input%attenuation(i)%gps  = float(n+1:2*n)
+        input%attenuation(i)%gss  = float(2*n+1:3*n)
+        input%attenuation(i)%b    = float(3*n+1:4*n)
+        input%attenuation(i)%lcut = float(4*n+1:5*n)
+        input%attenuation(i)%hcut = float(5*n+1:6*n)
+      ENDDO
+
+      n = SIZE(input%receiver)
+
+      float = [input%receiver(:)%x, input%receiver(:)%y, input%receiver(:)%z]
+
+      CALL mpi_bcast(float, SIZE(float), mpi_real, 0, mpi_comm_world, ierr)
+
+      input%receiver(:)%x = float(1:n)
+      input%receiver(:)%y = float(n+1:2*n)
+      input%receiver(:)%z = float(2*n+1:3*n)
+
+      intg = [input%receiver(:)%velocity, input%receiver(:)%attenuation]
+
+      CALL mpi_bcast(intg, SIZE(intg), mpi_int, 0, mpi_comm_world, ierr)
+
+      input%receiver(:)%velocity = intg(1:n)
+      input%receiver(:)%attenuation = intg(n+1:2*n)
+
+      CALL mpi_bcast(input%receiver(:)%file, n*32, mpi_character, 0, mpi_comm_world, ierr)
+
+      string = input%source%file // input%source%type // input%input%folder // input%input%variable // input%input%format //  &
+               input%coda%model // input%output%folder // input%output%variable
+
+      CALL mpi_bcast(string, LEN(string), mpi_character, 0, mpi_comm_world, ierr)
+
+      input%source%file = string(1:256); n = 257
+      input%source%type = string(n:n+8-1); n = n + 8
+      input%input%folder = string(n:n+256-1); n = n + 256
+      input%input%variable = string(n:n+16-1); n = n + 16
+      input%input%format = string(n:n+8-1); n = n + 8
+      input%coda%model = string(n:n+4-1); n = n + 4
+      input%output%folder = string(n:n+256-1); n = n + 256
+      input%output%variable = string(n:n+16-1)
+
+      lg = [input%source%is_point, input%source%add_roughness, input%source%add_rik, input%coda%add_coherency]
+
+      CALL mpi_bcast(lg, SIZE(lg), mpi_logical, 0, mpi_comm_world, ierr)
+
+      input%source%is_point = lg(1); input%source%add_roughness = lg(2); input%source%add_rik = lg(3)
+      input%coda%add_coherency = lg(4)
 
 #endif
 

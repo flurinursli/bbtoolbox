@@ -18,7 +18,7 @@ ifeq ($(MPI),y)
 	PP_FLAGS += -DMPI
 endif
 
-OBJ = m_toolbox.o main.o
+OBJ = m_toolbox.o m_roughness.o m_source.o main.o
 
 #ODG = debug.o
 

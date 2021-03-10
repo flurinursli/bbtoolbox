@@ -75,7 +75,8 @@ MODULE m_strings
       !     Date                    Description of change
       !     ====                    =====================
       !   02/09/20                  original version
-      !   08/03/21                  added justify center
+      !   08/03/21                  added justify center (justify='c')
+      !   08/03/21                  m defaulted to 1 (when m=0, 'x=0' was not displayed)
       !
 
       CLASS(*),                           INTENT(IN) :: x
@@ -89,7 +90,7 @@ MODULE m_strings
       !-----------------------------------------------------------------------------------------------------------------------------
 
       w = 0
-      m = 0
+      m = 1
       p = 0
 
       ! by default, use point as decimal separator and don't add a plus in front of positive numbers
