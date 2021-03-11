@@ -18,6 +18,8 @@ MODULE m_source
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
   REAL(r32), PARAMETER :: PTSRC_FACTOR = 1._r32 / 10
+  REAL(r32), PARAMETER :: PI = 3.14159265358979323846_r64
+  REAL(r32), PARAMETER :: DEG2RAD = PI / 180
 
   TYPE :: hyp
     INTEGER(i32) :: plane
@@ -30,7 +32,9 @@ MODULE m_source
     REAL(r32)                                :: xref, yref, zref      !< location of reference point
     REAL(r32)                                :: strike, dip
     REAL(r32)                                :: targetm0
-    REAL(r32),   ALLOCATABLE, DIMENSION(:,:) :: slip, rise_time, rupture_time
+    REAL(r32),   ALLOCATABLE, DIMENSION(:)   :: z
+    REAL(r32),   ALLOCATABLE, DIMENSION(:,:) :: slip, rise, rupture, sslip, dslip
+    REAL(r32),   ALLOCATABLE, DIMENSION(:,:) :: u, v
 
   END TYPE src
 
@@ -77,11 +81,21 @@ MODULE m_source
 
     SUBROUTINE read_fsp_file(ok)
 
-      INTEGER(i32), INTENT(OUT) :: ok
-      CHARACTER(256)            :: buffer
-      INTEGER(i32)              :: lu, i, n, ntw, nsbfs, ios
-      REAL(r32)                 :: strike, dip, rake, m0, du, dv, length, width
-      REAL(r32),  ALLOCATABLE, DIMENSION(:) :: numeric
+      ! Purpose:
+      !   to read the source properties specified in a FSP file.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      INTEGER(i32),                            INTENT(OUT) :: ok
+      CHARACTER(256)                                       :: buffer
+      INTEGER(i32)                                         :: lu, i, j, k, n, ntw, nsbfs, ios, index, islip, irake, irupt
+      INTEGER(i32)                                         :: irise, iplane, iew, ins, iz
+      REAL(r32)                                            :: strike, dip, rake, m0, du, dv, length, width, ew, ns
+      REAL(r32),     ALLOCATABLE, DIMENSION(:)             :: numeric
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
@@ -128,49 +142,113 @@ MODULE m_source
       plane(:)%dip    = dip
 
       ! cycle over planes to override some parameters (e.g. strike, length) and assign others (slip, z)
-      DO i = 1, SIZE(plane)
+      DO k = 1, SIZE(plane)
 
-        CALL parse(ok, strike, lu, 'STRIKE', ['=', ' '], '% SEGMENT', i)
-        CALL parse(ok, dip, lu, 'DIP', ['=', ' '], '% SEGMENT', i)
+        CALL parse(ok, strike, lu, 'STRIKE', ['=', ' '], '% SEGMENT', k)
+        CALL parse(ok, dip, lu, 'DIP', ['=', ' '], '% SEGMENT', k)
 
-        IF (.not.is_empty(strike)) plane(i)%strike = strike
-        IF (.not.is_empty(dip))    plane(i)%dip    = dip
+        ! single planes do not have "SEGMENT" statements: in this case do not overwrite
+        IF (.not.is_empty(strike)) plane(k)%strike = strike
+        IF (.not.is_empty(dip))    plane(k)%dip    = dip
 
-        CALL parse(ok, length, lu, 'LEN', ['=', ' '], '%', nfield = i + 2)
-        CALL parse(ok, width, lu, 'WID', ['=', ' '], '%', nfield = i + 1)
+        ! ...as above
+        CALL parse(ok, length, lu, 'LEN', ['=', ' '], '%', nfield = k + 2)
+        CALL parse(ok, width, lu, 'WID', ['=', ' '], '%', nfield = k + 1)
 
-        IF (.not.is_empty(length)) plane(i)%length = length
-        IF (.not.is_empty(width))  plane(i)%width  = width
+        IF (.not.is_empty(length)) plane(k)%length = length
+        IF (.not.is_empty(width))  plane(k)%width  = width
 
         ! determine number of subfaults
-        plane(i)%nu = NINT(plane(i)%length / du)
-        plane(i)%nv = NINT(plane(i)%width / dv)
+        plane(k)%nu = NINT(plane(k)%length / du)
+        plane(k)%nv = NINT(plane(k)%width / dv)
 
         ! read explicitly number of subfaults and raise error for mismatch
-        CALL parse(ok, nsbfs, lu, 'Nsbfs', ['=', ' '], '%', nfield = i)
+        CALL parse(ok, nsbfs, lu, 'Nsbfs', ['=', ' '], '%', nfield = k)
 
-        IF (nsbfs .ne. plane(i)%nu*plane(i)%nv) THEN
-          CALL report_error('Number of subfaults mismatching for fault plane ' + num2char(i))
+        IF (nsbfs .ne. plane(k)%nu*plane(k)%nv) THEN
+          CALL report_error('Number of subfaults mismatching for fault plane ' + num2char(k))
           ok = 1
           RETURN
         ENDIF
 
         ! add a couple of extra points to the number of subfaults
-        plane(i)%nu = plane(i)%nu + 2
-        plane(i)%nv = plane(i)%nv + 2
+        plane(k)%nu = plane(k)%nu + 2
+        plane(k)%nv = plane(k)%nv + 2
 
+        ALLOCATE(plane(k)%slip(plane(k)%nu, plane(k)%nv), plane(k)%rise(plane(k)%nu, plane(k)%nv))
+        ALLOCATE(plane(k)%rupture(plane(k)%nu, plane(k)%nv), plane(k)%sslip(plane(k)%nu, plane(k)%nv))
+        ALLOCATE(plane(k)%dslip(plane(k)%nu, plane(k)%nv), plane(k)%u(plane(k)%nu, plane(k)%nv))
+        ALLOCATE(plane(k)%v(plane(k)%nu, plane(k)%nv), plane(k)%z(plane(k)%nv))
 
-! down here
+        plane(k)%slip = 0._r32
+
+        iplane = 0
+
+        ! read and store physical quantities associated to current subfault
         DO
           READ(lu, '(A256)', iostat = ios) buffer
 
           IF (ios .eq. -1) EXIT                       !< EOF reached: quit loop
 
-          CALL parse_columns(buffer, numeric)
+          IF (INDEX(buffer, 'Y==NS') .ne. 0) THEN
 
-          IF (ALLOCATED(numeric)) print*, numeric
+            iplane = iplane + 1           !< need to count plane number because "parse" rewind file
+
+            IF (iplane .eq. k) THEN
+
+              islip = parse_split_index(buffer, 'SLIP', ' ') - 1
+              irake = parse_split_index(buffer, 'RAKE', ' ') - 1
+              irupt = parse_split_index(buffer, 'RUPT', ' ') - 1
+              irise = parse_split_index(buffer, 'RISE', ' ') - 1
+              iew = parse_split_index(buffer, 'X==EW', ' ') - 1
+              ins = parse_split_index(buffer, 'Y==NS', ' ') - 1
+              iz  = parse_split_index(buffer, 'Z', ' ') - 1
+
+              READ(lu, '(A256)', iostat = ios) buffer
+
+              DO j = 2, plane(k)%nv - 1
+                DO i = 2, plane(k)%nu - 1
+
+                  READ(lu, '(A256)', iostat = ios) buffer
+
+                  CALL parse_split(buffer, numeric)
+
+                  ! read position (top-center) of first sub-source on fsp coordinate system: this will be used to set a reference
+                  ! point in our coordinate system
+                  IF (i .eq. 2 .and. j .eq. 2) THEN
+                    ew = numeric(iew)
+                    ns = numeric(ins)
+                    plane(k)%zref = numeric(iz)
+                  ENDIF
+
+                  plane(k)%slip(i, j) = numeric(islip)
+
+                  IF (irupt .gt. 0) plane(k)%rupture(i, j) = numeric(irupt)
+                  IF (irise .gt. 0) plane(k)%rise(i, j) = numeric(irise)
+                  IF (irake .gt. 0) rake = numeric(irake)
+
+                  ! resolve slip in along strike and down-dip slip
+                  rake = rake * DEG2RAD
+                  plane(k)%sslip(i, j) = COS(rake)
+                  plane(k)%dslip(i, j) = -SIN(rake)
+
+                ENDDO
+              ENDDO
+
+              EXIT
+
+            ENDIF
+
+          ENDIF
+
         ENDDO
+
         REWIND(lu)
+
+        ! fill arrays with on-fault coordinates U-V: origin is set at upper left edge
+        DO i = 2, plane(k)%nu - 1
+          plane(k)%u(i) =
+
 
       ENDDO
 

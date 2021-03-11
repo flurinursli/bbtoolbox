@@ -18,6 +18,7 @@ output folder = '/home/walter/Software/bbtolbox/test/hf', variable = 'accelerati
 
 # ... or extended source (incl. roughness and RIK parameters: these are optional)
 # file format is determined from file extension
+# in this case x,y is the position of reference point (e.g. epicenter for FSP format) in the bbtolbox reference system
 rupture file = '/home/walter/Software/bbtoolbox/test/s1999HECTOR01JONS.fsp', x=100, y=2000, type='Brune', azimuth=15, roughness=-2.0,  +
 # rik
 corr=0.7, l0=0.3, aparam=1.0, vrfact=0.85, seed = 74921, samples = 1,

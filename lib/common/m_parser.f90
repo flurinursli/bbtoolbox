@@ -62,7 +62,7 @@ MODULE m_parser
 
   PRIVATE
 
-  PUBLIC :: parse, parser_error, recurrences, is_empty, read_miniseed, parse_columns
+  PUBLIC :: parse, parser_error, recurrences, is_empty, read_miniseed, parse_split, parse_split_index
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * -
 
@@ -70,6 +70,10 @@ MODULE m_parser
     MODULE PROCEDURE parse_char, parse_char_vec, parse_char_mat, parse_int, parse_int_vec, parse_int_mat, parse_real,  &
                      parse_real_vec, parse_real_mat
   END INTERFACE parse
+
+  INTERFACE parse_split
+    MODULE PROCEDURE parse_split_r32
+  END INTERFACE parse_split
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * -
 
@@ -1079,7 +1083,7 @@ MODULE m_parser
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE parse_columns(line, numeric)
+    SUBROUTINE parse_split_r32(line, numeric)
 
       ! Purpose:
       !   to read a line containing an arbitrary number of numeric values and returning each entry separately.
@@ -1110,7 +1114,56 @@ MODULE m_parser
 
       numeric = x(1:n)
 
-    END SUBROUTINE parse_columns
+    END SUBROUTINE parse_split_r32
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    FUNCTION parse_split_index(line, word, separator) RESULT(col)
+
+      ! Purpose:
+      !   to split "line" according to "separator" and return at which index "word" is found (0 otherwise)
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      CHARACTER(*),                                        INTENT(IN)  :: line, word, separator
+      INTEGER(i32)                                                     :: i, w, column, col
+      CHARACTER(:), ALLOCATABLE                                        :: buffer
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      w = LEN(word)
+
+      column = 0
+      col    = 0
+
+      buffer = separator + TRIM(line)
+
+      DO i = 2, LEN_TRIM(buffer) - w + 1
+
+        IF (buffer(i:i) .ne. separator) THEN          !< we have some text
+
+          IF (buffer(i-1:i-1) .eq. separator) THEN    !< previous character was a separator
+
+            column = column + 1
+
+            IF (buffer(i:i + w - 1) .eq. word) THEN   !< word found: stop search
+              col = column
+              EXIT
+            ENDIF
+
+          ENDIF
+
+        ENDIF
+
+      ENDDO
+
+    END FUNCTION parse_split_index
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
