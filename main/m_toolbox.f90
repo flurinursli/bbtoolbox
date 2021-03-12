@@ -5,6 +5,9 @@ MODULE m_toolbox
   USE, NON_INTRINSIC :: m_logfile
   USE, NON_INTRINSIC :: m_parser
   USE, NON_INTRINSIC :: m_strings
+#ifdef MPI
+  USE                :: mpi
+#endif
 
   IMPLICIT none
 
@@ -12,7 +15,7 @@ MODULE m_toolbox
 
   PRIVATE
 
-  PUBLIC :: input, read_input_file, echo_input, broadcast, watch_start, watch_stop, geo2utm, issing_arg
+  PUBLIC :: input, read_input_file, echo_input, broadcast, watch_start, watch_stop, geo2utm, missing_arg
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -668,6 +671,13 @@ MODULE m_toolbox
 
       IF (.not.is_empty(p)) input%advanced%verbose = p
 
+      CLOSE(lu, iostat = ok)
+
+      IF (ok .ne. 0) THEN
+        CALL report_error('Error while closing file ' + fo)
+        RETURN
+      ENDIF
+
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! -------------------------------------- check whether all input parameters make sense ---------------------------------------
 
@@ -847,7 +857,6 @@ MODULE m_toolbox
       !
 
       USE, INTRINSIC     :: iso_fortran_env, only: compiler_version
-      USE, NON_INTRINSIC :: m_logfile
 
       INTEGER(i32) :: i, j
 
@@ -1080,9 +1089,6 @@ MODULE m_toolbox
       !
 
 #ifdef MPI
-      USE                :: mpi
-      USE, NON_INTRINSIC :: m_precisions
-      USE, NON_INTRINSIC :: m_logfile
 
       INTEGER(i32)                            :: ierr, i, n
       CHARACTER(:), ALLOCATABLE               :: string
