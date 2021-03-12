@@ -19,23 +19,20 @@ MODULE m_source
 
   REAL(r32), PARAMETER :: PTSRC_FACTOR = 1._r32 / 10
   REAL(r32), PARAMETER :: PI = 3.14159265358979323846_r64
-  REAL(r32), PARAMETER :: DEG2RAD = PI / 180
+  REAL(r32), PARAMETER :: DEG_TO_RAD = PI / 180
 
   TYPE :: hyp
-    INTEGER(i32) :: plane
-    REAL(r32)    :: u, v
+    INTEGER(i32) :: plane        !< plane number where hypocenter is located
+    REAL(r32)    :: u, v         !< on-fault coordinates
   END TYPE hyp
 
   TYPE :: src
-    INTEGER(i32)                             :: nu, nv                !< points along strike and dip
-    REAL(r32)                                :: length, width
-    REAL(r32)                                :: xref, yref, zref      !< location of reference point
-    REAL(r32)                                :: strike, dip
-    REAL(r32)                                :: targetm0
-    REAL(r32),   ALLOCATABLE, DIMENSION(:)   :: z
-    REAL(r32),   ALLOCATABLE, DIMENSION(:,:) :: slip, rise, rupture, sslip, dslip
-    REAL(r32),   ALLOCATABLE, DIMENSION(:,:) :: u, v
-
+    INTEGER(i32)                             :: nu, nv                             !< points along strike and dip (segment-specific)
+    REAL(r32)                                :: length, width, strike, dip         !< segment-specific
+    REAL(r32)                                :: targetm0                           !< total moment (sum over all segments)
+    REAL(r32)                                :: x, y, z                            !< position of u=v=0
+    REAL(r32),   ALLOCATABLE, DIMENSION(:,:) :: rise, rupture, sslip, dslip
+    REAL(r32),   ALLOCATABLE, DIMENSION(:,:) :: u, v                               !< on-fault coordinates
   END TYPE src
 
   TYPE(hyp)                            :: hypocenter
@@ -93,7 +90,7 @@ MODULE m_source
       INTEGER(i32),                            INTENT(OUT) :: ok
       CHARACTER(256)                                       :: buffer
       INTEGER(i32)                                         :: lu, i, j, k, n, ntw, nsbfs, ios, index, islip, irake, irupt
-      INTEGER(i32)                                         :: irise, iplane, iew, ins, iz
+      INTEGER(i32)                                         :: irise, iplane, ilon, ilat, iz
       REAL(r32)                                            :: strike, dip, rake, m0, du, dv, length, width, ew, ns
       REAL(r32),     ALLOCATABLE, DIMENSION(:)             :: numeric
 
@@ -128,18 +125,18 @@ MODULE m_source
       CALL parse(ok, width, lu, 'WID', ['=',' '], '% Size')             !< fault width
       CALL parse(ok, m0, lu, 'Mo', ['=', ' '], '% Size')                !< total moment
 
-      plane(:)%length   = length
-      plane(:)%width    = width
-      plane(:)%targetm0 = m0
-
-      roughness%length = length
-
       CALL parse(ok, strike, lu, 'STRK', ['=', ' '], '% Mech')
       CALL parse(ok, dip, lu, 'DIP', ['=', ' '], '% Mech')
       CALL parse(ok, rake, lu, 'RAKE', ['=', ' '], '% Mech')
 
+      rake = rake * DEG_TO_RAD
+
+      ! assign some properties to all segments (required if we have one segment only)
       plane(:)%strike = strike
       plane(:)%dip    = dip
+      plane(:)%length = length
+      plane(:)%width  = width
+      plane(:)%targetm0 = m0
 
       ! cycle over planes to override some parameters (e.g. strike, length) and assign others (slip, z)
       DO k = 1, SIZE(plane)
@@ -147,14 +144,14 @@ MODULE m_source
         CALL parse(ok, strike, lu, 'STRIKE', ['=', ' '], '% SEGMENT', k)
         CALL parse(ok, dip, lu, 'DIP', ['=', ' '], '% SEGMENT', k)
 
-        ! single planes do not have "SEGMENT" statements: in this case do not overwrite
+        ! overwrite if we have segment-specific values
         IF (.not.is_empty(strike)) plane(k)%strike = strike
         IF (.not.is_empty(dip))    plane(k)%dip    = dip
 
-        ! ...as above
         CALL parse(ok, length, lu, 'LEN', ['=', ' '], '%', nfield = k + 2)
         CALL parse(ok, width, lu, 'WID', ['=', ' '], '%', nfield = k + 1)
 
+        ! ...as above
         IF (.not.is_empty(length)) plane(k)%length = length
         IF (.not.is_empty(width))  plane(k)%width  = width
 
@@ -171,16 +168,14 @@ MODULE m_source
           RETURN
         ENDIF
 
-        ! add a couple of extra points to the number of subfaults
+        ! add "edge" points: here slip will be set to zero
         plane(k)%nu = plane(k)%nu + 2
         plane(k)%nv = plane(k)%nv + 2
 
-        ALLOCATE(plane(k)%slip(plane(k)%nu, plane(k)%nv), plane(k)%rise(plane(k)%nu, plane(k)%nv))
-        ALLOCATE(plane(k)%rupture(plane(k)%nu, plane(k)%nv), plane(k)%sslip(plane(k)%nu, plane(k)%nv))
-        ALLOCATE(plane(k)%dslip(plane(k)%nu, plane(k)%nv), plane(k)%u(plane(k)%nu, plane(k)%nv))
-        ALLOCATE(plane(k)%v(plane(k)%nu, plane(k)%nv), plane(k)%z(plane(k)%nv))
+        ALLOCATE(plane(k)%rise(plane(k)%nu, plane(k)%nv), plane(k)%rupture(plane(k)%nu, plane(k)%nv))
+        ALLOCATE(plane(k)%sslip(plane(k)%nu, plane(k)%nv), plane(k)%dslip(plane(k)%nu, plane(k)%nv))
 
-        plane(k)%slip = 0._r32
+        plane(k)%slip(:) = 0._r32
 
         iplane = 0
 
@@ -196,13 +191,13 @@ MODULE m_source
 
             IF (iplane .eq. k) THEN
 
+              ilon  = parse_split_index(buffer, 'LON', ' ') - 1
+              ilat  = parse_split_index(buffer, 'LAT', ' ') - 1
+              iz    = parse_split_index(buffer, 'Z', ' ') - 1
               islip = parse_split_index(buffer, 'SLIP', ' ') - 1
               irake = parse_split_index(buffer, 'RAKE', ' ') - 1
               irupt = parse_split_index(buffer, 'RUPT', ' ') - 1
               irise = parse_split_index(buffer, 'RISE', ' ') - 1
-              iew = parse_split_index(buffer, 'X==EW', ' ') - 1
-              ins = parse_split_index(buffer, 'Y==NS', ' ') - 1
-              iz  = parse_split_index(buffer, 'Z', ' ') - 1
 
               READ(lu, '(A256)', iostat = ios) buffer
 
@@ -213,24 +208,21 @@ MODULE m_source
 
                   CALL parse_split(buffer, numeric)
 
-                  ! read position (top-center) of first sub-source on fsp coordinate system: this will be used to set a reference
-                  ! point in our coordinate system
+                  ! get position (top-center) of first subfault: in our system, this is were u=v=0
+                  ! move from geographical to utm coordinates (y is "east-west" as lon, x is "north-south" as lat)
                   IF (i .eq. 2 .and. j .eq. 2) THEN
-                    ew = numeric(iew)
-                    ns = numeric(ins)
-                    plane(k)%zref = numeric(iz)
+                    plane(k)%z = numeric(iz)
+                    CALL geo2utm(numeric(ilon), numeric(ilat), input%origin%lon, input%origin%lat, plane(i)%y, plane(i)%x)
                   ENDIF
 
-                  plane(k)%slip(i, j) = numeric(islip)
+                  IF (irake .gt. 0) rake = numeric(irake) * DEG_TO_RAD
+
+                  ! get along-strike and down-dip components of slip
+                  plane(k)%sslip(i, j) = numeric(islip) * COS(rake)
+                  plane(k)%dslip(i, j) = numeric(islip) * -SIN(rake)          !< in our system slip is positive down-dip
 
                   IF (irupt .gt. 0) plane(k)%rupture(i, j) = numeric(irupt)
                   IF (irise .gt. 0) plane(k)%rise(i, j) = numeric(irise)
-                  IF (irake .gt. 0) rake = numeric(irake)
-
-                  ! resolve slip in along strike and down-dip slip
-                  rake = rake * DEG2RAD
-                  plane(k)%sslip(i, j) = COS(rake)
-                  plane(k)%dslip(i, j) = -SIN(rake)
 
                 ENDDO
               ENDDO
@@ -245,12 +237,16 @@ MODULE m_source
 
         REWIND(lu)
 
+        ALLOCATE(plane(k)%u(plane(k)%nu), plane(k)%v(plane(k)%nv))
+
         ! fill arrays with on-fault coordinates U-V: origin is set at upper left edge
         DO i = 2, plane(k)%nu - 1
-          plane(k)%u(i) =
-
+          !plane(k)%u(i) =
+        ENDDO
 
       ENDDO
+
+
 
 
     END SUBROUTINE read_fsp_file

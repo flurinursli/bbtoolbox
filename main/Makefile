@@ -18,12 +18,21 @@ ifeq ($(MPI),y)
 	PP_FLAGS += -DMPI
 endif
 
+m_toolbox.o : $(CPP_OBJ)
+
+# list C++ objects
+CPP_OBJ = geo2utm.o
+
+# compile C++ objects
+$(CPP_OBJ) : %.o : %.cpp
+	$(C++) -O3 -c -o $@ $<
+
 OBJ = m_toolbox.o m_roughness.o m_source.o main.o
 
 #ODG = debug.o
 
-main : $(OBJ)
-	$(FC) $(OPT) $(OMP) -o ../toolbox.exe $(OBJ) -L../lib/common/lib -L../lib/llsq/lib -L../lib/fft/lib -L../lib/interpolation/lib -L../lib/filter/lib -L../lib/rtt/lib -L$(FFTW_PATH)/lib -L$(LAPACK_PATH) -L$(GSL_PATH) -lcommon -lllsqf -lfilterf -lfft -linterplf -lllsq -lrtt $(LINK_FLAGS) -lgsl -lgslcblas -linterpl
+main : $(OBJ) $(CPP_OBJ)
+	$(FC) $(OPT) $(OMP) -o ../toolbox.exe $(CPP_OBJ) $(OBJ) -L../lib/common/lib -L../lib/llsq/lib -L../lib/fft/lib -L../lib/interpolation/lib -L../lib/filter/lib -L../lib/rtt/lib -L$(PROJ4_PATH) -L$(FFTW_PATH)/lib -L$(LAPACK_PATH) -L$(GSL_PATH) -lcommon -lllsqf -lfilterf -lfft -linterplf -lllsq -lrtt $(LINK_FLAGS) -lgsl -lgslcblas -linterpl -lstdc++ -lproj
 
 #dbg : $(ODG)
 #	$(FC) $(OPT) $(OMP) -o ../debug.exe $(ODG) -L../lib/common/lib -L../lib/llsq/lib -L../lib/fft/lib -L../lib/interpolation/lib -L../lib/rtt/lib -L$(FFTW_PATH)/lib -L$(LAPACK_PATH) -L$(GSL_PATH) -lrtt -lfft -lllsq -lcommon $(LINK_FLAGS) -lgsl -lgslcblas -linterpl

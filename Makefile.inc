@@ -1,5 +1,6 @@
 # mpi wrapper
 FC = mpif90
+C++ = mpic++
 
 # optimization flags for GCC (add "-march=native" if compute node eqv. compile node)
 OPT = -g -std=f2008 -fcheck=all -fbacktrace
@@ -20,6 +21,9 @@ INCL_FFTW = $(FFTW_PATH)/include
 
 # allow MPI compilation
 MPI = y
+
+# proj4 library path
+PROJ4_PATH =
 
 # make use of MKL libraries
 #MKL = y

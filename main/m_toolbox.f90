@@ -1,5 +1,6 @@
 MODULE m_toolbox
 
+  USE, INTRINSIC     :: iso_c_binding
   USE, NON_INTRINSIC :: m_precisions
   USE, NON_INTRINSIC :: m_logfile
   USE, NON_INTRINSIC :: m_parser
@@ -11,7 +12,7 @@ MODULE m_toolbox
 
   PRIVATE
 
-  PUBLIC :: input, read_input_file, echo_input, broadcast, watch_start, watch_stop, missing_arg
+  PUBLIC :: input, read_input_file, echo_input, broadcast, watch_start, watch_stop, geo2utm, issing_arg
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -19,21 +20,34 @@ MODULE m_toolbox
     MODULE PROCEDURE assert_i32, assert_r32
   END INTERFACE assert
 
+  INTERFACE
+    SUBROUTINE geo2utm(long, lat, long_0, lat_0, easting, northing) bind(C, name="fun_c")
+      USE, INTRINSIC     :: iso_c_binding
+      USE, NON_INTRINSIC :: m_precisions
+      IMPLICIT none
+      REAL(c_r32), VALUE       :: long, lat, long_0, lat_0
+      REAL(c_r32), INTENT(OUT) :: easting, northing
+    END SUBROUTINE
+  END INTERFACE
+
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
+  REAL(r32), PARAMETER :: DEFAULT_VPGRAD = 0.01_r32, DEFAULT_VSGRAD = 0.01_r32
+
   TYPE :: src
-    CHARACTER(8)   :: type
+    CHARACTER(8)   :: type = "Brune"
     CHARACTER(256) :: file
     INTEGER(i32)   :: seed, samples
     LOGICAL        :: is_point = .false., add_roughness = .true., add_rik = .true.
-    REAL(r32)      :: x, y, z, m0, strike, dip, rake, freq, azimuth
+    REAL(r32)      :: x, y, lon, lat, z, m0, strike, dip, rake
+    REAL(r32)      :: freq = 6.28_r32
     REAL(r32)      :: roughness, correlation, l0, aparam, vrfact
   END TYPE src
 
   TYPE :: rcv
     CHARACTER(32) :: file
     INTEGER(i32)  :: attenuation, velocity
-    REAL(r32)     :: x, y, z
+    REAL(r32)     :: x, y, z, lon, lat
   END TYPE rcv
 
   TYPE :: att
@@ -41,7 +55,7 @@ MODULE m_toolbox
   END TYPE att
 
   TYPE :: mdl
-    REAL(r32), ALLOCATABLE, DIMENSION(:) :: vp, vs, rho, depth
+    REAL(r32), ALLOCATABLE, DIMENSION(:) :: vp, vs, rho, depth, vpgrad, vsgrad
   END TYPE mdl
 
   TYPE :: io
@@ -62,7 +76,13 @@ MODULE m_toolbox
     REAL(r32)    :: vrfact = 0.85_r32
   END TYPE adv
 
+  TYPE :: org
+    LOGICAL   :: is_geo = .true.
+    REAL(r32) :: lon, lat
+  END TYPE org
+
   TYPE dict
+    TYPE(org)                            :: origin
     TYPE(adv)                            :: advanced
     TYPE(hf)                             :: coda
     TYPE(io)                             :: input, output
@@ -99,7 +119,7 @@ MODULE m_toolbox
       CHARACTER(64)                                         :: fo
       CHARACTER(:), ALLOCATABLE                             :: str
       INTEGER(i32)                                          :: lu, n, i, p
-      REAL(r32)                                             :: z, vp, vs, rho
+      REAL(r32)                                             :: z, lon, lat, vp, vs, rho, vpgrad, vsgrad, freq
       REAL(r32),    ALLOCATABLE, DIMENSION(:,:)             :: fbands
 
       !-----------------------------------------------------------------------------------------------------------------------------
@@ -121,6 +141,21 @@ MODULE m_toolbox
       ENDIF
 
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+      ! ----------------------------------------------------- origin ---------------------------------------------------------------
+
+      CALL parse(ok, input%origin%lon, lu, 'lon', ['=',' '], 'origin', com='#')
+      CALL missing_arg(ok, .false., '')
+
+      IF (ok .ne. 0) RETURN
+
+      CALL parse(ok, input%origin%lat, lu, 'lat', ['=',' '], 'origin', com='#')
+      CALL missing_arg(ok, .false., '')
+
+      IF (ok .ne. 0) RETURN
+
+      IF (is_empty(input%origin%lon) .and. is_empty(input%origin%lat)) input%origin%is_geo = .false.
+
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! --------------------------------------------------- attenuation ------------------------------------------------------------
 
       n = recurrences(ok, lu, 'attenuation', key = 'attenuation', com = '#')                        !< number of attenuation models
@@ -129,7 +164,6 @@ MODULE m_toolbox
       IF (ok .ne. 0) RETURN
 
       ALLOCATE(input%attenuation(n))
-
 
       DO i = 1, n
 
@@ -179,7 +213,7 @@ MODULE m_toolbox
 
       ! find number of velocity models by counting how many times a "layer" command without "depth" field is present
       DO i = 1, n
-        CALL parse(ok, z, lu, 'depth', ['=', ','], 'layer', nkey = i, com = '#')
+        CALL parse(ok, z, lu, 'depth', ['=', ' '], 'layer', nkey = i, com = '#')
         IF (is_empty(z)) p = p + 1
       ENDDO
 
@@ -189,38 +223,57 @@ MODULE m_toolbox
 
       DO i = 1, n
 
-        CALL parse(ok, z, lu, 'depth', ['=', ','], 'layer', nkey = i, com = '#')
+        CALL parse(ok, z, lu, 'depth', ['=', ' '], 'layer', nkey = i, com = '#')
 
         IF (is_empty(z)) THEN
-          p = p + 1
           z = 0._r32
+          p = p + 1
         ENDIF
 
-        CALL parse(ok, vp, lu, 'vp', ['=', ','], 'layer', nkey = i, com = '#')     !< vp
+        CALL parse(ok, vpgrad, lu, 'vpgrad', ['=', ' '], 'layer', nkey = i, com = '#')
+        CALL missing_arg(ok, .false., '')
+
+        IF (ok .ne. 0) RETURN
+
+        IF (is_empty(vpgrad)) vpgrad = DEFAULT_VPGRAD
+
+        CALL parse(ok, vsgrad, lu, 'vsgrad', ['=', ' '], 'layer', nkey = i, com = '#')
+        CALL missing_arg(ok, .false., '')
+
+        IF (ok .ne. 0) RETURN
+
+        IF (is_empty(vsgrad)) vsgrad = DEFAULT_VSGRAD
+
+        CALL parse(ok, vp, lu, 'vp', ['=', ' '], 'layer', nkey = i, com = '#')     !< vp
         CALL missing_arg(ok, is_empty(vp), 'Argument "vp" for layer keyword #' + num2char(i) + 'not found')
 
         IF (ok .ne. 0) RETURN
 
-        CALL parse(ok, vs, lu, 'vs', ['=', ','], 'layer', nkey = i, com = '#')     !< vs
+        CALL parse(ok, vs, lu, 'vs', ['=', ' '], 'layer', nkey = i, com = '#')     !< vs
         CALL missing_arg(ok, is_empty(vs), 'Argument "vs" for layer keyword #' + num2char(i) + 'not found')
 
         IF (ok .ne. 0) RETURN
 
-        CALL parse(ok, rho, lu, 'rho', ['=', ','], 'layer', nkey = i, com = '#')    !< rho
+        CALL parse(ok, rho, lu, 'rho', ['=', ' '], 'layer', nkey = i, com = '#')    !< rho
         CALL missing_arg(ok, is_empty(rho), 'Argument "rho" for layer keyword #' + num2char(i) + 'not found')
 
         IF (ok .ne. 0) RETURN
 
         IF (.not.ALLOCATED(input%velocity(p)%depth)) THEN
-          input%velocity(p)%depth = [z]
-          input%velocity(p)%vp    = [vp]
-          input%velocity(p)%vs    = [vs]
-          input%velocity(p)%rho   = [rho]
+          input%velocity(p)%vp  = [vp]
+          input%velocity(p)%vs  = [vs]
+          input%velocity(p)%rho = [rho]
+          input%velocity(p)%vpgrad = [vpgrad]
+          input%velocity(p)%vsgrad = [vsgrad]
+          IF (.not.is_empty(z)) input%velocity(p)%depth  = [z]
+
         ELSE
-          input%velocity(p)%depth = [input%velocity(p)%depth, z]
-          input%velocity(p)%vp    = [input%velocity(p)%vp, vp]
-          input%velocity(p)%vs    = [input%velocity(p)%vs, vs]
-          input%velocity(p)%rho   = [input%velocity(p)%rho, rho]
+          input%velocity(p)%vp  = [input%velocity(p)%vp, vp]
+          input%velocity(p)%vs  = [input%velocity(p)%vs, vs]
+          input%velocity(p)%rho = [input%velocity(p)%rho, rho]
+          input%velocity(p)%vpgrad = [input%velocity(p)%vpgrad, vpgrad]
+          input%velocity(p)%vsgrad = [input%velocity(p)%vsgrad, vsgrad]
+          IF (.not.is_empty(z)) input%velocity(p)%depth = [input%velocity(p)%depth, z]
         ENDIF
 
       ENDDO
@@ -246,29 +299,48 @@ MODULE m_toolbox
 
         input%receiver(i)%file = TRIM(str)      !< file
 
-        CALL parse(ok, input%receiver(i)%velocity, lu, 'velocity', ['=', ','], 'rec', nkey = i, com = '#')   !< velocity
-        CALL missing_arg(ok, is_empty(input%receiver(i)%velocity), 'Argument "velocity" for receiver #' + num2char(i) +  &
-        ' not found')
+        CALL parse(ok, input%receiver(i)%velocity, lu, 'velocity', ['=', ' '], 'rec', nkey = i, com = '#')   !< velocity
+        CALL missing_arg(ok, .false., '')
 
         IF (ok .ne. 0) RETURN
 
-        CALL parse(ok, input%receiver(i)%attenuation, lu, 'attenuation', ['=', ','], 'rec', nkey = i, com = '#')  !< attenuation
-        CALL missing_arg(ok, is_empty(input%receiver(i)%attenuation), 'Argument "attenuation" for receiver #' + num2char(i) +  &
-        ' not found')
+        IF (is_empty(input%receiver(i)%velocity)) input%receiver(i)%velocity = 1
+
+        CALL parse(ok, input%receiver(i)%attenuation, lu, 'attenuation', ['=', ' '], 'rec', nkey = i, com = '#')  !< attenuation
+        CALL missing_arg(ok, .false., '')
 
         IF (ok .ne. 0) RETURN
 
-        CALL parse(ok, input%receiver(i)%x, lu, 'x', ['=', ','], 'rec', nkey = i, com = '#')       !< x
-        CALL missing_arg(ok, is_empty(input%receiver(i)%x), 'Argument "x" for receiver #' + num2char(i) + ' not found')
+        IF (is_empty(input%receiver(i)%attenuation)) input%receiver(i)%attenuation = 1
 
-        IF (ok .ne. 0) RETURN
+        IF (input%origin%is_geo) THEN
+          CALL parse(ok, input%receiver(i)%lon, lu, 'lon', ['=', ' '], 'rec', nkey = i, com = '#')       !< lon
+          CALL missing_arg(ok, is_empty(input%receiver(i)%lon), 'Argument "lon" for receiver #' + num2char(i) + ' not found')
 
-        CALL parse(ok, input%receiver(i)%y, lu, 'y', ['=', ','], 'rec', nkey = i, com = '#')       !< y
-        CALL missing_arg(ok, is_empty(input%receiver(i)%y), 'Argument "y" for receiver #' + num2char(i) + ' not found')
+          IF (ok .ne. 0) RETURN
 
-        IF (ok .ne. 0) RETURN
+          CALL parse(ok, input%receiver(i)%lat, lu, 'lat', ['=', ' '], 'rec', nkey = i, com = '#')       !< lat
+          CALL missing_arg(ok, is_empty(input%receiver(i)%lat), 'Argument "lat" for receiver #' + num2char(i) + ' not found')
 
-        CALL parse(ok, input%receiver(i)%z, lu, 'z', ['=', ','], 'rec', nkey = i, com = '#')    !< z
+          IF (ok .ne. 0) RETURN
+
+          ! move from geographical to utm coordinates (y is "east-west" as lon, x is "north-south" as lat)
+          CALL geo2utm(input%receiver(i)%lon, input%receiver(i)%lat, input%origin%lon, input%origin%lat, input%receiver(i)%y,  &
+                       input%receiver(i)%x)
+
+        ELSE
+          CALL parse(ok, input%receiver(i)%x, lu, 'x', ['=', ' '], 'rec', nkey = i, com = '#')       !< x
+          CALL missing_arg(ok, is_empty(input%receiver(i)%x), 'Argument "x" for receiver #' + num2char(i) + ' not found')
+
+          IF (ok .ne. 0) RETURN
+
+          CALL parse(ok, input%receiver(i)%y, lu, 'y', ['=', ' '], 'rec', nkey = i, com = '#')       !< y
+          CALL missing_arg(ok, is_empty(input%receiver(i)%y), 'Argument "y" for receiver #' + num2char(i) + ' not found')
+
+          IF (ok .ne. 0) RETURN
+        ENDIF
+
+        CALL parse(ok, input%receiver(i)%z, lu, 'z', ['=', ' '], 'rec', nkey = i, com = '#')    !< z
         CALL missing_arg(ok, is_empty(input%receiver(i)%z), 'Argument "z" for receiver #' + num2char(i) + ' not found')
 
         IF (ok .ne. 0) RETURN
@@ -278,27 +350,27 @@ MODULE m_toolbox
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! ------------------------------------------------ coda parameters -----------------------------------------------------------
 
-      CALL parse(ok, input%coda%fmax, lu, 'fmax', ['=', ','], 'coda', com = '#')               !< fmax
+      CALL parse(ok, input%coda%fmax, lu, 'fmax', ['=', ' '], 'coda', com = '#')               !< fmax
       CALL missing_arg(ok, is_empty(input%coda%fmax), 'Argument "fmax" for keyword "coda" not found')
 
       IF (ok .ne. 0) RETURN
 
-      CALL parse(ok, input%coda%matching, lu, 'matching frequency', ['=', ','], 'coda', com = '#')    !< matching
+      CALL parse(ok, input%coda%matching, lu, 'matching frequency', ['=', ' '], 'coda', com = '#')    !< matching
       CALL missing_arg(ok, is_empty(input%coda%matching), 'Argument "matching frequency" for keyword "coda" not found')
 
       IF (ok .ne. 0) RETURN
 
-      CALL parse(ok, input%coda%bandwidth, lu, 'bandwidth', ['=', ','], 'coda', com = '#')     !< bandwidth
+      CALL parse(ok, input%coda%bandwidth, lu, 'bandwidth', ['=', ' '], 'coda', com = '#')     !< bandwidth
       CALL missing_arg(ok, is_empty(input%coda%bandwidth), 'Argument "bandwidth" for keyword "coda" not found')
 
       IF (ok .ne. 0) RETURN
 
-      CALL parse(ok, input%coda%seed, lu, 'seed', ['=', ','], 'coda', com = '#')     !< seed
+      CALL parse(ok, input%coda%seed, lu, 'seed', ['=', ' '], 'coda', com = '#')     !< seed
       CALL missing_arg(ok, is_empty(input%coda%seed), 'Argument "seed" for keyword "coda" not found')
 
       IF (ok .ne. 0) RETURN
 
-      CALL parse(ok, input%coda%samples, lu, 'samples', ['=', ','], 'coda', com = '#')    !< samples
+      CALL parse(ok, input%coda%samples, lu, 'samples', ['=', ' '], 'coda', com = '#')    !< samples
       CALL missing_arg(ok, is_empty(input%coda%samples), 'Argument "samples" for keyword "coda" not found')
 
       IF (ok .ne. 0) RETURN
@@ -313,12 +385,12 @@ MODULE m_toolbox
       IF (is_empty(input%coda%model)) input%coda%add_coherency = .false.
 
       IF (input%coda%add_coherency) THEN
-        CALL parse(ok, input%coda%alpha, lu, 'alpha', ['=', ','], 'coda', com = '#')     !< alpha
+        CALL parse(ok, input%coda%alpha, lu, 'alpha', ['=', ' '], 'coda', com = '#')     !< alpha
         CALL missing_arg(ok, is_empty(input%coda%alpha), 'Argument "alpha" for keyword "coda" not found')
 
         IF (ok .ne. 0) RETURN
 
-        CALL parse(ok, input%coda%threshold, lu, 'threshold', ['=', ','], 'coda', com = '#')     !< threshold
+        CALL parse(ok, input%coda%threshold, lu, 'threshold', ['=', ' '], 'coda', com = '#')     !< threshold
         CALL missing_arg(ok, is_empty(input%coda%threshold), 'Argument "threshold" for keyword "coda" not found')
 
         IF (ok .ne. 0) RETURN
@@ -385,57 +457,78 @@ MODULE m_toolbox
 
       IF (input%source%is_point) THEN
 
-        CALL parse(ok, input%source%x, lu, 'x', ['=', ','], 'source', com = '#')     !< x
-        CALL missing_arg(ok, is_empty(input%source%x), 'Argument "x" for keyword "source" not found')
+        IF (input%origin%is_geo) THEN
 
-        IF (ok .ne. 0) RETURN
+          CALL parse(ok, input%source%lon, lu, 'lon', ['=', ' '], 'source', com = '#')     !< lon
+          CALL missing_arg(ok, is_empty(input%source%lon), 'Argument "lon" for keyword "source" not found')
 
-        CALL parse(ok, input%source%y, lu, 'y', ['=', ','], 'source', com = '#')     !< y
-        CALL missing_arg(ok, is_empty(input%source%y), 'Argument "y" for keyword "source" not found')
+          IF (ok .ne. 0) RETURN
 
-        IF (ok .ne. 0) RETURN
+          CALL parse(ok, input%source%lat, lu, 'lat', ['=', ' '], 'source', com = '#')     !< lat
+          CALL missing_arg(ok, is_empty(input%source%lat), 'Argument "lat" for keyword "source" not found')
 
-        CALL parse(ok, input%source%z, lu, 'z', ['=', ','], 'source', com = '#')     !< z
+          IF (ok .ne. 0) RETURN
+
+          ! move from geographical to utm coordinates (y is "east-west" as lon, x is "north-south" as lat)
+          CALL geo2utm(input%source%lon, input%source%lat, input%origin%lon, input%origin%lat, input%source%y, input%source%x)
+
+        ELSE
+
+          CALL parse(ok, input%source%x, lu, 'x', ['=', ' '], 'source', com = '#')     !< x
+          CALL missing_arg(ok, is_empty(input%source%x), 'Argument "x" for keyword "source" not found')
+
+          IF (ok .ne. 0) RETURN
+
+          CALL parse(ok, input%source%y, lu, 'y', ['=', ' '], 'source', com = '#')     !< y
+          CALL missing_arg(ok, is_empty(input%source%y), 'Argument "y" for keyword "source" not found')
+
+          IF (ok .ne. 0) RETURN
+
+        ENDIF
+
+        CALL parse(ok, input%source%z, lu, 'z', ['=', ' '], 'source', com = '#')     !< z
         CALL missing_arg(ok, is_empty(input%source%z), 'Argument "z" for keyword "source" not found')
 
         IF (ok .ne. 0) RETURN
 
-        CALL parse(ok, input%source%m0, lu, 'm0', ['=', ','], 'source', com = '#')     !< m0
+        CALL parse(ok, input%source%m0, lu, 'm0', ['=', ' '], 'source', com = '#')     !< m0
         CALL missing_arg(ok, is_empty(input%source%m0), 'Argument "m0" for keyword "source" not found')
 
         IF (ok .ne. 0) RETURN
 
-        CALL parse(ok, input%source%m0, lu, 'm0', ['=', ','], 'source', com = '#')     !< m0
+        CALL parse(ok, input%source%m0, lu, 'm0', ['=', ' '], 'source', com = '#')     !< m0
         CALL missing_arg(ok, is_empty(input%source%m0), 'Argument "m0" for keyword "source" not found')
 
         IF (ok .ne. 0) RETURN
 
-        CALL parse(ok, input%source%strike, lu, 'strike', ['=', ','], 'source', com = '#')     !< strike
+        CALL parse(ok, input%source%strike, lu, 'strike', ['=', ' '], 'source', com = '#')     !< strike
         CALL missing_arg(ok, is_empty(input%source%strike), 'Argument "strike" for keyword "source" not found')
 
         IF (ok .ne. 0) RETURN
 
-        CALL parse(ok, input%source%dip, lu, 'dip', ['=', ','], 'source', com = '#')     !< dip
+        CALL parse(ok, input%source%dip, lu, 'dip', ['=', ' '], 'source', com = '#')     !< dip
         CALL missing_arg(ok, is_empty(input%source%dip), 'Argument "dip" for keyword "source" not found')
 
         IF (ok .ne. 0) RETURN
 
-        CALL parse(ok, input%source%rake, lu, 'rake', ['=', ','], 'source', com = '#')     !< rake
+        CALL parse(ok, input%source%rake, lu, 'rake', ['=', ' '], 'source', com = '#')     !< rake
         CALL missing_arg(ok, is_empty(input%source%rake), 'Argument "rake" for keyword "source" not found')
 
         IF (ok .ne. 0) RETURN
 
-        CALL parse(ok, input%source%freq, lu, 'freq', ['=', ','], 'source', com = '#')     !< freq
-        CALL missing_arg(ok, is_empty(input%source%freq), 'Argument "freq" for keyword "source" not found')
+        CALL parse(ok, freq, lu, 'freq', ['=', ' '], 'source', com = '#')     !< freq
+        CALL missing_arg(ok, .false., '')
 
         IF (ok .ne. 0) RETURN
+
+        IF (.not.is_empty(freq)) input%source%freq = freq
 
         CALL parse(ok, str, lu, 'type', ["'", "'"], 'source', com = '#')     !< type
-        CALL missing_arg(ok, is_empty(str), 'Argument "type" for keyword "source" not found')
+        CALL missing_arg(ok, .false., '')
 
         IF (ok .ne. 0) RETURN
 
-        input%source%type = TRIM(str)
+        IF (.not.is_empty(str)) input%source%type = TRIM(str)
 
         input%source%add_rik = .false.
         input%source%add_roughness = .false.
@@ -472,36 +565,27 @@ MODULE m_toolbox
 
         input%source%file = TRIM(str)
 
+        CALL parse(ok, freq, lu, 'freq', ['=', ' '], 'rupture', com = '#')     !< freq
+        CALL missing_arg(ok, .false., '')
+
+        IF (ok .ne. 0) RETURN
+
+        IF (.not.is_empty(freq)) input%source%freq = freq
+
         CALL parse(ok, str, lu, 'type', ["'", "'"], 'rupture', com = '#')     !< type
-        CALL missing_arg(ok, is_empty(str), 'Argument "type" for keyword "rupture" not found')
+        CALL missing_arg(ok, .false., '')
 
         IF (ok .ne. 0) RETURN
 
-        input%source%type = TRIM(str)
-
-        CALL parse(ok, input%source%x, lu, 'x', ['=', ','], 'rupture', com = '#')     !< x
-        CALL missing_arg(ok, is_empty(input%source%x), 'Argument "x" for keyword "rupture" not found')
-
-        IF (ok .ne. 0) RETURN
-
-        CALL parse(ok, input%source%y, lu, 'y', ['=', ','], 'rupture', com = '#')     !< y
-        CALL missing_arg(ok, is_empty(input%source%y), 'Argument "y" for keyword "rupture" not found')
-
-        IF (ok .ne. 0) RETURN
-
-        CALL parse(ok, input%source%azimuth, lu, 'azimuth', ['=', ','], 'rupture', com = '#')     !< azimuth
-        CALL missing_arg(ok, is_empty(input%source%azimuth), 'Argument "azimuth" for keyword "rupture" not found')
-
-        IF (ok .ne. 0) RETURN
-
-        CALL parse(ok, input%source%roughness, lu, 'roughness', ['=', ','], 'rupture', com = '#')     !< roughness
+        IF (.not.is_empty(str)) input%source%type = TRIM(str)
+        CALL parse(ok, input%source%roughness, lu, 'roughness', ['=', ' '], 'rupture', com = '#')     !< roughness
         CALL missing_arg(ok, .false., '')
 
         IF (ok .ne. 0) RETURN
 
         IF (is_empty(input%source%roughness)) input%source%add_roughness = .false.
 
-        CALL parse(ok, input%source%correlation, lu, 'corr', ['=', ','], 'rupture', com = '#')     !< correlation
+        CALL parse(ok, input%source%correlation, lu, 'corr', ['=', ' '], 'rupture', com = '#')     !< correlation
         CALL missing_arg(ok, .false., '')
 
         IF (ok .ne. 0) RETURN
@@ -510,27 +594,27 @@ MODULE m_toolbox
 
         IF (input%source%add_rik) THEN
 
-          CALL parse(ok, input%source%l0, lu, 'l0', ['=', ','], 'rupture', com = '#')     !< l0
+          CALL parse(ok, input%source%l0, lu, 'l0', ['=', ' '], 'rupture', com = '#')     !< l0
           CALL missing_arg(ok, is_empty(input%source%l0), 'Argument "l0" for keyword "rupture" not found')
 
           IF (ok .ne. 0) RETURN
 
-          CALL parse(ok, input%source%aparam, lu, 'aparam', ['=', ','], 'rupture', com = '#')     !< aparam
+          CALL parse(ok, input%source%aparam, lu, 'aparam', ['=', ' '], 'rupture', com = '#')     !< aparam
           CALL missing_arg(ok, is_empty(input%source%aparam), 'Argument "aparam" for keyword "rupture" not found')
 
           IF (ok .ne. 0) RETURN
 
-          CALL parse(ok, input%source%vrfact, lu, 'vrfact', ['=', ','], 'rupture', com = '#')     !< vrfact
+          CALL parse(ok, input%source%vrfact, lu, 'vrfact', ['=', ' '], 'rupture', com = '#')     !< vrfact
           CALL missing_arg(ok, is_empty(input%source%vrfact), 'Argument "vrfact" for keyword "rupture" not found')
 
           IF (ok .ne. 0) RETURN
 
-          CALL parse(ok, input%source%seed, lu, 'seed', ['=', ','], 'rupture', com = '#')     !< seed
+          CALL parse(ok, input%source%seed, lu, 'seed', ['=', ' '], 'rupture', com = '#')     !< seed
           CALL missing_arg(ok, is_empty(input%source%seed), 'Argument "seed" for keyword "rupture" not found')
 
           IF (ok .ne. 0) RETURN
 
-          CALL parse(ok, input%source%samples, lu, 'samples', ['=', ','], 'rupture', com = '#')     !< samples
+          CALL parse(ok, input%source%samples, lu, 'samples', ['=', ' '], 'rupture', com = '#')     !< samples
           CALL missing_arg(ok, is_empty(input%source%samples), 'Argument "samples" for keyword "rupture" not found')
 
           IF (ok .ne. 0) RETURN
@@ -542,42 +626,42 @@ MODULE m_toolbox
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! ----------------------------------------------------- advanced -------------------------------------------------------------
 
-      CALL parse(ok, z, lu, 'pmw', ['=', ','], 'advanced', com = '#')     !< pmw
+      CALL parse(ok, z, lu, 'pmw', ['=', ' '], 'advanced', com = '#')     !< pmw
       CALL missing_arg(ok, .false., '')
 
       IF (ok .ne. 0) RETURN
 
       IF (.not.is_empty(z)) input%advanced%pmw = z
 
-      CALL parse(ok, z, lu, 'vrfact', ['=', ','], 'advanced', com = '#')     !< vrfact
+      CALL parse(ok, z, lu, 'vrfact', ['=', ' '], 'advanced', com = '#')     !< vrfact
       CALL missing_arg(ok, .false., '')
 
       IF (ok .ne. 0) RETURN
 
       IF (.not.is_empty(z)) input%advanced%vrfact = z
 
-      CALL parse(ok, p, lu, 'avecuts', ['=', ','], 'advanced', com = '#')     !< avecuts
+      CALL parse(ok, p, lu, 'avecuts', ['=', ' '], 'advanced', com = '#')     !< avecuts
       CALL missing_arg(ok, .false., '')
 
       IF (ok .ne. 0) RETURN
 
       IF (.not.is_empty(p)) input%advanced%avecuts = p
 
-      CALL parse(ok, p, lu, 'sheets', ['=', ','], 'advanced', com = '#')     !< sheets
+      CALL parse(ok, p, lu, 'sheets', ['=', ' '], 'advanced', com = '#')     !< sheets
       CALL missing_arg(ok, .false., '')
 
       IF (ok .ne. 0) RETURN
 
       IF (.not.is_empty(p)) input%advanced%sheets = p
 
-      CALL parse(ok, p, lu, 'waves', ['=', ','], 'advanced', com = '#')     !< waves
+      CALL parse(ok, p, lu, 'waves', ['=', ' '], 'advanced', com = '#')     !< waves
       CALL missing_arg(ok, .false., '')
 
       IF (ok .ne. 0) RETURN
 
       IF (.not.is_empty(p)) input%advanced%waves = p
 
-      CALL parse(ok, p, lu, 'verbose', ['=', ','], 'advanced', com = '#')     !< verbose
+      CALL parse(ok, p, lu, 'verbose', ['=', ' '], 'advanced', com = '#')     !< verbose
       CALL missing_arg(ok, .false., '')
 
       IF (ok .ne. 0) RETURN
@@ -809,18 +893,33 @@ MODULE m_toolbox
       ENDIF
 
       IF (input%source%is_point) THEN
-        CALL update_log(num2char('Source parameters', width=30, fill='.') +     &
-                        num2char('x', width=15, justify='r') + '|' +  &
-                        num2char('y', width=15, justify='r') + '|' +  &
-                        num2char('z', width=15, justify='r') + '|' +  &
-                        num2char('Strike', width=15, justify='r') + '|' +  &
-                        num2char('Dip', width=15, justify='r')    + '|')
-        CALL update_log(num2char('', width=30) + &
-                        num2char(input%source%x, notation='f', width=15, precision=3, justify='r') + '|' + &
-                        num2char(input%source%y, notation='f', width=15, precision=3, justify='r') + '|' + &
-                        num2char(input%source%z, notation='f', width=15, precision=3, justify='r') + '|' + &
-                        num2char(input%source%strike, notation='f', width=15, precision=1, justify='r') + '|' + &
-                        num2char(input%source%dip, notation='f', width=15, precision=1, justify='r')    + '|', blankline = .false.)
+        IF (input%origin%is_geo) THEN
+          CALL update_log(num2char('Source parameters', width=30, fill='.') +     &
+                          num2char('lon', width=15, justify='r') + '|' +  &
+                          num2char('lat', width=15, justify='r') + '|' +  &
+                          num2char('z', width=15, justify='r') + '|' +  &
+                          num2char('Strike', width=15, justify='r') + '|' +  &
+                          num2char('Dip', width=15, justify='r')    + '|')
+          CALL update_log(num2char('', width=30) + &
+                          num2char(input%source%lon, notation='f', width=15, precision=3, justify='r') + '|' + &
+                          num2char(input%source%lat, notation='f', width=15, precision=3, justify='r') + '|' + &
+                          num2char(input%source%z, notation='f', width=15, precision=3, justify='r') + '|' + &
+                          num2char(input%source%strike, notation='f', width=15, precision=1, justify='r') + '|' + &
+                          num2char(input%source%dip, notation='f', width=15, precision=1, justify='r')    + '|', blankline=.false.)
+        ELSE
+          CALL update_log(num2char('Source parameters', width=30, fill='.') +     &
+                          num2char('x', width=15, justify='r') + '|' +  &
+                          num2char('y', width=15, justify='r') + '|' +  &
+                          num2char('z', width=15, justify='r') + '|' +  &
+                          num2char('Strike', width=15, justify='r') + '|' +  &
+                          num2char('Dip', width=15, justify='r')    + '|')
+          CALL update_log(num2char('', width=30) + &
+                          num2char(input%source%x, notation='f', width=15, precision=3, justify='r') + '|' + &
+                          num2char(input%source%y, notation='f', width=15, precision=3, justify='r') + '|' + &
+                          num2char(input%source%z, notation='f', width=15, precision=3, justify='r') + '|' + &
+                          num2char(input%source%strike, notation='f', width=15, precision=1, justify='r') + '|' + &
+                          num2char(input%source%dip, notation='f', width=15, precision=1, justify='r')    + '|', blankline=.false.)
+        ENDIF
         CALL update_log(num2char('(continued)', width=30, fill='.', justify='c') +  &
                         num2char('Rake', width=15, justify='r')   + '|' + &
                         num2char('Moment', width=15, justify='r')     + '|' +  &
@@ -835,25 +934,19 @@ MODULE m_toolbox
         CALL update_log(num2char('Rupture file', width=30, fill='.')   +   &
                         num2char(TRIM(input%source%file), width=79, justify='c') + '|')
         CALL update_log(num2char('Rupture parameters', width=30, fill='.')  + &
-                        num2char('x', width=15, justify='r') + '|' + &
-                        num2char('y', width=15, justify='r') + '|' + &
-                        num2char('Azimuth', width=15, justify='r') + '|' + &
                         num2char('Type', width=15, justify='r') + '|' + &
+                        num2char('Frequency', width=15, justify='r') + '|' + &
                         num2char('Roughness', width=15, justify='r') + '|', blankline = .false.)
         IF (input%source%add_roughness) THEN
           CALL update_log(num2char('', width=30) +  &
-                          num2char(input%source%x, width=15, notation='f', precision=3, justify='r') + '|' + &
-                          num2char(input%source%y, width=15, notation='f', precision=3, justify='r') + '|' + &
-                          num2char(input%source%azimuth, width=15, notation='f', precision=3, justify='r') + '|' + &
                           num2char(input%source%type, width=15, justify='r') + '|' + &
+                          num2char(input%source%freq, width=15, notation='f', precision=3, justify='r') + '|' + &
                           num2char(input%source%roughness, width=15, notation='f', precision=1, justify='r') + '|',  &
                           blankline = .false.)
         ELSE
           CALL update_log(num2char('', width=30) +  &
-                          num2char(input%source%x, width=15, notation='f', precision=3, justify='r') + '|' + &
-                          num2char(input%source%y, width=15, notation='f', precision=3, justify='r') + '|' + &
-                          num2char(input%source%azimuth, width=15, notation='f', precision=3, justify='r') + '|' + &
                           num2char(input%source%type, width=15, justify='r') + '|' + &
+                          num2char(input%source%freq, width=15, notation='f', precision=3, justify='r') + '|' + &
                           num2char('None', width=15, justify='r') + '|', blankline = .false.)
         ENDIF
         IF (input%source%add_rik) THEN
@@ -911,23 +1004,45 @@ MODULE m_toolbox
         ENDDO
       ENDDO
 
-      CALL update_log(num2char('Receivers List', width=30, fill='.') + &
-                      num2char('x', width=15, justify='r') + '|' +  &
-                      num2char('y', width=15, justify='r') + '|' +  &
-                      num2char('z', width=15, justify='r') + '|' +  &
-                      num2char('File', width=15, justify='r') + '|' + &
-                      num2char('Vel Model', width=15, justify='r') + '|' + &
-                      num2char('Att Model', width=15, justify='r') + '|')
+      IF (input%origin%is_geo) THEN
+        CALL update_log(num2char('Receivers List', width=30, fill='.') + &
+                        num2char('lon', width=15, justify='r') + '|' +  &
+                        num2char('lat', width=15, justify='r') + '|' +  &
+                        num2char('z', width=15, justify='r') + '|' +  &
+                        num2char('File', width=15, justify='r') + '|' + &
+                        num2char('Vel Model', width=15, justify='r') + '|' + &
+                        num2char('Att Model', width=15, justify='r') + '|')
+      ELSE
+        CALL update_log(num2char('Receivers List', width=30, fill='.') + &
+                        num2char('x', width=15, justify='r') + '|' +  &
+                        num2char('y', width=15, justify='r') + '|' +  &
+                        num2char('z', width=15, justify='r') + '|' +  &
+                        num2char('File', width=15, justify='r') + '|' + &
+                        num2char('Vel Model', width=15, justify='r') + '|' + &
+                        num2char('Att Model', width=15, justify='r') + '|')
+      ENDIF
 
-      DO i = 1, SIZE(input%receiver)
-        CALL update_log(num2char('', width=30)  +   &
-                        num2char(input%receiver(i)%x, width=15, notation='f', precision=3, justify='r') + '|' + &
-                        num2char(input%receiver(i)%y, width=15, notation='f', precision=3, justify='r') + '|' + &
-                        num2char(input%receiver(i)%z, width=15, notation='f', precision=3, justify='r') + '|' + &
-                        num2char(TRIM(input%receiver(i)%file), width=15, justify='r') + '|' + &
-                        num2char(input%receiver(i)%velocity, width=15, justify='r')   + '|' + &
-                        num2char(input%receiver(i)%attenuation, width=15, justify='r') + '|', blankline = .false.)
-      ENDDO
+      IF (input%origin%is_geo) THEN
+        DO i = 1, SIZE(input%receiver)
+          CALL update_log(num2char('', width=30)  +   &
+                          num2char(input%receiver(i)%lon, width=15, notation='f', precision=3, justify='r') + '|' + &
+                          num2char(input%receiver(i)%lat, width=15, notation='f', precision=3, justify='r') + '|' + &
+                          num2char(input%receiver(i)%z, width=15, notation='f', precision=3, justify='r') + '|' + &
+                          num2char(TRIM(input%receiver(i)%file), width=15, justify='r') + '|' + &
+                          num2char(input%receiver(i)%velocity, width=15, justify='r')   + '|' + &
+                          num2char(input%receiver(i)%attenuation, width=15, justify='r') + '|', blankline = .false.)
+        ENDDO
+      ELSE
+        DO i = 1, SIZE(input%receiver)
+          CALL update_log(num2char('', width=30)  +   &
+                          num2char(input%receiver(i)%x, width=15, notation='f', precision=3, justify='r') + '|' + &
+                          num2char(input%receiver(i)%y, width=15, notation='f', precision=3, justify='r') + '|' + &
+                          num2char(input%receiver(i)%z, width=15, notation='f', precision=3, justify='r') + '|' + &
+                          num2char(TRIM(input%receiver(i)%file), width=15, justify='r') + '|' + &
+                          num2char(input%receiver(i)%velocity, width=15, justify='r')   + '|' + &
+                          num2char(input%receiver(i)%attenuation, width=15, justify='r') + '|', blankline = .false.)
+        ENDDO
+      ENDIF
 
       CALL update_log(num2char('Advanced settings', width=30, fill='.') +   &
                       num2char('Pmw', width=15, justify = 'r') + '|' +   &
@@ -979,17 +1094,18 @@ MODULE m_toolbox
 
       float = [input%coda%fmax, input%coda%matching, input%coda%bandwidth, input%coda%alpha, input%coda%threshold, input%source%x, &
                input%source%y, input%source%z, input%source%strike, input%source%dip, input%source%rake, input%source%m0,  &
-               input%source%freq, input%source%azimuth, input%source%roughness, input%source%correlation, input%source%l0, &
-               input%source%aparam, input%source%vrfact, input%advanced%vrfact]
+               input%source%freq, input%source%roughness, input%source%correlation, input%source%l0, input%source%aparam, &
+               input%source%vrfact, input%advanced%vrfact, input%source%lon, input%source%lat, input%origin%lon, input%origin%lat]
 
       CALL mpi_bcast(float, SIZE(float), mpi_real, 0, mpi_comm_world, ierr)
 
       input%coda%fmax = float(1); input%coda%matching = float(2); input%coda%bandwidth = float(3); input%coda%alpha = float(4)
       input%coda%threshold = float(5); input%source%x = float(6); input%source%y = float(7); input%source%z = float(8)
       input%source%strike = float(9); input%source%dip = float(10); input%source%rake = float(11); input%source%m0 = float(12)
-      input%source%freq = float(13); input%source%azimuth = float(14); input%source%roughness = float(15);
-      input%source%correlation = float(16); input%source%l0 = float(17); input%source%aparam = float(17)
-      input%source%vrfact = float(18); input%advanced%vrfact = float(19)
+      input%source%freq = float(13); input%source%roughness = float(14); input%source%correlation = float(15)
+      input%source%l0 = float(16); input%source%aparam = float(17); input%source%vrfact = float(18)
+      input%advanced%vrfact = float(19); input%source%lon = float(20); input%source%lat = float(21); input%origin%lon = float(22)
+      input%origin%lat = float(23)
 
       ALLOCATE(intg(12))
 
@@ -1013,13 +1129,17 @@ MODULE m_toolbox
         CALL mpi_bcast(n, 1, mpi_int, 0, mpi_comm_world, ierr)
         IF (.not.ALLOCATED(input%velocity(i)%vp)) THEN
           ALLOCATE(input%velocity(i)%vp(n), input%velocity(i)%vs(n), input%velocity(i)%rho(n), input%velocity(i)%depth(n))
+          ALLOCATE(input%velocity(i)%vpgrad(n), input%velocity(i)%vsgrad(n))
         ENDIF
-        float = [input%velocity(i)%vp(:), input%velocity(i)%vs(:), input%velocity(i)%rho(:), input%velocity(i)%depth(:)]
+        float = [input%velocity(i)%vp(:), input%velocity(i)%vs(:), input%velocity(i)%rho(:), input%velocity(i)%depth(:),  &
+                 input%velocity(i)%vpgrad(:), input%velocity(i)%vsgrad(:)]
         CALL mpi_bcast(float, SIZE(float), mpi_real, 0, mpi_comm_world, ierr)
         input%velocity(i)%vp = float(1:n)
         input%velocity(i)%vs = float(n+1:2*n)
         input%velocity(i)%rho = float(2*n+1:3*n)
         input%velocity(i)%depth = float(3*n+1:4*n)
+        input%velocity(i)%vpgrad = float(4*n+1:5*n)
+        input%velocity(i)%vsgrad = float(5*n+1:6*n)
       ENDDO
 
       DO i = 1, SIZE(input%attenuation)
@@ -1042,13 +1162,15 @@ MODULE m_toolbox
 
       n = SIZE(input%receiver)
 
-      float = [input%receiver(:)%x, input%receiver(:)%y, input%receiver(:)%z]
+      float = [input%receiver(:)%x, input%receiver(:)%y, input%receiver(:)%z, input%receiver(:)%lon, input%receiver(:)%lat]
 
       CALL mpi_bcast(float, SIZE(float), mpi_real, 0, mpi_comm_world, ierr)
 
       input%receiver(:)%x = float(1:n)
       input%receiver(:)%y = float(n+1:2*n)
       input%receiver(:)%z = float(2*n+1:3*n)
+      input%receiver(:)%lon = float(3*n+1:4*n)
+      input%receiver(:)%lat = float(4*n+1:5*n)
 
       intg = [input%receiver(:)%velocity, input%receiver(:)%attenuation]
 

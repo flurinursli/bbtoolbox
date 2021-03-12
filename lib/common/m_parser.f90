@@ -238,7 +238,7 @@ MODULE m_parser
                 ! index of first letter
                 position(1) = loc
 
-                ! take whole line IF second delimiter is empty
+                ! take whole line if second delimiter is empty
                 IF (del(2) .eq. void) THEN
                   loc = LEN(buffer)
                 ELSE
