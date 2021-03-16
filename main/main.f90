@@ -27,10 +27,11 @@ PROGRAM main
   USE, NON_INTRINSIC :: m_toolbox
   USE, NON_INTRINSIC :: m_source
   USE, NON_INTRINSIC :: m_logfile
+  USE, NON_INTRINSIC :: m_strings
 
   IMPLICIT none
 
-  INTEGER(i32)              :: ierr, rank, ntasks, ok
+  INTEGER(i32)              :: ierr, rank, ntasks, ok, i0, i1, iter, io, ip
   REAL(r64),   DIMENSION(2) :: tictoc
 
   !---------------------------------------------------------------------------------------------------------------------------------
@@ -79,6 +80,49 @@ PROGRAM main
   ! ------------------------------------------------- setup the source model  ------------------------------------------------------
 
   CALL setup_source(ok, rank, ntasks)
+
+  ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+  ! ------------------------------------------------------- time stuff -------------------------------------------------------------
+
+  dt = 0.25_r32 / input%coda%fmax             !< fnyq is twice fmax
+
+
+  ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+  ! --------------------------------------------- generate coda with random phase --------------------------------------------------
+
+  CALL generate_noise(ok)
+
+  ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+  ! ---------------------------------------------------- start simulations ---------------------------------------------------------
+
+  CALL split_task(input%source%samples, ntasks, rank, i0, i1)
+
+  DO iter = i0, i1            !< every iteration is characterized by different source properties
+
+    DO ip = 1, SIZE(plane)
+
+      !CALL setup_mesh(ip)
+      !CALL roughness(ip, iter)
+
+      DO io = 1, SIZE(input%receiver)
+        !CALL quake(io, ip)      !< compute direct wave contributions and stack envelopes (one component only)
+      ENDDO
+
+    ENDDO
+
+    DO io = 1, SIZE(input%receiver)
+      !CALL add_coda(io)
+      !CALL stitch(io)
+      !CALL save2disk(io, iter)
+    ENDDO
+
+  ENDDO
+
+  CALL watch_stop(tictoc(1))
+
+  tictoc = tictoc / 60._r32
+
+  IF (rank .eq. 0) CALL update_log('Program completed in' + num2char(tictoc(1), notation='f', width=10, precision=1) + ' minutes')
 
 END PROGRAM main
 

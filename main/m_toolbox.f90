@@ -15,7 +15,7 @@ MODULE m_toolbox
 
   PRIVATE
 
-  PUBLIC :: input, read_input_file, echo_input, broadcast, watch_start, watch_stop, geo2utm, missing_arg
+  PUBLIC :: input, read_input_file, echo_input, broadcast, watch_start, watch_stop, geo2utm, missing_arg, split_task
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -37,6 +37,25 @@ MODULE m_toolbox
 
   REAL(r32), PARAMETER :: DEFAULT_VPGRAD = 0.01_r32, DEFAULT_VSGRAD = 0.01_r32
 
+  TYPE :: cmp
+    REAL(r32)                              :: dt
+    REAL(r32), ALLOCATABLE, DIMENSION(:)   :: time
+    REAL(r32), ALLOCATABLE, DIMENSION(:,:) :: x, y, z
+  END TYPE cmp
+
+  TYPE :: tsr
+    TYPE(cmp) :: lp, sp, bb
+  END TYPE tsr
+
+  TYPE(tsr) :: timeseries            !< timeseries%lp%x(npts, io), timeseries%lp%time(npts), timeseries%lp%dt
+
+
+  ! store ground motion
+  REAL(r32), ALLOCATABLE, DIMENSION(:,:) ::  xband, yband, zband
+  REAL(r32), ALLOCATABLE, DIMENSION(:,:) ::  xhigh, yhigh, zhigh
+  REAL(r32), ALLOCATABLE, DIMENSION(:,:) ::  xlow, ylow, zlow
+
+
   TYPE :: src
     CHARACTER(8)   :: type = "Brune"
     CHARACTER(256) :: file
@@ -54,7 +73,7 @@ MODULE m_toolbox
   END TYPE rcv
 
   TYPE :: att
-    REAL(r32), ALLOCATABLE, DIMENSION(:) ::  gpp, gps, gss, b, lcut, hcut
+    REAL(r32), ALLOCATABLE, DIMENSION(:) :: gpp, gps, gss, b, lcut, hcut
   END TYPE att
 
   TYPE :: mdl
@@ -491,11 +510,6 @@ MODULE m_toolbox
 
         CALL parse(ok, input%source%z, lu, 'z', ['=', ' '], 'source', com = '#')     !< z
         CALL missing_arg(ok, is_empty(input%source%z), 'Argument "z" for keyword "source" not found')
-
-        IF (ok .ne. 0) RETURN
-
-        CALL parse(ok, input%source%m0, lu, 'm0', ['=', ' '], 'source', com = '#')     !< m0
-        CALL missing_arg(ok, is_empty(input%source%m0), 'Argument "m0" for keyword "source" not found')
 
         IF (ok .ne. 0) RETURN
 
@@ -1295,6 +1309,32 @@ MODULE m_toolbox
 #endif
 
     END SUBROUTINE watch_stop
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    SUBROUTINE split_task(npts, ntasks, rank, i0, i1)
+
+      ! Purpose:
+      !   To evenly distribute a "npts" processes amongst "ntasks" tasks, returning first "i0" and last "i1" index for each "rank"
+      !   process.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      INTEGER(i32), INTENT(IN)  :: npts, rank, ntasks
+      INTEGER(i32), INTENT(OUT) :: i0, i1
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      i0 = 1 + INT( REAL(npts, r32) / REAL(ntasks, r32) * REAL(rank, r32) )
+      i1 = INT( REAL(npts, r32) / REAL(ntasks, r32) * REAL(rank + 1, r32) )
+
+    END SUBROUTINE split_task
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================

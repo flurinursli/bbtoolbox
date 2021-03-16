@@ -16,14 +16,14 @@ output folder = '/home/walter/Software/bbtolbox/test/hf' variable = 'acceleratio
 # define (point-)source (use lon/lat if rec is given in lon/lat)
 # required fields are "x"/"y"/"z" (or "lon"/"lat"/"z" is receivers position is given in geographical coordinates), "strike", "dip", "rake" ...
 # ... "m0", "type" (default "Brune") and "freq" (default=6.28)
-#source x= 20350 y=15010 z=5000 strike=10 dip=90 rake=15 m0=1.0e+19 type='Brune' freq=6.28
-#source lon= 16.1 lat=45.01 z=5000 strike=10 dip=90 rake=15 m0=1.0e+19 type='Brune' freq=6.28
+#source x= 20350 y=15010 z=5000 strike=10 dip=90 rake=15 m0=1.0e+19 type='brune' freq=6.28
+#source lon= 16.1 lat=45.01 z=5000 strike=10 dip=90 rake=15 m0=1.0e+19 type='brune' freq=6.28
 
 # ... or extended source (incl. roughness and RIK parameters: these are optional)
 # file format is determined from file extension
 # for FSP, required fields are "file", "type" (default "Brune") and "freq" (default=6.28)
 # for SRF, required fields are "file"
-rupture file = '/home/walter/Software/bbtoolbox/test/s1999HECTOR01JONS.fsp' type='Brune' freq=3.14 roughness=-2.0  +
+rupture file = '/home/walter/Software/bbtoolbox/test/s1999HECTOR01JONS.fsp' type='brune' freq=3.14 roughness=-2.0  +
 # rik
 corr=0.7 l0=0.3 aparam=1.0 vrfact=0.85 seed = 74921 samples = 1
 

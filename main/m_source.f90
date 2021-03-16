@@ -32,7 +32,7 @@ MODULE m_source
   TYPE :: src
     REAL(r32)                                :: length, width, strike, dip         !< segment-specific
     REAL(r32)                                :: targetm0                           !< total moment (sum over all segments)
-    REAL(r32)                                :: x, y, z                            !< position of u=v=0
+    REAL(r32)                                :: x, y, z                            !< absolute position of u=v=0
     REAL(r32),   ALLOCATABLE, DIMENSION(:)   :: u, v                               !< on-fault coordinates
     REAL(r32),   ALLOCATABLE, DIMENSION(:,:) :: rise, rupture, sslip, dslip
   END TYPE src
@@ -61,13 +61,55 @@ MODULE m_source
 
       INTEGER(i32), INTENT(OUT) :: ok
       INTEGER(i32), INTENT(IN)  :: rank, ntasks
-      INTEGER(i32)              :: ierr
+      INTEGER(i32)              :: i, ierr
+      !REAL(r32)                 :: du, dt, beta
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
       IF (input%source%is_point) THEN
 
+        ALLOCATE(plane(1))
 
+        ! first condition for point-sources: lambda_min >> l, where l is the linear extension (diagonal) of a square fault
+        ! du = PTSRC_FACTOR * beta / input%coda%fmax / SQRT(2._r32) / 2._r32
+
+        ! second condition for point-source: max(rupture time) << tr, where tr is the shortes period observed (i.e. 1/fmax)
+        ! dt = PTSRC_FACTOR / input%coda%fmax
+
+        ! define all quantities on a small fault whose length=width=2*du
+        ! plane(1)%u = [-du, 0._r32, du]
+        ! plane(1)%v = [-du, 0._r32, du]
+
+        plane(1)%targetm0 = input%source%m0
+        plane(1)%strike   = input%source%strike
+        plane(1)%dip      = input%source%dip
+
+        ALLOCATE(plane(1)%u(3), plane(1)%v(3))
+        ALLOCATE(plane(1)%rise(3,3), plane(1)%sslip(3,3), plane(1)%dslip(3,3), plane(1)%rupture(3,3))
+
+        ! define rupture times assuming rupture initiate in the middle of the small fault
+        ! plane(1)%rupture(:, 1) = [dt, dt/SQRT(2._r32), dt]                   !< proceed along-strike (along u)
+        ! plane(1)%rupture(:, 2) = [dt/SQRT(2._r32), 0._r32, dt/SQRT(2._r32)]
+        ! plane(1)%rupture(:, 3) = [dt, dt/SQRT(2._r32), dt]
+
+        plane(1)%sslip(:,:) = 0._r32
+        plane(1)%dslip(:,:) = 0._r32
+
+        ! slip in this context does not matter, as we will rescale output according to input "m0"
+        plane(1)%sslip(2, 2) = COS(input%source%rake * DEG_TO_RAD)
+        plane(1)%dslip(2, 2) = -SIN(input%source%rake * DEG_TO_RAD)          !< in our system slip is positive down-dip
+
+        plane(1)%rise(:,:) = input%source%freq
+
+        ! this is where u=v=0 (i.e. middle of fault)
+        plane(1)%x = input%source%x
+        plane(1)%y = input%source%y
+        plane(1)%z = input%source%z
+
+        ! actual fault size is connected to velocity model, which may be receiver-dependent... therefore these will be set later on
+
+        ! make sure uppermost down-dip "edge" point is always slightly (1m) below free-surface
+        ! plane(1)%z = MAX(1._r32, plane(1)%z + MAX(0._r32, SIN(plane(1)%dip * DEG_TO_RAD) * du - plane(1)%z))
 
       ELSE
         IF (rank .eq. 0) CALL read_fsp_file(ok)
@@ -76,10 +118,11 @@ MODULE m_source
         IF (ok .ne. 0) CALL mpi_abort(mpi_comm_world, ok, ierr)
         CALL broadcast()
 #endif
-
-        !IF (rank .eq. ntasks - 1) CALL echo_source()
-
       ENDIF
+
+      IF (rank .eq. ntasks - 1) CALL echo_source()
+
+
 
     END SUBROUTINE setup_source
 
@@ -100,7 +143,7 @@ MODULE m_source
 
       USE, INTRINSIC     :: iso_fortran_env, only: compiler_version
 
-      INTEGER(i32) :: i, j
+      INTEGER(i32) :: i
 
       !---------------------------------------------------------------------------------------------------------------------------------
 
@@ -108,209 +151,34 @@ MODULE m_source
 
       ELSE
 
+        CALL update_log(num2char('Number of fault segments', width=30, fill='.') + num2char(SIZE(plane), width=15, justify='r') + &
+                        '|')
 
-
-
-      CALL update_log(num2char('Input folder LF seismograms', width=30, fill='.') +  &
-                      num2char(TRIM(input%input%folder), width=79, justify = 'c') + '|')
-      CALL update_log(num2char('Format LF seismograms', width=30, fill='.') +  &
-                      num2char(TRIM(input%input%format), width=79, justify='c') + '|', blankline = .false.)
-      CALL update_log(num2char('Variable LF seismograms', width=30, fill='.') +  &
-                      num2char(TRIM(input%input%variable), width=79, justify='c') + '|', blankline = .false.)
-
-      CALL update_log(num2char('Output folder HF seismograms', width=30, fill='.') +  &
-                      num2char(TRIM(input%output%folder), width=79, justify = 'c') + '|')
-      CALL update_log(num2char('Variable HF seismograms', width=30, fill='.') +  &
-                      num2char(TRIM(input%output%variable), width=79, justify='c') + '|', blankline = .false.)
-
-      CALL update_log(num2char('Coda parameters', width=30, fill='.') + num2char('Fmax', width=15, justify='r') + '|' +  &
-                      num2char('Matching fr.', width=15, justify='r') + '|' + num2char('Bandwidth', width=15, justify='r') + '|' + &
-                      num2char('Seed', width=15, justify='r') + '|' + num2char('Samples', width=15, justify='r') + '|')
-      CALL update_log(num2char('', width=30) + &
-                      num2char(input%coda%fmax, notation='f', precision=3, width=15, justify='r')      + '|' +  &
-                      num2char(input%coda%matching, notation='f', precision=3, width=15, justify='r')  + '|' +  &
-                      num2char(input%coda%bandwidth, notation='f', precision=3, width=15, justify='r') + '|' +  &
-                      num2char(input%coda%seed, width=15, justify='r')                                 + '|' +  &
-                      num2char(input%coda%samples, width=15, justify='r')                              + '|', blankline = .false.)
-
-      IF (input%coda%add_coherency) THEN
-        CALL update_log(num2char('Coherency parameters', width=30, fill='.') +     &
-                        num2char('Model', width=15, justify='r')       + '|' +     &
-                        num2char('Alpha', width=15, justify='r')       + '|' +     &
-                        num2char('Threshold', width=15, justify='r')   + '|')
-        CALL update_log(num2char('', width=30) +  &
-                        num2char(input%coda%model, width=15, justify='r') + '|' + &
-                        num2char(input%coda%alpha, notation='s', precision=3, width=15, justify='r') + '|' + &
-                        num2char(input%coda%threshold, notation='f', precision=3, width=15, justify='r') + '|', blankline = .false.)
-      ENDIF
-
-      IF (input%source%is_point) THEN
-        IF (input%origin%is_geo) THEN
-          CALL update_log(num2char('Source parameters', width=30, fill='.') +     &
-                          num2char('lon', width=15, justify='r') + '|' +  &
-                          num2char('lat', width=15, justify='r') + '|' +  &
-                          num2char('z', width=15, justify='r') + '|' +  &
-                          num2char('Strike', width=15, justify='r') + '|' +  &
-                          num2char('Dip', width=15, justify='r')    + '|')
-          CALL update_log(num2char('', width=30) + &
-                          num2char(input%source%lon, notation='f', width=15, precision=3, justify='r') + '|' + &
-                          num2char(input%source%lat, notation='f', width=15, precision=3, justify='r') + '|' + &
-                          num2char(input%source%z, notation='f', width=15, precision=3, justify='r') + '|' + &
-                          num2char(input%source%strike, notation='f', width=15, precision=1, justify='r') + '|' + &
-                          num2char(input%source%dip, notation='f', width=15, precision=1, justify='r')    + '|', blankline=.false.)
+        IF (is_empty(plane(1)%targetm0)) THEN
+          CALL update_log(num2char('Total moment (Nm)', width=30, fill='.') + num2char('NA', width=15, justify='r') + '|', &
+                          blankline=.false.)
         ELSE
-          CALL update_log(num2char('Source parameters', width=30, fill='.') +     &
-                          num2char('x', width=15, justify='r') + '|' +  &
-                          num2char('y', width=15, justify='r') + '|' +  &
-                          num2char('z', width=15, justify='r') + '|' +  &
-                          num2char('Strike', width=15, justify='r') + '|' +  &
-                          num2char('Dip', width=15, justify='r')    + '|')
-          CALL update_log(num2char('', width=30) + &
-                          num2char(input%source%x, notation='f', width=15, precision=3, justify='r') + '|' + &
-                          num2char(input%source%y, notation='f', width=15, precision=3, justify='r') + '|' + &
-                          num2char(input%source%z, notation='f', width=15, precision=3, justify='r') + '|' + &
-                          num2char(input%source%strike, notation='f', width=15, precision=1, justify='r') + '|' + &
-                          num2char(input%source%dip, notation='f', width=15, precision=1, justify='r')    + '|', blankline=.false.)
-        ENDIF
-        CALL update_log(num2char('(continued)', width=30, fill='.', justify='c') +  &
-                        num2char('Rake', width=15, justify='r')   + '|' + &
-                        num2char('Moment', width=15, justify='r')     + '|' +  &
-                        num2char('Type', width=15, justify='r') + '|' +  &
-                        num2char('Frequency', width=15, justify='r') + '|', blankline = .false.)
-        CALL update_log(num2char('', width=30) +  &
-                        num2char(input%source%rake, notation='f', width=15, precision=1, justify='r')   + '|' + &
-                        num2char(input%source%m0, notation='s', width=15, precision=3, justify='r')     + '|' + &
-                        num2char(input%source%type, width=15, justify='r') + '|' + &
-                        num2char(input%source%freq, notation='f', width=15, precision=3, justify='r') + '|', blankline = .false.)
-      ELSE
-        CALL update_log(num2char('Rupture file', width=30, fill='.')   +   &
-                        num2char(TRIM(input%source%file), width=79, justify='c') + '|')
-        CALL update_log(num2char('Rupture parameters', width=30, fill='.')  + &
-                        num2char('Type', width=15, justify='r') + '|' + &
-                        num2char('Frequency', width=15, justify='r') + '|' + &
-                        num2char('Roughness', width=15, justify='r') + '|', blankline = .false.)
-        IF (input%source%add_roughness) THEN
-          CALL update_log(num2char('', width=30) +  &
-                          num2char(input%source%type, width=15, justify='r') + '|' + &
-                          num2char(input%source%freq, width=15, notation='f', precision=3, justify='r') + '|' + &
-                          num2char(input%source%roughness, width=15, notation='f', precision=1, justify='r') + '|',  &
-                          blankline = .false.)
-        ELSE
-          CALL update_log(num2char('', width=30) +  &
-                          num2char(input%source%type, width=15, justify='r') + '|' + &
-                          num2char(input%source%freq, width=15, notation='f', precision=3, justify='r') + '|' + &
-                          num2char('None', width=15, justify='r') + '|', blankline = .false.)
-        ENDIF
-        IF (input%source%add_rik) THEN
-          CALL update_log(num2char('RIK parameters', width=30, fill='.') +  &
-                          num2char('Correlation', width=15, justify='r') + '|' + &
-                          num2char('L0', width=15, justify='r')      + '|' + &
-                          num2char('Aparam', width=15, justify='r')  + '|' + &
-                          num2char('Vrfact', width=15, justify='r')  + '|' + &
-                          num2char('Seed', width=15, justify='r')    + '|' + &
-                          num2char('Samples', width=15, justify='r') + '|')
-          CALL update_log(num2char('', width=30) +  &
-                          num2char(input%source%correlation, width=15, notation='f', precision=2, justify='r') + '|' + &
-                          num2char(input%source%l0, width=15, notation='f', precision=1, justify='r')          + '|' + &
-                          num2char(input%source%aparam, width=15, notation='f', precision=1, justify='r')      + '|' + &
-                          num2char(input%source%vrfact, width=15, notation='f', precision=2, justify='r')      + '|' + &
-                          num2char(input%source%seed, width=15, justify='r')                                   + '|' + &
-                          num2char(input%source%samples, width=15, justify='r') + '|', blankline = .false.)
+          CALL update_log(num2char('Total moment (Nm)', width=30, fill='.') +   &
+                          num2char(plane(1)%targetm0, width=15, notation='s', precision=3, justify='r') + '|', blankline=.false.)
         ENDIF
 
-      ENDIF
+        CALL update_log(num2char('Fault segment', width=30, fill='.') +   &
+                        num2char('Length', width=15, justify='r') + '|' + &
+                        num2char('Width', width=15, justify='r') + '|' + &
+                        num2char('Strike', width=15, justify='r') + '|' + &
+                        num2char('Dip', width=15, justify='r') + '|' + &
+                        num2char('Max Slip', width=15, justify='r') + '|')
 
-      DO i = 1, SIZE(input%velocity)
-        CALL update_log(num2char('Velocity Model ' + num2char(i), width=30, fill='.') +   &
-                        num2char('Vp', width=15, justify='r') + '|' + &
-                        num2char('Vs', width=15, justify='r') + '|' + &
-                        num2char('Rho', width=15, justify='r') + '|' + &
-                        num2char('Depth', width=15, justify='r') + '|')
-        DO j = 1, SIZE(input%velocity(i)%vp)
-          CALL update_log(num2char('', width=30)  +  &
-                          num2char(input%velocity(i)%vp(j), width=15, notation='f', precision=3, justify='r') + '|' + &
-                          num2char(input%velocity(i)%vs(j), width=15, notation='f', precision=3, justify='r') + '|' + &
-                          num2char(input%velocity(i)%rho(j), width=15, notation='f', precision=3, justify='r') + '|' + &
-                          num2char(input%velocity(i)%depth(j), width=15, notation='f', precision=3, justify='r') + '|',  &
-                          blankline = .false.)
+        DO i = 1, SIZE(plane)
+
+          CALL update_log(num2char(i, width=30, justify='c')  +  &
+                          num2char(plane(i)%length, width=15, notation='f', precision=2, justify='r') + '|' + &
+                          num2char(plane(i)%width, width=15, notation='f', precision=2, justify='r') + '|' + &
+                          num2char(plane(i)%strike, width=15, notation='f', precision=2, justify='r') + '|' + &
+                          num2char(plane(i)%dip, width=15, notation='f', precision=2, justify='r') + '|' +  &
+                          num2char(MAXVAL(euclid(plane(i)%sslip, plane(i)%dslip)), width=15, notation='f', precision=3,   &
+                                   justify='r') + '|', blankline=.false.)
         ENDDO
-      ENDDO
-
-      DO i = 1, SIZE(input%attenuation)
-        CALL update_log(num2char('Attenuation Model ' + num2char(i), width=30, fill='.') +   &
-                        num2char('Low Freq', width=15, justify='r') + '|' + &
-                        num2char('High Freq', width=15, justify='r') + '|' + &
-                        num2char('Gpp', width=15, justify='r') + '|' + &
-                        num2char('Gps', width=15, justify='r') + '|' + &
-                        num2char('Gss', width=15, justify='r') + '|' + &
-                        num2char('b', width=15, justify='r') + '|')
-        DO j = 1, SIZE(input%attenuation(i)%gpp)
-          CALL update_log(num2char('', width=30)  +  &
-                          num2char(input%attenuation(i)%lcut(j), width=15, notation='f', precision=1, justify='r') + '|' + &
-                          num2char(input%attenuation(i)%hcut(j), width=15, notation='f', precision=1, justify='r') + '|' + &
-                          num2char(input%attenuation(i)%gpp(j), width=15, notation='f', precision=3, justify='r') + '|' + &
-                          num2char(input%attenuation(i)%gps(j), width=15, notation='f', precision=3, justify='r') + '|' + &
-                          num2char(input%attenuation(i)%gss(j), width=15, notation='f', precision=3, justify='r') + '|' + &
-                          num2char(input%attenuation(i)%b(j), width=15, notation='f', precision=3, justify='r') + '|',  &
-                          blankline = .false.)
-        ENDDO
-      ENDDO
-
-      IF (input%origin%is_geo) THEN
-        CALL update_log(num2char('Receivers List', width=30, fill='.') + &
-                        num2char('lon', width=15, justify='r') + '|' +  &
-                        num2char('lat', width=15, justify='r') + '|' +  &
-                        num2char('z', width=15, justify='r') + '|' +  &
-                        num2char('File', width=15, justify='r') + '|' + &
-                        num2char('Vel Model', width=15, justify='r') + '|' + &
-                        num2char('Att Model', width=15, justify='r') + '|')
-      ELSE
-        CALL update_log(num2char('Receivers List', width=30, fill='.') + &
-                        num2char('x', width=15, justify='r') + '|' +  &
-                        num2char('y', width=15, justify='r') + '|' +  &
-                        num2char('z', width=15, justify='r') + '|' +  &
-                        num2char('File', width=15, justify='r') + '|' + &
-                        num2char('Vel Model', width=15, justify='r') + '|' + &
-                        num2char('Att Model', width=15, justify='r') + '|')
-      ENDIF
-
-      IF (input%origin%is_geo) THEN
-        DO i = 1, SIZE(input%receiver)
-          CALL update_log(num2char('', width=30)  +   &
-                          num2char(input%receiver(i)%lon, width=15, notation='f', precision=3, justify='r') + '|' + &
-                          num2char(input%receiver(i)%lat, width=15, notation='f', precision=3, justify='r') + '|' + &
-                          num2char(input%receiver(i)%z, width=15, notation='f', precision=3, justify='r') + '|' + &
-                          num2char(TRIM(input%receiver(i)%file), width=15, justify='r') + '|' + &
-                          num2char(input%receiver(i)%velocity, width=15, justify='r')   + '|' + &
-                          num2char(input%receiver(i)%attenuation, width=15, justify='r') + '|', blankline = .false.)
-        ENDDO
-      ELSE
-        DO i = 1, SIZE(input%receiver)
-          CALL update_log(num2char('', width=30)  +   &
-                          num2char(input%receiver(i)%x, width=15, notation='f', precision=3, justify='r') + '|' + &
-                          num2char(input%receiver(i)%y, width=15, notation='f', precision=3, justify='r') + '|' + &
-                          num2char(input%receiver(i)%z, width=15, notation='f', precision=3, justify='r') + '|' + &
-                          num2char(TRIM(input%receiver(i)%file), width=15, justify='r') + '|' + &
-                          num2char(input%receiver(i)%velocity, width=15, justify='r')   + '|' + &
-                          num2char(input%receiver(i)%attenuation, width=15, justify='r') + '|', blankline = .false.)
-        ENDDO
-      ENDIF
-
-      CALL update_log(num2char('Advanced settings', width=30, fill='.') +   &
-                      num2char('Pmw', width=15, justify = 'r') + '|' +   &
-                      num2char('Avg cuts', width=15, justify = 'r')           + '|' +   &
-                      num2char('Vr factor', width=15, justify = 'r')          + '|' +   &
-                      num2char('Sheets', width=15, justify = 'r')             + '|' +   &
-                      num2char('Waves', width=15, justify = 'r')              + '|' +   &
-                      num2char('Verbose', width=15, justify = 'r')            + '|')
-
-      CALL update_log(num2char('', width=30) + &
-                      num2char(input%advanced%pmw, width=15, justify='r')     + '|' + &
-                      num2char(input%advanced%avecuts, width=15, justify='r') + '|' + &
-                      num2char(input%advanced%vrfact, width=15, notation='f', precision=2, justify='r') + '|' +  &
-                      num2char(input%advanced%sheets, width=15, justify='r')  + '|' + &
-                      num2char(input%advanced%waves, width=15, justify='r') + '|' + &
-                      num2char(input%advanced%verbose, width=15, justify='r') + '|', blankline=.false.)
 
       ENDIF
 
@@ -493,6 +361,16 @@ MODULE m_source
 
         REWIND(lu)
 
+        ! at this point rise-time may be in seconds or empty: convert to "freq" or assign constant input value
+        IF (irise .gt. 0) THEN
+          plane(k)%rise(:,:) = 2._r32 * PI / plane(k)%rise(:,:)         !< assume "fc=1/rise"
+        ELSE
+          plane(k)%rise(:,:) = input%source%freq
+        ENDIF
+
+        ! rupture time may be empty... if so, set first element to negative value
+        plane(i)%rupture(1, 1) = -999._r32
+
         ALLOCATE(plane(k)%u(nu), plane(k)%v(nv))
 
         ! set on-fault u-coordinate: first and last point are edge points, second point correspond to reference point u=0
@@ -502,6 +380,7 @@ MODULE m_source
         ENDDO
         plane(k)%u(nu) = plane(k)%u(nu - 1) + du / 2._r32
 
+        ! first and last point are edge points, second point correspond to reference point v=0
         plane(k)%v(1) = -dv / 2._r32
         DO i = 2, nv - 1
           plane(k)%v(i) = (i - 2) * dv
@@ -609,6 +488,90 @@ MODULE m_source
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    REAL(r32) ELEMENTAL FUNCTION euclid(x, y)
+
+      ! Purpose:
+      !   to compute euclidean distance without under/overflow.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      REAL(r32), INTENT(IN) :: x, y
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      euclid = HYPOT(x, y)
+
+    END FUNCTION euclid
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    REAL(r32) ELEMENTAL FUNCTION brune(t, freq)
+
+      ! Purpose:
+      !   to compute the brune source time function (equal to 1 for "t" -> +inf) as defined in Eq.6 of Beresnev&Atkinson, 1997. Note
+      !   that "freq=2*pi*fc", where "fc" is the corner frequency.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      REAL(r32), INTENT(IN) :: t, freq
+      REAL(r32)             :: x
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      IF (t .le. 0._r32) THEN
+        brune = 0._r32
+      ELSE
+        x = freq * t
+        brune = 1._r32 - EXP(-x) * (1._r32 + x)
+      ENDIF
+
+    END FUNCTION brune
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    REAL(r32) ELEMENTAL FUNCTION dbrune(t, freq)
+
+      ! Purpose:
+      !   to compute the brune moment rate time function ("dbrune"-> 0 for "t" -> +inf) as defined in Eq.8 of Beresnev&Atkinson,
+      !   1997. Note that "freq=2*pi*fc", where "fc" is the corner frequency.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      REAL(r32), INTENT(IN) :: t, freq
+      REAL(r32)             :: x
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      IF (t .le. 0._r32) THEN
+        dbrune = 0._r32
+      ELSE
+        x = freq * t
+        dbrune = freq * x * EXP(-x)
+      ENDIF
+
+    END FUNCTION dbrune
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
 
 
 END MODULE m_source
