@@ -746,6 +746,7 @@ MODULE m_parser
       !     Date                    Description of change
       !     ====                    =====================
       !   02/09/20                  original version
+      !   08/03/21                  added "ierr=0" to avoid false error for empty strings
       !
 
       INTEGER(i32),                                         INTENT(OUT) :: ok
@@ -768,6 +769,8 @@ MODULE m_parser
       CALL parse(ok, x, fo, field, del, elm, grp, key, nkey, nfield, com, rev)
 
       IF (ok .ne. 0) RETURN
+
+      ierr = 0
 
       ALLOCATE(v(SIZE(x,1),SIZE(x,2)))
 
@@ -801,6 +804,7 @@ MODULE m_parser
       !     Date                    Description of change
       !     ====                    =====================
       !   02/09/20                  original version
+      !   08/03/21                  added "ierr=0" to avoid false error for empty strings 
       !
 
       INTEGER(i32),                                         INTENT(OUT) :: ok
@@ -823,6 +827,8 @@ MODULE m_parser
       IF (ok .ne. 0) RETURN
 
       ALLOCATE(v(SIZE(x,1), SIZE(x,2)))
+
+      ierr = 0
 
       DO j = 1, SIZE(x, 2)
         DO i = 1, SIZE(x, 1)

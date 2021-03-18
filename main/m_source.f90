@@ -336,7 +336,7 @@ MODULE m_source
                   ! move from geographical to utm coordinates (y is "east-west" as lon, x is "north-south" as lat)
                   IF (i .eq. 2 .and. j .eq. 2) THEN
                     plane(k)%z = numeric(iz)
-                    CALL geo2utm(numeric(ilon), numeric(ilat), input%origin%lon, input%origin%lat, plane(i)%y, plane(i)%x)
+!!!                    CALL geo2utm(numeric(ilon), numeric(ilat), input%origin%lon, input%origin%lat, plane(i)%y, plane(i)%x)
                   ENDIF
 
                   IF (irake .gt. 0) rake = numeric(irake) * DEG_TO_RAD
@@ -369,7 +369,7 @@ MODULE m_source
         ENDIF
 
         ! rupture time may be empty... if so, set first element to negative value
-        plane(i)%rupture(1, 1) = -999._r32
+        plane(k)%rupture(1, 1) = -999._r32
 
         ALLOCATE(plane(k)%u(nu), plane(k)%v(nv))
 

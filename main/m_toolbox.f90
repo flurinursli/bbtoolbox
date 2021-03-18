@@ -15,7 +15,9 @@ MODULE m_toolbox
 
   PRIVATE
 
-  PUBLIC :: input, read_input_file, echo_input, broadcast, watch_start, watch_stop, geo2utm, missing_arg, split_task
+  PUBLIC :: input, timeseries
+  PUBLIC :: read_input_file, echo_input, broadcast, missing_arg, watch_start, watch_stop, geo2utm, split_task
+
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -48,13 +50,6 @@ MODULE m_toolbox
   END TYPE tsr
 
   TYPE(tsr) :: timeseries            !< timeseries%lp%x(npts, io), timeseries%lp%time(npts), timeseries%lp%dt
-
-
-  ! store ground motion
-  REAL(r32), ALLOCATABLE, DIMENSION(:,:) ::  xband, yband, zband
-  REAL(r32), ALLOCATABLE, DIMENSION(:,:) ::  xhigh, yhigh, zhigh
-  REAL(r32), ALLOCATABLE, DIMENSION(:,:) ::  xlow, ylow, zlow
-
 
   TYPE :: src
     CHARACTER(8)   :: type = "Brune"
@@ -90,7 +85,7 @@ MODULE m_toolbox
     CHARACTER(4) :: model
     INTEGER(i32) :: seed, samples
     LOGICAL      :: add_coherency = .true.
-    REAL(r32)    :: fmax, matching, bandwidth, alpha, threshold
+    REAL(r32)    :: fmax, matching, bandwidth, alpha, threshold        !< maybe remove threshold
   END TYPE hf
 
   TYPE :: adv

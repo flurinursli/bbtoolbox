@@ -25,6 +25,8 @@ MPI = y
 # proj4 library path
 PROJ4_PATH =
 
+TRNG4_PATH = $(TRNG_PATH)
+
 # make use of MKL libraries
 #MKL = y
 #INCL_FFTW = /opt/intel/mkl/include/fftw

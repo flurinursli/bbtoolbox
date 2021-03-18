@@ -28,6 +28,7 @@ PROGRAM main
   USE, NON_INTRINSIC :: m_source
   USE, NON_INTRINSIC :: m_logfile
   USE, NON_INTRINSIC :: m_strings
+  USE, NON_INTRINSIC :: m_noise
 
   IMPLICIT none
 
@@ -62,6 +63,8 @@ PROGRAM main
   CALL mpi_bcast(ok, 1, mpi_int, 0, mpi_comm_world, ierr)
 
   IF (ok .ne. 0) CALL mpi_abort(mpi_comm_world, ok, ierr)
+#else
+  STOP
 #endif
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
@@ -84,13 +87,29 @@ PROGRAM main
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
   ! ------------------------------------------------------- time stuff -------------------------------------------------------------
 
-  dt = 0.25_r32 / input%coda%fmax             !< fnyq is twice fmax
+  timeseries%sp%dt = 0.25_r32 / input%coda%fmax             !< fnyq must be twice fmax
 
+  ip = NINT(40. / timeseries%sp%dt)
+  ALLOCATE(timeseries%sp%time(ip))
+
+  do i0 = 1, ip
+    timeseries%sp%time(i0) = (i0 - 1)*timeseries%sp%dt
+  enddo
+
+  ALLOCATE(timeseries%sp%x(ip, SIZE(input%receiver)), timeseries%sp%y(ip, SIZE(input%receiver)),   &
+           timeseries%sp%z(ip, SIZE(input%receiver)))
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
   ! --------------------------------------------- generate coda with random phase --------------------------------------------------
 
-  CALL generate_noise(ok)
+  CALL generate_noise_cdra(ok, rank)
+
+#ifdef MPI
+  IF (ok .ne. 0) CALL mpi_abort(mpi_comm_world, ok, ierr)
+#else
+  STOP
+#endif
+
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
   ! ---------------------------------------------------- start simulations ---------------------------------------------------------
