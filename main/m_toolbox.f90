@@ -85,7 +85,9 @@ MODULE m_toolbox
     CHARACTER(4) :: model
     INTEGER(i32) :: seed, samples
     LOGICAL      :: add_coherency = .true.
-    REAL(r32)    :: fmax, matching, bandwidth, alpha, threshold        !< maybe remove threshold
+    REAL(r32)    :: fmax, matching, bandwidth
+    REAL(r32)    :: alpha                   !< Luco-Wong coherence
+    REAL(r32)    :: a, ak, f0, b            !< Harichandran-Vanmacke coherence
   END TYPE hf
 
   TYPE :: adv
@@ -402,15 +404,38 @@ MODULE m_toolbox
       IF (is_empty(input%coda%model)) input%coda%add_coherency = .false.
 
       IF (input%coda%add_coherency) THEN
-        CALL parse(ok, input%coda%alpha, lu, 'alpha', ['=', ' '], 'coda', com = '#')     !< alpha
-        CALL missing_arg(ok, is_empty(input%coda%alpha), 'Argument "alpha" for keyword "coda" not found')
 
-        IF (ok .ne. 0) RETURN
+        IF (input%coda%model .eq. 'lw') THEN
 
-        CALL parse(ok, input%coda%threshold, lu, 'threshold', ['=', ' '], 'coda', com = '#')     !< threshold
-        CALL missing_arg(ok, is_empty(input%coda%threshold), 'Argument "threshold" for keyword "coda" not found')
+          CALL parse(ok, input%coda%alpha, lu, 'alpha', ['=', ' '], 'coda', com = '#')     !< alpha
+          CALL missing_arg(ok, is_empty(input%coda%alpha), 'Argument "alpha" for keyword "coda" not found')
 
-        IF (ok .ne. 0) RETURN
+          IF (ok .ne. 0) RETURN
+
+        ELSEIF (input%coda%model .eq. 'hv') THEN
+
+          CALL parse(ok, input%coda%a, lu, 'a', ['=', ' '], 'coda', com = '#')     !< a
+          CALL missing_arg(ok, is_empty(input%coda%a), 'Argument "a" for keyword "coda" not found')
+
+          IF (ok .ne. 0) RETURN
+
+          CALL parse(ok, input%coda%ak, lu, 'ak', ['=', ' '], 'coda', com = '#')     !< ak
+          CALL missing_arg(ok, is_empty(input%coda%ak), 'Argument "ak" for keyword "coda" not found')
+
+          IF (ok .ne. 0) RETURN
+
+          CALL parse(ok, input%coda%b, lu, 'b', ['=', ' '], 'coda', com = '#')     !< b
+          CALL missing_arg(ok, is_empty(input%coda%b), 'Argument "b" for keyword "coda" not found')
+
+          IF (ok .ne. 0) RETURN
+
+          CALL parse(ok, input%coda%f0, lu, 'f0', ['=', ' '], 'coda', com = '#')     !< f0
+          CALL missing_arg(ok, is_empty(input%coda%f0), 'Argument "f0" for keyword "coda" not found')
+
+          IF (ok .ne. 0) RETURN
+
+        ENDIF
+
       ENDIF
 
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
@@ -900,14 +925,28 @@ MODULE m_toolbox
                       num2char(input%coda%samples, width=15, justify='r')                              + '|', blankline = .false.)
 
       IF (input%coda%add_coherency) THEN
-        CALL update_log(num2char('Coherency parameters', width=30, fill='.') +     &
-                        num2char('Model', width=15, justify='r')       + '|' +     &
-                        num2char('Alpha', width=15, justify='r')       + '|' +     &
-                        num2char('Threshold', width=15, justify='r')   + '|')
-        CALL update_log(num2char('', width=30) +  &
-                        num2char(input%coda%model, width=15, justify='r') + '|' + &
-                        num2char(input%coda%alpha, notation='s', precision=3, width=15, justify='r') + '|' + &
-                        num2char(input%coda%threshold, notation='f', precision=3, width=15, justify='r') + '|', blankline = .false.)
+        IF (input%coda%model .eq. 'lw') THEN
+          CALL update_log(num2char('Coherency parameters', width=30, fill='.') +     &
+                          num2char('Model', width=15, justify='r')       + '|' +     &
+                          num2char('Alpha', width=15, justify='r')       + '|' +     &
+                          num2char('Threshold', width=15, justify='r')   + '|')
+          CALL update_log(num2char('', width=30) +  &
+                          num2char(input%coda%model, width=15, justify='r') + '|' + &
+                          num2char(input%coda%alpha, notation='s', precision=3, width=15, justify='r') + '|', blankline=.false.)
+        ELSEIF (input%coda%model .eq. 'hv') THEN
+          CALL update_log(num2char('Coherency parameters', width=30, fill='.') +     &
+                          num2char('Model', width=15, justify='r')       + '|' +     &
+                          num2char('a', width=15, justify='r')       + '|' +     &
+                          num2char('b', width=15, justify='r')   + '|' +  &
+                          num2char('ak', width=15, justify='r') + '|' +  &
+                          num2char('f0', width=15, justify='r') + '|')
+          CALL update_log(num2char('', width=30) +  &
+                          num2char(input%coda%model, width=15, justify='r') + '|' + &
+                          num2char(input%coda%a, notation='f', precision=3, width=15, justify='r') + '|' + &
+                          num2char(input%coda%b, notation='f', precision=3, width=15, justify='r') + '|' + &
+                          num2char(input%coda%ak, notation='f', precision=3, width=15, justify='r') + '|' + &
+                          num2char(input%coda%f0, notation='f', precision=3, width=15, justify='r') + '|', blankline=.false.)
+        ENDIF
       ENDIF
 
       IF (input%source%is_point) THEN
@@ -1107,20 +1146,22 @@ MODULE m_toolbox
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
-      float = [input%coda%fmax, input%coda%matching, input%coda%bandwidth, input%coda%alpha, input%coda%threshold, input%source%x, &
+      float = [input%coda%fmax, input%coda%matching, input%coda%bandwidth, input%coda%alpha, input%source%x, &
                input%source%y, input%source%z, input%source%strike, input%source%dip, input%source%rake, input%source%m0,  &
                input%source%freq, input%source%roughness, input%source%correlation, input%source%l0, input%source%aparam, &
-               input%source%vrfact, input%advanced%vrfact, input%source%lon, input%source%lat, input%origin%lon, input%origin%lat]
+               input%source%vrfact, input%advanced%vrfact, input%source%lon, input%source%lat, input%origin%lon, input%origin%lat, &
+               input%coda%a, input%coda%b, input%coda%ak, input%coda%f0]
 
       CALL mpi_bcast(float, SIZE(float), mpi_real, 0, mpi_comm_world, ierr)
 
       input%coda%fmax = float(1); input%coda%matching = float(2); input%coda%bandwidth = float(3); input%coda%alpha = float(4)
-      input%coda%threshold = float(5); input%source%x = float(6); input%source%y = float(7); input%source%z = float(8)
-      input%source%strike = float(9); input%source%dip = float(10); input%source%rake = float(11); input%source%m0 = float(12)
-      input%source%freq = float(13); input%source%roughness = float(14); input%source%correlation = float(15)
-      input%source%l0 = float(16); input%source%aparam = float(17); input%source%vrfact = float(18)
-      input%advanced%vrfact = float(19); input%source%lon = float(20); input%source%lat = float(21); input%origin%lon = float(22)
-      input%origin%lat = float(23)
+      input%source%x = float(5); input%source%y = float(6); input%source%z = float(7)
+      input%source%strike = float(8); input%source%dip = float(9); input%source%rake = float(10); input%source%m0 = float(11)
+      input%source%freq = float(12); input%source%roughness = float(13); input%source%correlation = float(14)
+      input%source%l0 = float(15); input%source%aparam = float(16); input%source%vrfact = float(17)
+      input%advanced%vrfact = float(18); input%source%lon = float(19); input%source%lat = float(20); input%origin%lon = float(21)
+      input%origin%lat = float(22); input%coda%a = float(23); input%coda%b = float(24); input%coda%ak = float(25)
+      input%coda%f0 = float(26)
 
       ALLOCATE(intg(12))
 

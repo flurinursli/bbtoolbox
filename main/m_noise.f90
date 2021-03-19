@@ -13,11 +13,13 @@ MODULE m_noise
 
   PRIVATE
 
-  PUBLIC :: generate_noise, generate_noise_cdra
+  PUBLIC :: generate_noise
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
   REAL(r32), PARAMETER :: TWOPI = 3.14159265358979323846_r64 * 2._r64
+
+  PROCEDURE(luco), POINTER :: cohfun
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -28,6 +30,110 @@ MODULE m_noise
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
     SUBROUTINE generate_noise(ok, rank)
+
+      INTEGER(i32), INTENT(OUT) :: ok
+      INTEGER(i32), INTENT(IN)  :: rank
+      INTEGER(i32)              :: i, lu
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      SELECT CASE(input%coda%model)
+        CASE('lw')
+          cohfun => luco
+        CASE('hv')
+          cohfun => vanmarcke
+      END SELECT
+
+      ! CALL cpdf(ok, rank)
+
+      CALL cdra(ok, rank)
+
+#ifdef DEBUG
+      OPEN(newunit = lu, file = 'noise_dbg.txt', status = 'unknown', form = 'formatted', access = 'sequential', action = 'write', &
+           iostat = ok)
+
+      IF (ok .ne. 0) THEN
+        CALL report_error('generate_noise - ERROR: could not open file "noise_dbg.txt"')
+        RETURN
+      ENDIF
+
+      DO i = 1, SIZE(timeseries%sp%time)
+        WRITE(lu, *) timeseries%sp%time(i), timeseries%sp%x(i, :), timeseries%sp%y(i, :), timeseries%sp%z(i, :)
+      ENDDO
+      CLOSE(lu)
+#endif
+
+    END SUBROUTINE generate_noise
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    REAL(r32) FUNCTION luco(freq, eta)
+
+      ! Purpose:
+      !   to compute (lagged) coherency at a given frequency "freq" and separation distance "eta" (in meters) according to the model
+      !   of Luco and Wang (see eq. 3.27 in Zerva's book).
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      REAL(r32), INTENT(IN) :: freq, eta
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      luco = EXP(-(input%coda%alpha * TWOPI * freq * eta)**2)
+
+    END FUNCTION luco
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    REAL(r32) FUNCTION vanmarcke(freq, eta)
+
+      ! Purpose:
+      !   to compute (lagged) coherency at a given frequency "freq" and separation distance "eta" (in meters) according to the model
+      !   of Harichandran and Vanmarcke (see eq. 3.13 in Zerva's book).
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      REAL(r32), INTENT(IN) :: freq, eta
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      ASSOCIATE(a => input%coda%a, ak => input%coda%ak, f0 => input%coda%f0, b => input%coda%b)
+
+      vanmarcke = a * EXP(-2._r32 * eta * (1._r32 - a) / ak * SQRT((1._r32 + (freq / f0)**b))) + (1._r32 - a)
+
+      END ASSOCIATE
+
+    END FUNCTION vanmarcke
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    SUBROUTINE cpdf(ok, rank)
+
+      ! Purpose:
+      !   to compute a set of timeseries as zero-mean, Gaussian white noise being characterized by the desired frequency-dependent
+      !   coherence model according to the conditional probability density function method (see Chapter 8 in Zerva's book).
+      !
+      ! NOTE: the accuracy of this subroutine hasn't been verified yet!
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
 
       INTEGER(i32),                             INTENT(OUT) :: ok
       INTEGER(i32),                             INTENT(IN)  :: rank
@@ -59,15 +165,12 @@ MODULE m_noise
       ! ------------------------------------------------- initial time-series  -----------------------------------------------------
 
       ! first time-series is fundamentally white noise with rms amplitude ~ 1
-      ! CALL setup_rng(ok, 'uniform', -SQRT(3._r32), SQRT(3._r32), input%coda%seed)
-      CALL setup_rng(ok, 'normal', 0., 1., input%coda%seed)
+      CALL setup_rng(ok, 'normal', 0._r32, 1._r32, input%coda%seed)
 
       ! components for same receiver are not inter-correlated
       CALL rng(timeseries%sp%x(:, 1))
       CALL rng(timeseries%sp%y(:, 1))
       CALL rng(timeseries%sp%z(:, 1))
-
-      CALL setup_rng(ok, 'normal', 0._r32, 1._r32, input%coda%seed)
 
       DO comp = 1, 3
 
@@ -139,7 +242,7 @@ MODULE m_noise
                 eta = HYPOT(input%receiver(p)%x - input%receiver(l)%x, input%receiver(p)%y - input%receiver(l)%y)
 
                 ! cross spectral density
-                sij = CMPLX(lagged_coherency(freq, eta) * SQRT(sii(fr,l) * sii(fr,p)), 0._r32)
+                sij = CMPLX(cohfun(freq, eta) * SQRT(sii(fr,l) * sii(fr,p)), 0._r32)
 
                 is_row_odd = MOD(row, 2) .ne. 0
 
@@ -244,15 +347,6 @@ MODULE m_noise
 
       CALL destroy_fftw_plan([npts])
 
-!#ifdef DEBUG
-      OPEN(newunit = lu, file = 'noise_dbg.txt', status = 'unknown', form = 'formatted', access = 'sequential', action = 'write', &
-           iostat = ok)
-      DO i = 1, SIZE(timeseries%sp%time)
-        WRITE(lu, *) timeseries%sp%time(i), timeseries%sp%x(i, :)
-      ENDDO
-      CLOSE(lu)
-!#endif
-
 #ifdef ERROR_TRAP
       IF (error .ne. 0) THEN
         IF (rank .eq. 0) CALL report_error('generate_noise - ERROR: matrix is singular')
@@ -260,7 +354,7 @@ MODULE m_noise
       ENDIF
 #endif
 
-    END SUBROUTINE generate_noise
+    END SUBROUTINE cpdf
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
@@ -333,11 +427,11 @@ MODULE m_noise
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    REAL(r32) FUNCTION lagged_coherency(freq, eta)
+    SUBROUTINE cdra(ok, rank)
 
       ! Purpose:
-      !   to compute (lagged) coherency at a given frequency "freq" and separation distance "eta" (in meters) according to the model
-      !   of Luco and Wang.
+      !   to compute a set of timeseries as zero-mean, Gaussian white noise being characterized by the desired frequency-dependent
+      !   coherence model according to the Cholesky decomposition with random amplitude method (see Chapter 7 in Zerva's book).
       !
       ! Revisions:
       !     Date                    Description of change
@@ -345,34 +439,18 @@ MODULE m_noise
       !   08/03/21                  original version
       !
 
-      REAL(r32), INTENT(IN) :: freq, eta
-
-      !-----------------------------------------------------------------------------------------------------------------------------
-
-      lagged_coherency = EXP(-(input%coda%alpha * TWOPI * freq * eta)**2)
-
-    END FUNCTION
-
-    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
-    !===============================================================================================================================
-    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
-
-    SUBROUTINE generate_noise_cdra(ok, rank)
-
       INTEGER(i32),                             INTENT(OUT) :: ok
       INTEGER(i32),                             INTENT(IN)  :: rank
-      COMPLEX(r32)                                          :: sij
       COMPLEX(r32), ALLOCATABLE, DIMENSION(:)               :: z
-      INTEGER(i32)                                          :: i, l, p, comp, fr, rcvr, n, npts, row, col, lu, error
-      LOGICAL                                               :: is_col_odd, is_row_odd, is_singular
-      REAL(r32)                                             :: freq, df, eta, lambda, phi, sigma, mean
+      INTEGER(i32)                                          :: i, comp, fr, rcvr, n, npts, row, col, lu, warning
+      REAL(r32)                                             :: freq, df, eta, var
       REAL(r32),    ALLOCATABLE, DIMENSION(:)               :: rnorm
-      REAL(r32),    ALLOCATABLE, DIMENSION(:,:)             :: fc_a, fc_b, sii, c
+      REAL(r32),    ALLOCATABLE, DIMENSION(:,:)             :: fc_a, fc_b, c, l
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
       ok = 0
-      error = 0
+      warning = 0
 
       npts = SIZE(timeseries%sp%time)
 
@@ -385,8 +463,8 @@ MODULE m_noise
       n = SIZE(input%receiver)
 
       ALLOCATE(z(npts))
-      ALLOCATE(fc_a(npts, n), fc_b(npts, n), sii(npts, n))
-      ALLOCATE(rnorm(n), c(n, n))
+      ALLOCATE(fc_a(npts, n), fc_b(npts, n))
+      ALLOCATE(rnorm(n), c(n, n), l(n, n))
 
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! ------------------------------------------------- initial time-series  -----------------------------------------------------
@@ -394,10 +472,6 @@ MODULE m_noise
       CALL setup_rng(ok, 'normal', 0._r32, 1._r32, input%coda%seed)
 
       DO comp = 1, 3
-
-#ifdef ERROR_TRAP
-        IF (error .ne. 0) CYCLE
-#endif
 
         fc_a(1, :) = 0._r32
         fc_b(1, :) = 0._r32
@@ -415,8 +489,8 @@ MODULE m_noise
             ENDDO
           ENDDO
 
-          ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
-          ! ----------------------------------------------- build covariance matrix  ---------------------------------------------
+          ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+          ! ----------------------------------------------- build covariance matrix  -----------------------------------------------
           DO col = 1, n
             DO row = col, n
 
@@ -424,33 +498,42 @@ MODULE m_noise
               eta = HYPOT(input%receiver(row)%x - input%receiver(col)%x, input%receiver(row)%y - input%receiver(col)%y)
 
               ! cross spectral density
-              c(row, col) =  2._r32 * lagged_coherency(freq, eta)
+              c(row, col) =  2._r32 * cohfun(freq, eta)
 
             ENDDO
           ENDDO
 
-          ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
-          ! ----------------------------------------------- invert covariance matrix  --------------------------------------------
+          ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+          ! ----------------------------------------------- invert covariance matrix  ----------------------------------------------
           CALL cholsk(ok, c)
 
-          CALL rng(rnorm)        !< draw two numbers from normal distribution
+#ifdef ERROR_TRAP
+          IF (ok .ne. 0) warning = 1
+#endif
 
+          CALL rng(rnorm)
           fc_a(fr, :) = MATMUL(c, rnorm)
 
           CALL rng(rnorm)
-
           fc_b(fr, :) = MATMUL(c, rnorm)
 
         ENDDO       !< end loop over frequency
 
-        ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
-        ! ----------------------------------------- build spectrum, return timeseries  -------------------------------------------
+        ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+        ! ----------------------------------------- build spectrum, return timeseries  ---------------------------------------------
 
         DO rcvr = 1, n
 
+          var = 0._r32
+
           DO fr = 1, npts
-            z(fr) = CMPLX(fc_a(fr, rcvr), fc_b(fr, rcvr)) * (2*npts) * timeseries%sp%dt
+            z(fr) = CMPLX(fc_a(fr, rcvr), fc_b(fr, rcvr))
+            var   = var + ABS(z(fr))**2
           ENDDO
+
+          var = 2._r32 * var / SIZE(timeseries%sp%time)**2
+
+          z = z / SQRT(var)
 
           IF (comp .eq. 1) THEN
             CALL ifft(timeseries%sp%x(:, rcvr), z)
@@ -468,23 +551,18 @@ MODULE m_noise
 
       CALL destroy_fftw_plan([npts])
 
-!#ifdef DEBUG
-      OPEN(newunit = lu, file = 'noise_dbg.txt', status = 'unknown', form = 'formatted', access = 'sequential', action = 'write', &
-           iostat = ok)
-      DO i = 1, SIZE(timeseries%sp%time)
-        WRITE(lu, *) timeseries%sp%time(i), timeseries%sp%x(i, :)
-      ENDDO
-      CLOSE(lu)
-!#endif
-
 #ifdef ERROR_TRAP
-      IF (error .ne. 0) THEN
-        IF (rank .eq. 0) CALL report_error('generate_noise - ERROR: matrix is singular')
-        ok = error
+      IF (warning .ne. 0) THEN
+        IF (rank .eq. 0) THEN
+          CALL report_error('')
+          CALL report_error('generate_noise (cdra) - WARNING: matrix is singular. Coda coherence may not follow model ' // &
+                            'at low frequency.')
+        ENDIF
+        ok = 0
       ENDIF
 #endif
 
-    END SUBROUTINE generate_noise_cdra
+    END SUBROUTINE cdra
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
@@ -492,9 +570,19 @@ MODULE m_noise
 
     SUBROUTINE cholsk(ok, a)
 
-      INTEGER(i32),                      INTENT(OUT)   :: ok
-      REAL(r32),    DIMENSION(:,:),      INTENT(INOUT) :: a
-      INTEGER(i32)                                     :: n, row, col
+      ! Purpose:
+      !   to compute the Cholesky decomposition of matrix "a" (A = LL**T). In output "a" contains the lower triangular matrix L (all
+      !   elements above diagonal are set to 0).
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      INTEGER(i32),                 INTENT(OUT)   :: ok
+      REAL(r32),    DIMENSION(:,:), INTENT(INOUT) :: a
+      INTEGER(i32)                                :: n, row, col
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
@@ -509,6 +597,11 @@ MODULE m_noise
       ENDDO
 
     END SUBROUTINE cholsk
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================

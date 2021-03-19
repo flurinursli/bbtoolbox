@@ -102,7 +102,7 @@ PROGRAM main
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
   ! --------------------------------------------- generate coda with random phase --------------------------------------------------
 
-  CALL generate_noise_cdra(ok, rank)
+  CALL generate_noise(ok, rank)
 
 #ifdef MPI
   IF (ok .ne. 0) CALL mpi_abort(mpi_comm_world, ok, ierr)

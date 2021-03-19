@@ -1,6 +1,7 @@
 all: lib main
 
-#debug: lib dbg
+debug:
+	make MODE=debug
 
 lib:
 	cd lib; $(MAKE) $@
@@ -8,13 +9,12 @@ lib:
 main:
 	cd main; $(MAKE) $@
 
-#dbg:
-#	cd main; $(MAKE) $@
+dbg:
+	cd main; $(MAKE) $@
 
 clean:
 	cd lib; $(MAKE) $@
 	cd main; $(MAKE) $@
 	rm -rf toolbox.exe
-#	rm -rf debug.exe
 
-.PHONY:	lib main #dbg
+.PHONY:	lib main dbg
