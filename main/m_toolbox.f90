@@ -15,8 +15,8 @@ MODULE m_toolbox
 
   PRIVATE
 
-  PUBLIC :: input, timeseries
-  PUBLIC :: read_input_file, echo_input, broadcast, missing_arg, watch_start, watch_stop, geo2utm, split_task
+  PUBLIC :: input
+  PUBLIC :: read_input_file, missing_arg, watch_start, watch_stop, geo2utm, split_task
 
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
@@ -38,18 +38,6 @@ MODULE m_toolbox
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
   REAL(r32), PARAMETER :: DEFAULT_VPGRAD = 0.01_r32, DEFAULT_VSGRAD = 0.01_r32
-
-  TYPE :: cmp
-    REAL(r32)                              :: dt
-    REAL(r32), ALLOCATABLE, DIMENSION(:)   :: time
-    REAL(r32), ALLOCATABLE, DIMENSION(:,:) :: x, y, z
-  END TYPE cmp
-
-  TYPE :: tsr
-    TYPE(cmp) :: lp, sp, bb
-  END TYPE tsr
-
-  TYPE(tsr) :: timeseries            !< timeseries%lp%x(npts, io), timeseries%lp%time(npts), timeseries%lp%dt
 
   TYPE :: src
     CHARACTER(8)   :: type = "Brune"
@@ -122,7 +110,46 @@ MODULE m_toolbox
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE read_input_file(ok)
+    SUBROUTINE read_input_file(ok, rank, ntasks)
+
+      ! Purpose:
+      !   to read and check the bbtolbox input file. Name of input file is retrieved from command line. On exit, "ok" is not zero if
+      !   an error occurred.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      INTEGER(i32), INTENT(OUT) :: ok
+      INTEGER(i32), INTENT(IN)  :: rank, ntasks
+      INTEGER(i32)              :: ierr
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      IF (rank .eq. 0) CALL parse_input_file(ok)
+
+#ifdef MPI
+      CALL mpi_bcast(ok, 1, mpi_int, 0, mpi_comm_world, ierr)
+#endif
+
+      IF (ok .ne. 0) RETURN
+
+#ifdef MPI
+      CALL broadcast()
+#endif
+
+      IF (rank .eq. ntasks - 1) CALL echo()
+
+    END SUBROUTINE read_input_file
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+
+    SUBROUTINE parse_input_file(ok)
 
       ! Purpose:
       !   to read and check the bbtolbox input file. Name of input file is retrieved from command line. On exit, "ok" is not zero if
@@ -798,7 +825,7 @@ MODULE m_toolbox
 
       ! missing checks for rik, roughness, coherency and advanced
 
-    END SUBROUTINE read_input_file
+    END SUBROUTINE parse_input_file
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !==============================================================================================================================
@@ -879,7 +906,7 @@ MODULE m_toolbox
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE echo_input()
+    SUBROUTINE echo()
 
       ! Purpose:
       !   to report input parameters to standard output.
@@ -1119,7 +1146,7 @@ MODULE m_toolbox
 
       CALL update_log('-----------------------------------------------------------------------------------------------------------')
 
-    END SUBROUTINE echo_input
+    END SUBROUTINE echo
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================

@@ -5,7 +5,8 @@ MODULE m_noise
   USE, NON_INTRINSIC :: m_logfile
   USE, NON_INTRINSIC :: m_fft_real                        !< note: transform are always in r64
   USE, NON_INTRINSIC :: m_random
-  USE, NON_INTRINSIC :: m_toolbox, ONLY: input, timeseries
+  USE, NON_INTRINSIC :: m_toolbox, ONLY: input
+  USE, NON_INTRINSIC :: m_timeseries, ONLY: timeseries
 
   IMPLICIT none
 
@@ -111,7 +112,7 @@ MODULE m_noise
 
       ASSOCIATE(a => input%coda%a, ak => input%coda%ak, f0 => input%coda%f0, b => input%coda%b)
 
-      vanmarcke = a * EXP(-2._r32 * eta * (1._r32 - a) / ak * SQRT((1._r32 + (freq / f0)**b))) + (1._r32 - a)
+        vanmarcke = a * EXP(-2._r32 * eta * (1._r32 - a) / ak * SQRT((1._r32 + (freq / f0)**b))) + (1._r32 - a)
 
       END ASSOCIATE
 

@@ -29,6 +29,7 @@ PROGRAM main
   USE, NON_INTRINSIC :: m_logfile
   USE, NON_INTRINSIC :: m_strings
   USE, NON_INTRINSIC :: m_noise
+  USE, NON_INTRINSIC :: m_timeseries
 
   IMPLICIT none
 
@@ -57,32 +58,35 @@ PROGRAM main
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
   ! --------------------------------- read main input file and stop execution if error is raised -----------------------------------
 
-  IF (rank .eq. 0) CALL read_input_file(ok)
+  CALL read_input_file(ok, rank, ntasks)
 
 #ifdef MPI
-  CALL mpi_bcast(ok, 1, mpi_int, 0, mpi_comm_world, ierr)
-
   IF (ok .ne. 0) CALL mpi_abort(mpi_comm_world, ok, ierr)
 #else
   STOP
 #endif
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
-  ! ------------------------------------------- broadcast relevant input parameters  -----------------------------------------------
-
-#ifdef MPI
-  CALL broadcast()
-#endif
-
-  ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
-  ! ------------------------------------------------- echo input parameters  -------------------------------------------------------
-
-  IF (rank .eq. ntasks - 1) CALL echo_input()
-
-  ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
   ! ------------------------------------------------- setup the source model  ------------------------------------------------------
 
   CALL setup_source(ok, rank, ntasks)
+
+#ifdef MPI
+  IF (ok .ne. 0) CALL mpi_abort(mpi_comm_world, ok, ierr)
+#else
+  STOP
+#endif
+
+  ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+  ! ------------------------------------------------- load input time-series  ------------------------------------------------------
+
+  CALL read_lp(ok, rank, ntasks)
+
+#ifdef MPI
+  IF (ok .ne. 0) CALL mpi_abort(mpi_comm_world, ok, ierr)
+#else
+  STOP
+#endif
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
   ! ------------------------------------------------------- time stuff -------------------------------------------------------------

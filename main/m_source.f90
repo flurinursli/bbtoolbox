@@ -16,7 +16,8 @@ MODULE m_source
 
   PRIVATE
 
-  PUBLIC :: hypocenter, plane, setup_source
+  PUBLIC :: hypocenter, plane
+  PUBLIC :: setup_source
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -112,17 +113,22 @@ MODULE m_source
         ! plane(1)%z = MAX(1._r32, plane(1)%z + MAX(0._r32, SIN(plane(1)%dip * DEG_TO_RAD) * du - plane(1)%z))
 
       ELSE
+
         IF (rank .eq. 0) CALL read_fsp_file(ok)
+
 #ifdef MPI
         CALL mpi_bcast(ok, 1, mpi_int, 0, mpi_comm_world, ierr)
-        IF (ok .ne. 0) CALL mpi_abort(mpi_comm_world, ok, ierr)
+#endif
+
+        IF (ok .ne. 0) RETURN
+
+#ifdef MPI
         CALL broadcast()
 #endif
+
       ENDIF
 
-      IF (rank .eq. ntasks - 1) CALL echo_source()
-
-
+      IF (rank .eq. ntasks - 1) CALL echo()
 
     END SUBROUTINE setup_source
 
@@ -130,7 +136,7 @@ MODULE m_source
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE echo_source()
+    SUBROUTINE echo()
 
       ! Purpose:
       !   to report source parameters to standard output.
@@ -182,7 +188,7 @@ MODULE m_source
 
       ENDIF
 
-    END SUBROUTINE echo_source
+    END SUBROUTINE echo
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
