@@ -197,7 +197,7 @@ MODULE m_source
     SUBROUTINE read_fsp_file(ok)
 
       ! Purpose:
-      !   to read the source properties specified in a FSP file.
+      !   to read the source properties specified in a FSP file (see http://equake-rc.info/SRCMOD/fileformats/fsp/ for a description).
       !
       ! Revisions:
       !     Date                    Description of change
@@ -217,7 +217,7 @@ MODULE m_source
       ok = 0
 
       OPEN(newunit = lu, file = TRIM(input%source%file), status = 'old', form = 'formatted', access = 'sequential',  &
-           action = 'read', iostat = ok)
+           action = 'read', IOSTAT = ok)
 
       IF (ok .ne. 0) THEN
         CALL report_error('Error while opening file' + TRIM(input%source%file))
@@ -311,7 +311,7 @@ MODULE m_source
 
         ! read and store physical quantities associated to current subfault
         DO
-          READ(lu, '(A256)', iostat = ios) buffer
+          READ(lu, '(A256)', IOSTAT = ios) buffer
 
           IF (ios .eq. -1) EXIT                       !< EOF reached: quit loop
 
@@ -329,12 +329,12 @@ MODULE m_source
               irupt = parse_split_index(buffer, 'RUPT', ' ') - 1
               irise = parse_split_index(buffer, 'RISE', ' ') - 1
 
-              READ(lu, '(A256)', iostat = ios) buffer
+              READ(lu, '(A256)', IOSTAT = ios) buffer
 
               DO j = 2, nv - 1
                 DO i = 2, nu - 1
 
-                  READ(lu, '(A256)', iostat = ios) buffer
+                  READ(lu, '(A256)', IOSTAT = ios) buffer
 
                   CALL parse_split(buffer, numeric)
 
@@ -342,7 +342,7 @@ MODULE m_source
                   ! move from geographical to utm coordinates (y is "east-west" as lon, x is "north-south" as lat)
                   IF (i .eq. 2 .and. j .eq. 2) THEN
                     plane(k)%z = numeric(iz)
-!!!                    CALL geo2utm(numeric(ilon), numeric(ilat), input%origin%lon, input%origin%lat, plane(i)%y, plane(i)%x)
+                    ! CALL geo2utm(numeric(ilon), numeric(ilat), input%origin%lon, input%origin%lat, plane(i)%y, plane(i)%x)
                   ENDIF
 
                   IF (irake .gt. 0) rake = numeric(irake) * DEG_TO_RAD
@@ -379,6 +379,8 @@ MODULE m_source
 
         ALLOCATE(plane(k)%u(nu), plane(k)%v(nv))
 
+        ! in FSP geometry, reference point (u=v=0) is (first) top cell
+
         ! set on-fault u-coordinate: first and last point are edge points, second point correspond to reference point u=0
         plane(k)%u(1) = -du / 2._r32
         DO i = 2, nu - 1
@@ -386,19 +388,20 @@ MODULE m_source
         ENDDO
         plane(k)%u(nu) = plane(k)%u(nu - 1) + du / 2._r32
 
-        ! first and last point are edge points, second point correspond to reference point v=0
-        plane(k)%v(1) = -dv / 2._r32
+        ! first and last point are edge points, first point correspond to reference point v=0
+        plane(k)%v(1) = 0._r32
         DO i = 2, nv - 1
-          plane(k)%v(i) = (i - 2) * dv
+          plane(k)%v(i) = (i - 2) * dv + dv / 2._r32
         ENDDO
         plane(k)%v(nv) = plane(k)%v(nv - 1) + dv / 2._r32
 
         ! make sure uppermost down-dip "edge" point is always slightly (1m) below free-surface
-        plane(k)%z = MAX(1._r32, plane(k)%z + MAX(0._r32, SIN(plane(k)%dip * DEG_TO_RAD) * dv / 2._r32 - plane(k)%z))
+        !plane(k)%z = MAX(1._r32, plane(k)%z + MAX(0._r32, SIN(plane(k)%dip * DEG_TO_RAD) * dv / 2._r32 - plane(k)%z))
+        plane(k)%z = MAX(1._r32, plane(k)%z)
 
       ENDDO
 
-      CLOSE(lu, iostat = ok)
+      CLOSE(lu, IOSTAT = ok)
 
       IF (ok .ne. 0) THEN
         CALL report_error('Error while closing file ' + TRIM(input%source%file))
@@ -406,6 +409,93 @@ MODULE m_source
       ENDIF
 
     END SUBROUTINE read_fsp_file
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    SUBROUTINE read_srf_file(ok)
+
+      ! Purpose:
+      !   to read the source properties specified in a SRF file v2.0 (see http://scec.usc.edu/scecpedia/Standard_Rupture_Format for
+      !   a description).
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      INTEGER(i32),                            INTENT(OUT) :: ok
+      CHARACTER(256)                                       :: buffer
+      INTEGER(i32)                                         :: version, n, lu, pl, lino, nt1, nt2, nt3
+      REAL(r32)                                            :: lon, lat, z, strike, dip, area, tinit, dt, vs, density
+      REAL(r32)                                            :: rake, slip1, slip2, slip3
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      ok = 0
+
+      OPEN(newunit = lu, file = TRIM(input%source%file), status = 'old', form = 'formatted', access = 'sequential',  &
+           action = 'read', IOSTAT = ok)
+
+      IF (ok .ne. 0) THEN
+        CALL report_error('Error while opening file' + TRIM(input%source%file))
+        RETURN
+      ENDIF
+
+      READ(lu, *, IOSTAT = ok) version
+
+      IF (version .ne. 2) THEN
+        CALL report_error('read_srf_file - ERROR: file version is not 2')
+        ok = 1
+        RETURN
+      ENDIF
+
+      CALL parse(ok, n, lu, 'PLANE', [' ', ' '], '#')    !< number of planes
+
+      ! since header is optional, detect number of fault segments by counting how many times word "POINTS" occurs
+      IF (is_empty(n)) n = recurrences(ok, lu, 'POINTS', '#')
+
+      CALL missing_arg(ok, is_empty(n), 'read_srf_file - ERROR: number of fault segments not found')
+
+      IF (ok .ne. 0) RETURN
+
+      IF (n .le. 0) THEN
+        CALL report_error('read_srf_file - ERROR: number of fault segments cannot be 0 or less')
+        ok = 1
+        RETURN
+      ENDIF
+
+      ALLOCATE(plane(n))
+
+      DO pl = 1, n
+
+        DO
+          READ(lu, *, IOSTAT = ok) buffer
+          IF ( (INDEX(buffer, '#') .eq. 0) .and. (INDEX(buffer, 'POINTS') .gt. 0) ) EXIT
+        ENDDO
+
+        DO
+          READ(lu, *, IOSTAT = ok) lon, lat, z, strike, dip, area, tinit, dt, vs, density
+          READ(lu, *, IOSTAT = ok) rake, slip1, nt1, slip2, nt2, slip3, nt3
+
+          DO lino = 1, nt1 / 6
+            !READ(lu, *, IOSTAT = ok) mrf(:, )
+          ENDDO
+
+        ENDDO
+
+      ENDDO
+
+      CLOSE(lu, IOSTAT = ok)
+
+      IF (ok .ne. 0) THEN
+        CALL report_error('read_srf_file - ERROR: could not close file ' + TRIM(input%source%file))
+        RETURN
+      ENDIF
+
+    END SUBROUTINE read_srf_file
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
@@ -573,6 +663,43 @@ MODULE m_source
       ENDIF
 
     END FUNCTION dbrune
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    SUBROUTINE build_mesh(iseg)
+
+      ! Purpose:
+      !   to discretize the "iseg"-th fault segment using a triangular mesh. Triangle size is determined by the number of points per
+      !   minimum wavelength.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      INTEGER(i32), INTENT(IN) :: iseg
+
+      REAL(r32) :: du, dv
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      ! du = beta / input%coda%fmax / input%advanced%pmw
+      ! dv = du
+
+    END SUBROUTINE build_mesh
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================

@@ -20,7 +20,7 @@ MODULE m_timeseries
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
-  INTEGER(i32), PARAMETER :: SW4_HEADER_linoS = 13
+  INTEGER(i32), PARAMETER :: SW4_HEADER_LINE = 13
 
   TYPE :: cmp
     REAL(r32)                              :: dt
@@ -297,7 +297,7 @@ MODULE m_timeseries
 
       IF (ok .ne. 0) RETURN
 
-      n = n - SW4_HEADER_linoS
+      n = n - SW4_HEADER_LINE
 
       IF (n .le. 0) THEN
         CALL report_error('parse_sw4 - ERROR: file is empty or contains no data')
@@ -307,7 +307,7 @@ MODULE m_timeseries
 
       ALLOCATE(time(n), x(n), y(n), z(n))
 
-      DO lino = 1, SW4_HEADER_linoS
+      DO lino = 1, SW4_HEADER_LINE
         READ(lu, IOSTAT = ok)
         IF (ok .ne. 0) RETURN
       ENDDO

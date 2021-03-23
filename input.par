@@ -38,9 +38,9 @@ layer vp = 2400 vs = 1400 rho = 2400 depth = 500
 layer vp = 3800 vs = 2200 rho = 2700 depth = 2100
 
 # second model
-layer vp = 850,  vs = 500  rho = 1800
-layer vp = 2600 vs = 1500 rho = 2400, depth = 350
-layer vp = 4650 vs = 2700 rho = 2800, depth = 1800
+layer vp = 850  vs = 500  rho = 1800
+layer vp = 2600 vs = 1500 rho = 2400 depth = 350
+layer vp = 4650 vs = 2700 rho = 2800 depth = 1800
 
 # define attenuation model(s) (all fields are mandatory)
 # note: these properties are the same for the whole model
