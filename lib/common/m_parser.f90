@@ -804,7 +804,7 @@ MODULE m_parser
       !     Date                    Description of change
       !     ====                    =====================
       !   02/09/20                  original version
-      !   08/03/21                  added "ierr=0" to avoid false error for empty strings 
+      !   08/03/21                  added "ierr=0" to avoid false error for empty strings
       !
 
       INTEGER(i32),                                         INTENT(OUT) :: ok

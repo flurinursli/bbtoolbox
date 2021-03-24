@@ -30,12 +30,18 @@ MODULE m_source
     REAL(r32)    :: u, v         !< on-fault coordinates
   END TYPE hyp
 
+  TYPE :: seg
+    REAL(r32), ALLOCATABLE, DIMENSION(:) :: mrf
+  END TYPE seg
+
+
   TYPE :: src
     REAL(r32)                                :: length, width, strike, dip         !< segment-specific
     REAL(r32)                                :: targetm0                           !< total moment (sum over all segments)
     REAL(r32)                                :: x, y, z                            !< absolute position of u=v=0
     REAL(r32),   ALLOCATABLE, DIMENSION(:)   :: u, v                               !< on-fault coordinates
     REAL(r32),   ALLOCATABLE, DIMENSION(:,:) :: rise, rupture, sslip, dslip
+    TYPE(seg),   ALLOCATABLE, DIMENSION(:,:) :: src
   END TYPE src
 
   TYPE(hyp)                            :: hypocenter
@@ -114,7 +120,13 @@ MODULE m_source
 
       ELSE
 
-        IF (rank .eq. 0) CALL read_fsp_file(ok)
+        IF (rank .eq. 0) THEN
+          IF (INDEX(TRIM(input%source%file), '.fsp') .ne. 0) THEN
+            CALL read_fsp_file(ok)
+          ELSEIF (INDEX(TRIM(input%source%file), '.srf') .ne. 0) THEN
+            CALL read_srf_file(ok)
+          ENDIF
+        ENDIF
 
 #ifdef MPI
         CALL mpi_bcast(ok, 1, mpi_int, 0, mpi_comm_world, ierr)
@@ -160,7 +172,7 @@ MODULE m_source
         CALL update_log(num2char('Number of fault segments', width=30, fill='.') + num2char(SIZE(plane), width=15, justify='r') + &
                         '|')
 
-        IF (is_empty(plane(1)%targetm0)) THEN
+        IF (plane(1)%targetm0 .lt. 0._r32) THEN
           CALL update_log(num2char('Total moment (Nm)', width=30, fill='.') + num2char('NA', width=15, justify='r') + '|', &
                           blankline=.false.)
         ELSE
@@ -255,6 +267,8 @@ MODULE m_source
       CALL parse(ok, rake, lu, 'RAKE', ['=', ' '], '% Mech')
 
       rake = rake * DEG_TO_RAD
+
+      IF (is_empty(m0)) m0 = -1._r32
 
       ! assign some properties to all segments (required if we have one segment only)
       plane(:)%strike = strike
@@ -428,9 +442,9 @@ MODULE m_source
 
       INTEGER(i32),                            INTENT(OUT) :: ok
       CHARACTER(256)                                       :: buffer
-      INTEGER(i32)                                         :: version, n, lu, pl, lino, nt1, nt2, nt3
-      REAL(r32)                                            :: lon, lat, z, strike, dip, area, tinit, dt, vs, density
-      REAL(r32)                                            :: rake, slip1, slip2, slip3
+      INTEGER(i32)                                         :: n, lu, pl, lino, nt1, nt2, nt3, i, j, nu, nv, points
+      REAL(r32)                                            :: version, lon, lat, z, strike, dip, area, tinit, dt, vs, density
+      REAL(r32)                                            :: rake, slip1, slip2, slip3, shyp, dhyp
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
@@ -446,20 +460,19 @@ MODULE m_source
 
       READ(lu, *, IOSTAT = ok) version
 
-      IF (version .ne. 2) THEN
+      IF (NINT(version) .ne. 2) THEN
         CALL report_error('read_srf_file - ERROR: file version is not 2')
         ok = 1
         RETURN
       ENDIF
 
-      CALL parse(ok, n, lu, 'PLANE', [' ', ' '], '#')    !< number of planes
+      CALL parse(ok, n, lu, 'PLANE', [' ', ' '], com = '#')    !< number of planes
 
-      ! since header is optional, detect number of fault segments by counting how many times word "POINTS" occurs
-      IF (is_empty(n)) n = recurrences(ok, lu, 'POINTS', '#')
-
-      CALL missing_arg(ok, is_empty(n), 'read_srf_file - ERROR: number of fault segments not found')
-
-      IF (ok .ne. 0) RETURN
+      IF (is_empty(n)) THEN
+        CALL report_error('read_srf_file - ERROR: number of fault segments not found')
+        ok = 1
+        RETURN
+      ENDIF
 
       IF (n .le. 0) THEN
         CALL report_error('read_srf_file - ERROR: number of fault segments cannot be 0 or less')
@@ -469,22 +482,93 @@ MODULE m_source
 
       ALLOCATE(plane(n))
 
+      ! skip lines until we step onto the header
+      DO
+        READ(lu, *, IOSTAT = ok) buffer
+        IF ( (INDEX(buffer, '#') .eq. 0) .and. (INDEX(buffer, 'PLANE') .gt. 0) ) EXIT
+      ENDDO
+
+      ! read header to find number of subfaults along strike and dip directions
       DO pl = 1, n
 
-        DO
-          READ(lu, *, IOSTAT = ok) buffer
-          IF ( (INDEX(buffer, '#') .eq. 0) .and. (INDEX(buffer, 'POINTS') .gt. 0) ) EXIT
-        ENDDO
+        READ(lu, *, IOSTAT = ok) lon, lat, nu, nv, plane(pl)%length, plane(pl)%width
+        READ(lu, *, IOSTAT = ok) plane(pl)%strike, plane(pl)%dip, plane(pl)%z, shyp, dhyp
 
-        DO
-          READ(lu, *, IOSTAT = ok) lon, lat, z, strike, dip, area, tinit, dt, vs, density
-          READ(lu, *, IOSTAT = ok) rake, slip1, nt1, slip2, nt2, slip3, nt3
+        nu = nu + 2          !< add edge points
+        nv = nv + 2
 
-          DO lino = 1, nt1 / 6
-            !READ(lu, *, IOSTAT = ok) mrf(:, )
+        ALLOCATE(plane(pl)%rupture(nu, nv), plane(pl)%sslip(nu, nv), plane(pl)%dslip(nu, nv), plane(pl)%src(nu, nv))
+        ALLOCATE(plane(pl)%rise(nu, nv), plane(pl)%u(nu), plane(pl)%v(nv))
+
+        DO j = 1, nv
+          DO i = 1, nu
+            plane(pl)%sslip(i, j) = 0._r32
+            plane(pl)%dslip(i, j) = 0._r32
           ENDDO
-
         ENDDO
+
+      ENDDO
+
+      ! read properties for each plane
+      DO pl = 1, n
+
+        nv = SIZE(plane(pl)%v)
+        nu = SIZE(plane(pl)%u)
+
+        plane(pl)%targetm0 = 0._r32
+
+        READ(lu, *, IOSTAT = ok) buffer, points
+
+        IF (points .ne. (nu-2)*(nv-2)) THEN
+          CALL report_error('read_srf_file - ERROR: number of subfaults in header does not correspond to subfaults in data')
+          ok = 1
+          RETURN
+        ENDIF
+
+        DO j = 2, nv - 1
+          DO i = 2, nu - 1
+
+            READ(lu, *, IOSTAT = ok) lon, lat, z, strike, dip, area, tinit, dt, vs, density
+            READ(lu, *, IOSTAT = ok) rake, slip1, nt1, slip2, nt2, slip3, nt3
+
+            ! get position (top-center) of first subfault: in our system, this is were u=v=0
+            ! move from geographical to utm coordinates (y is "east-west" as lon, x is "north-south" as lat)
+            IF (i .eq. 2 .and. j .eq. 2) THEN
+              !CALL geo2utm(lon, lat, input%origin%lon, input%origin%lat, plane(pl)%y, plane(pl)%x)
+            ENDIF
+
+            plane(pl)%targetm0 = plane(pl)%targetm0 + area * slip1 * density * vs**2        !< scalar moment (dyne*cm)
+
+            rake = rake * DEG_TO_RAD              !< convert deg to rad
+            slip1 = slip1 * 1.0e-02_r32           !< convert cm to m
+
+            ! get along-strike and down-dip components of slip
+            plane(pl)%sslip(i, j) = slip1 * COS(rake)
+            plane(pl)%dslip(i, j) = -slip1 * SIN(rake)          !< in our system slip is positive down-dip
+
+            plane(pl)%rupture(i, j) = tinit
+
+            ALLOCATE(plane(pl)%src(i, j)%mrf(nt1 + 1))
+
+            ! mrf values are arranged in columns
+            DO lino = 1, nt1 / 6
+              READ(lu, *, IOSTAT = ok) plane(pl)%src(i, j)%mrf((lino-1)*6 + 1: (lino-1)*6 + 6)
+            ENDDO
+
+            ! read remaining values
+            IF (nt1 .ne. (lino-2)*6 + 6) READ(lu, *, IOSTAT = ok) plane(pl)%src(i, j)%mrf((lino-1)*6 + 1: nt1)
+
+            plane(pl)%src(i, j)%mrf(nt1 + 1) = 0._r32     !< append a zero
+
+            ! scale mrf such that its integral is one, convert from cm/s to m/s
+            plane(pl)%src(i, j)%mrf = plane(pl)%src(i, j)%mrf * 1.0e-02_r32 / slip1
+
+          ENDDO
+        ENDDO
+
+        plane(pl)%targetm0 = plane(pl)%targetm0 * 1.0e-07          !< convert from dyne*cm to N*m
+
+        plane(pl)%targetm0 = MAX(plane(pl)%targetm0, -1._r32)
 
       ENDDO
 
@@ -555,6 +639,7 @@ MODULE m_source
       plane(:)%z = float(7*n+1:8*n)
 
       DO i = 1, SIZE(plane)
+
         IF (ALLOCATED(plane(i)%u)) np = [SIZE(plane(i)%u), SIZE(plane(i)%v)]
 
         CALL mpi_bcast(np, 2, mpi_int, 0, mpi_comm_world, ierr)
@@ -575,6 +660,7 @@ MODULE m_source
         CALL mpi_bcast(plane(i)%dslip, PRODUCT(np), mpi_real, 0, mpi_comm_world, ierr)
         CALL mpi_bcast(plane(i)%rise, PRODUCT(np), mpi_real, 0, mpi_comm_world, ierr)
         CALL mpi_bcast(plane(i)%rupture, PRODUCT(np), mpi_real, 0, mpi_comm_world, ierr)
+
       ENDDO
 
 #endif

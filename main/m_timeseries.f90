@@ -148,7 +148,7 @@ MODULE m_timeseries
         OPEN(newunit = lu, file = fo, status = 'old', form = 'formatted', access = 'sequential', action = 'read', iostat = ok)
 
         IF (ok .ne. 0) THEN
-          CALL report_error('Opening file ' + TRIM(fo) + ' returned error code ' + num2char(ok))
+          CALL report_error('disk2seis - ERROR: opening file ' + TRIM(fo) + ' failed with code ' + num2char(ok))
           RETURN
         ENDIF
 
