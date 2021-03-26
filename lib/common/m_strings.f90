@@ -1,6 +1,7 @@
 MODULE m_strings
 
   USE, NON_INTRINSIC :: m_precisions
+  USE, NON_INTRINSIC :: m_colors
 
   IMPLICIT none
 
@@ -15,6 +16,9 @@ MODULE m_strings
   INTERFACE OPERATOR (+)
     MODULE PROCEDURE add
   END INTERFACE
+
+  ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -48,16 +52,17 @@ MODULE m_strings
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    RECURSIVE FUNCTION num2char(x, notation, width, digits, precision, sign, separator, justify, fill) RESULT(char)
+    RECURSIVE FUNCTION num2char(x, notation, width, digits, precision, sign, separator, justify, fill, fontclr, backclr, style)  &
+    RESULT(char)
 
       ! Purpose:
       !   to convert a number (integer or real) into a string or to adjust the length of a string. Available options are:
       !
-      !                   notation    width   digits    precision   sign    separator   justify   fill
-      !   integers                      x       x                    x                     x        x
-      !   floats            x           x                   x        x         x           x        x
-      !   characters                    x                                                  x        x
-      !   logical                       x                                                  x        x
+      !                   notation    width   digits    precision   sign    separator   justify   fill   foreclr  backclr  style
+      !   integers                      x       x                    x                     x        x       x       x        x
+      !   floats            x           x                   x        x         x           x        x       x       x        x
+      !   characters                    x                                                  x        x       x       x        x
+      !   logical                       x                                                  x        x       x       x        x
       !
       !   Valid arguments for optional parameters:
       !     notation  = 'd' (default), 'f' (fixed), 's' (scientific)
@@ -68,6 +73,12 @@ MODULE m_strings
       !     separator = ',' or '.' (default is '.')
       !     justify   = 'l', 'r' or 'c' (default is 'r')
       !     fill      = any character, it will be repeated to fill "width-len(char)" spaces
+      !     fontclr   = 'black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white', 'default'
+      !     backclr   = 'black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white', 'default'
+      !     style     = 'bold', 'italics', 'underlined', 'blink', 'reverse', 'strikethrough'
+      !
+      !   "Color" and "style" add ANSI/VT100 colors and formatting instructions and require compatiable terminals and/or emulators
+      !   (e.g. "less -r")
       !
       !   If no options are specified, default format descriptors are "A" (characters), "I0.0" (integers), "G0" (floats)
       !
@@ -77,10 +88,12 @@ MODULE m_strings
       !   02/09/20                  original version
       !   08/03/21                  added justify center (justify='c')
       !   08/03/21                  m defaulted to 1 (when m=0, 'x=0' was not displayed)
+      !   25/03/21                  added support for color&style
       !
 
       CLASS(*),                           INTENT(IN) :: x
       CHARACTER(1),             OPTIONAL, INTENT(IN) :: notation, justify, separator, fill
+      CHARACTER(*),             OPTIONAL, INTENT(IN) :: fontclr, backclr, style
       INTEGER(i32),             OPTIONAL, INTENT(IN) :: width, digits, precision
       LOGICAL,                  OPTIONAL, INTENT(IN) :: sign
       CHARACTER(:), ALLOCATABLE                      :: char, pat, temp
@@ -295,6 +308,9 @@ MODULE m_strings
         ENDIF
 
       ENDIF
+
+      ! add color/style notations
+      IF (PRESENT(fontclr) .or. PRESENT(backclr) .or. PRESENT(style)) char = colorize(char, fontclr, backclr, style)
 
     END FUNCTION num2char
 

@@ -17,6 +17,7 @@ MODULE m_logfile
 
   USE, INTRINSIC     :: iso_fortran_env, stdout => output_unit, stderr => error_unit
   USE, NON_INTRINSIC :: m_precisions
+  USE, NON_INTRINSIC :: m_colors
   USE, NON_INTRINSIC :: m_strings
 
   IMPLICIT none
@@ -25,11 +26,13 @@ MODULE m_logfile
 
   PRIVATE
 
-  PUBLIC :: set_log_module, report_error, update_log, char_cr
+  PUBLIC :: set_log_module, report_error, update_log, carriage
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
-  CHARACTER(LEN=1),                           PARAMETER :: char_cr = ACHAR(13)
+  CHARACTER(LEN=1),                           PARAMETER :: carriage = ACHAR(13)
+
+  CHARACTER(:),     ALLOCATABLE                         :: set_ecolor
 
   INTEGER(i32),     ALLOCATABLE, DIMENSION(:)           :: log_units
 
@@ -42,7 +45,7 @@ MODULE m_logfile
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE set_log_module(ok, disk, screen)
+    SUBROUTINE set_log_module(ok, disk, screen, errclr)
 
       ! Purpose:
       !   to setup the log-file environment. Log messages can be reported to disk and/or to screen.
@@ -55,6 +58,7 @@ MODULE m_logfile
 
       INTEGER(i32),                       INTENT(OUT) :: ok
       LOGICAL,                  OPTIONAL, INTENT(IN)  :: disk, screen
+      CHARACTER(*),             OPTIONAL, INTENT(IN)  :: errclr
       CHARACTER(8)                                    :: date
       CHARACTER(10)                                   :: time
       CHARACTER(:), ALLOCATABLE                       :: fo, timestamp
@@ -96,6 +100,9 @@ MODULE m_logfile
          ENDIF
       ENDIF
 
+      ! set (background) color for error messages
+      IF (PRESENT(errclr)) set_ecolor = errclr
+
     END SUBROUTINE set_log_module
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
@@ -124,7 +131,9 @@ MODULE m_logfile
       IF (ALLOCATED(log_units)) n = SIZE(log_units)
 
       DO i = 1, n
-        WRITE(log_units(i), '(1X, A)') msg
+        WRITE(log_units(i), *)
+        WRITE(log_units(i), '(A)') colorize(msg, background = set_ecolor)
+        WRITE(log_units(i), *)
       ENDDO
 
     END SUBROUTINE report_error
@@ -177,7 +186,7 @@ MODULE m_logfile
         ! loop over input text, split based on carriage return character
         DO
 
-          buffer = split(text, char_cr, j)
+          buffer = split(text, carriage, j)
 
           ! exit if no more chunks are available
           IF (buffer .eq. "") EXIT

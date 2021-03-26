@@ -310,7 +310,8 @@ MODULE m_toolbox
           input%velocity(p)%rho = [rho]
           input%velocity(p)%vpgrad = [vpgrad]
           input%velocity(p)%vsgrad = [vsgrad]
-          IF (.not.is_empty(z)) input%velocity(p)%depth  = [z]
+          ! IF (.not.is_empty(z)) input%velocity(p)%depth  = [z]
+          input%velocity(p)%depth  = [z]
 
         ELSE
           input%velocity(p)%vp  = [input%velocity(p)%vp, vp]
@@ -318,7 +319,9 @@ MODULE m_toolbox
           input%velocity(p)%rho = [input%velocity(p)%rho, rho]
           input%velocity(p)%vpgrad = [input%velocity(p)%vpgrad, vpgrad]
           input%velocity(p)%vsgrad = [input%velocity(p)%vsgrad, vsgrad]
-          IF (.not.is_empty(z)) input%velocity(p)%depth = [input%velocity(p)%depth, z]
+          ! IF (.not.is_empty(z)) input%velocity(p)%depth = [input%velocity(p)%depth, z]
+          input%velocity(p)%depth = [input%velocity(p)%depth, z]
+
         ENDIF
 
       ENDDO
@@ -702,6 +705,9 @@ MODULE m_toolbox
       IF (ok .ne. 0) RETURN
 
       IF (.not.is_empty(z)) input%advanced%vrfact = z
+
+      ! use vrfact from "advanced" settings if the one from "source" is empty
+      IF (is_empty(input%source%vrfact)) input%source%vrfact = input%advanced%vrfact
 
       CALL parse(ok, p, lu, 'avecuts', ['=', ' '], 'advanced', com = '#')     !< avecuts
       CALL missing_arg(ok, .false., '')

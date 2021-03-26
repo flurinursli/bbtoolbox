@@ -33,7 +33,7 @@ PROGRAM main
 
   IMPLICIT none
 
-  INTEGER(i32)              :: ierr, rank, ntasks, ok, i0, i1, iter, io, ip
+  INTEGER(i32)              :: ierr, rank, ntasks, ok, i0, i1, iter, irec, pl, ivel
   REAL(r64),   DIMENSION(2) :: tictoc
 
   !---------------------------------------------------------------------------------------------------------------------------------
@@ -53,7 +53,7 @@ PROGRAM main
   CALL watch_start(tictoc(1))
 
   ! IF (world_rank .eq. 0) CALL set_log_module(ok, screen = .true.)
-  CALL set_log_module(ok, screen = .true.)
+  CALL set_log_module(ok, screen = .true., errclr = 'red')
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
   ! --------------------------------- read main input file and stop execution if error is raised -----------------------------------
@@ -93,15 +93,15 @@ PROGRAM main
 
   timeseries%sp%dt = 0.25_r32 / input%coda%fmax             !< fnyq must be twice fmax
 
-  ip = NINT(40. / timeseries%sp%dt)
-  ALLOCATE(timeseries%sp%time(ip))
+  pl = NINT(40. / timeseries%sp%dt)
+  ALLOCATE(timeseries%sp%time(pl))
 
-  do i0 = 1, ip
+  do i0 = 1, pl
     timeseries%sp%time(i0) = (i0 - 1)*timeseries%sp%dt
   enddo
 
-  ALLOCATE(timeseries%sp%x(ip, SIZE(input%receiver)), timeseries%sp%y(ip, SIZE(input%receiver)),   &
-           timeseries%sp%z(ip, SIZE(input%receiver)))
+  ALLOCATE(timeseries%sp%x(pl, SIZE(input%receiver)), timeseries%sp%y(pl, SIZE(input%receiver)),   &
+           timeseries%sp%z(pl, SIZE(input%receiver)))
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
   ! --------------------------------------------- generate coda with random phase --------------------------------------------------
@@ -119,23 +119,27 @@ PROGRAM main
 
   CALL split_task(input%source%samples, ntasks, rank, i0, i1)
 
-  DO iter = i0, i1            !< every iteration is characterized by different source properties
+  DO iter = i0, i1            !< every iteration is characterized by different source properties (rik, roughness)
 
-    DO ip = 1, SIZE(plane)
+    DO pl = 1, SIZE(plane)
 
-      !CALL setup_mesh(ip)
-      !CALL roughness(ip, iter)
+      DO ivel = 1, SIZE(input%velocity)
 
-      DO io = 1, SIZE(input%receiver)
-        !CALL quake(io, ip)      !< compute direct wave contributions and stack envelopes (one component only)
+        !CALL meshing(pl, ivel)              !< 
+        !CALL roughness(pl, iter)
+
+        DO irec = 1, SIZE(input%receiver)
+          !IF (input%receiver(irec)%velocity .eq. ivel) CALL quake(irec, pl)
+        ENDDO
+
       ENDDO
 
     ENDDO
 
-    DO io = 1, SIZE(input%receiver)
-      !CALL add_coda(io)
-      !CALL stitch(io)
-      !CALL save2disk(io, iter)
+    DO irec = 1, SIZE(input%receiver)
+      !CALL add_coda(irec)
+      !CALL stitch(irec)
+      !CALL save2disk(irec, iter)
     ENDDO
 
   ENDDO

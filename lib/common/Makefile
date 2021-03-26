@@ -2,7 +2,7 @@ include ../../Makefile.inc
 
 LIB_NAME = libcommon.a
 
-F90_OBJ = m_precisions.o m_strings.o m_parser.o m_logfile.o
+F90_OBJ = m_precisions.o m_colors.o m_strings.o m_parser.o m_logfile.o
 
 # default rule
 common: dirs $(LIB_NAME)

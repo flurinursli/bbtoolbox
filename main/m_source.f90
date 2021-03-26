@@ -77,7 +77,8 @@ MODULE m_source
 
         ALLOCATE(plane(1))
 
-        ! first condition for point-sources: lambda_min >> l, where l is the linear extension (diagonal) of a square fault
+        ! first condition for point-sources: lambda_min >> l, where l is the length of a square fault
+        ! diagonal = l*sqrt(2) = 2*sqrt(2)*du (l = 2*du)
         ! du = PTSRC_FACTOR * beta / input%coda%fmax / SQRT(2._r32) / 2._r32
 
         ! second condition for point-source: max(rupture time) << tr, where tr is the shortes period observed (i.e. 1/fmax)
@@ -570,6 +571,10 @@ MODULE m_source
 
         plane(pl)%targetm0 = MAX(plane(pl)%targetm0, -1._r32)
 
+        ! make sure uppermost down-dip "edge" point is always slightly (1m) below free-surface
+        !plane(k)%z = MAX(1._r32, plane(k)%z + MAX(0._r32, SIN(plane(k)%dip * DEG_TO_RAD) * dv / 2._r32 - plane(k)%z))
+        plane(pl)%z = MAX(1._r32, plane(pl)%z)
+
       ENDDO
 
       CLOSE(lu, IOSTAT = ok)
@@ -754,11 +759,11 @@ MODULE m_source
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE build_mesh(iseg)
+    SUBROUTINE meshing(pl, vel)
 
       ! Purpose:
-      !   to discretize the "iseg"-th fault segment using a triangular mesh. Triangle size is determined by the number of points per
-      !   minimum wavelength.
+      !   to discretize the "pl"-th fault segment in "vel"-th velocity model using a triangular mesh. Triangle size is determined by
+      !   the number of points per minimum wavelength.
       !
       ! Revisions:
       !     Date                    Description of change
@@ -766,31 +771,216 @@ MODULE m_source
       !   08/03/21                  original version
       !
 
-      INTEGER(i32), INTENT(IN) :: iseg
-
-      REAL(r32) :: du, dv
+      INTEGER(i32), INTENT(IN) :: pl, vel
+      REAL(r32)                :: du, dv, dt, beta
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
-      ! du = beta / input%coda%fmax / input%advanced%pmw
-      ! dv = du
+      IF (input%source%is_point) THEN
 
-    END SUBROUTINE build_mesh
+        ASSOCIATE(model => input%velocity(vel))
+          beta = get_phys(model%depth, model%vs, model%vsgrad, plan(pl)%z)           !< s-wave velocity at source depth
+        END ASSOCIATE
+
+        ! first condition for point-sources: lambda_min >> d, where d is diagonal of a square fault
+        ! diagonal = l*sqrt(2) = 2*sqrt(2)*du (l = 2*du)
+        du = PTSRC_FACTOR * beta / input%coda%fmax / SQRT(2._r32) / 2._r32
+
+        plane(pl)%u = [-du, 0._r32, du]
+        plane(pl)%v = [-dv, 0._r32, dv]
+
+        ! second condition for point-source: max(rupture time) << tr, where tr is the shortes period observed (i.e. 1/fmax)
+        dt = PTSRC_FACTOR / input%coda%fmax
+
+        plane(pl)%rupture(:, 1) = dt * [1._r32, 1._r32/SQRT(2._r32), 1._r32]                   !< proceed along-strike (along u)
+        plane(pl)%rupture(:, 2) = dt * [1._r32/SQRT(2._r32), 0._r32, 1._r32/SQRT(2._r32)]
+        plane(pl)%rupture(:, 3) = dt * [1._r32, 1._r32/SQRT(2._r32), 1._r32]
+
+        ! make sure uppermost down-dip "edge" point is always slightly (1m) below free-surface
+        plane(pl)%z = MAX(1._r32, plane(pl)%z + MAX(0._r32, SIN(plane(pl)%dip * DEG_TO_RAD) * du - plane(pl)%z))
+
+      ELSE
+
+        du = mesh_spacing(pl, vel)
+
+      ENDIF
+
+      nu = SIZE(plane(pl)%u)
+      nv = SIZE(plane(pl)%v)
+
+      mesh%umin = plane(pl)%u(1)
+      mesh%umax = plane(pl)%u(nu)
+      mesh%vmin = plane(pl)%v(1)
+      mesh%vmax = plane(pl)%v(nv)
+
+      mesh%nu = (mesh%umax - mesh%umin) / du  + 0.5
+      mesh%nv = (mesh%vmax - mesh%vmin) / du  + 0.5
+
+      mesh%du = (mesh%umax - mesh%umin) / mesh%nu
+      mesh%dv = (mesh%vmax - mesh%vmin) / mesh%nv
+
+      !mesh%umin = mesh%umin - mesh%du
+      !mesh%umax = mesh%umax + mesh%du
+
+      mesh%nu = mesh%nu + 2
+
+      ! compute maximum number of vertexes. note: nugr is (nutr + 1) for odd rows and (nutr) for
+      ! even rows
+      nugr = nutr + 1
+      nvgr = nvtr + 1
+
+
+      ! ! COMPUTE NUMBER OF VERTEXES. NOTES: THESE VARY AT EACH ROW
+      ! MESH%NUGR = MESH%NUTR + 1
+      ! MESH%NVGR = MESH%NVTR + 1
+      !
+      ! ! CHECK WHETHER INPUT FAULT AND ITS EXTRA ROWS/COLUMNS COVER FULL MESH. IF NOT, ADJUST
+      ! ! EXTRA ROWS/COLUMNS
+      ! IF (U(1) .GT. MESH%UMINGR)  U(1)  = MESH%UMINGR !- MESH%DUTR
+      ! IF (U(NU) .LT. MESH%UMAXGR) U(NU) = MESH%UMAXGR !+ MESH%DUTR
+      ! IF (V(1) .GT. MESH%VMINGR)  V(1)  = MESH%VMINGR !- MESH%DVTR
+      ! IF (V(NV) .LT. MESH%VMAXGR) V(NV) = MESH%VMAXGR !+ MESH%DVTR
+      !
+
+
+    END SUBROUTINE meshing
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    REAL(r32) FUNCTION mesh_spacing(pl, vel)
+
+      ! Purpose:
+      !   to compute mesh spacing (i.e. triangle side) for "pl"-th fault plane and "vel"-th velocity model such that the requirement
+      !   of having "input%advanced%pmw" points per minimum wavelength is fulfilled.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      INTEGER(i32), INTENT(IN) :: pl, vel
+      INTEGER(i32)             :: layer
+      REAL(r32)                :: ztop, zmax, vmin
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      ztop = plane(pl)%z
+      zmax = ztop + plane(pl)%width * SIN(plane(pl)%dip * DEG_TO_RAD)
+
+      vmin = HUGE(0._r32)
+
+      ! loop over layers to find minimum shear wave speed on fault plane
+      ASSOCIATE(model => input%velocity(vel))
+
+        DO layer = 1, SIZE(model%depth) - 1
+          vmin = MIN(vmin, model%vsgrad(layer) * (ztop - model%depth(layer)) + model%vs(layer))    !< top
+          vmin = MIN(vmin, model%vsgrad(layer) * (MIN(model%depth(layer + 1), zmax) - model%depth(layer)) + model%vs(layer))  !< bottom
+          ztop = model%depth(layer + 1)
+          IF (zmax .lt. ztop) EXIT
+        ENDDO
+
+        IF (zmax .ge. ztop) THEN
+          vmin = MIN(vmin, model%vsgrad(layer) * (ztop - model%depth(layer)) + model%vs(layer))    !< top
+          vmin = MIN(vmin, model%vsgrad(layer) * (zmax - model%depth(layer)) + model%vs(layer))    !< bottom
+        ENDIF
+
+      END ASSOCIATE
+
+      mesh_spacing = vmin / input%coda%fmax / input%advanced%pmw
+
+    END FUNCTION mesh_spacing
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    REAL(r32) FUNCTION time_stepping(pl, vel, du)
+
+      ! Purpose:
+      !   to compute integration time-step for "pl"-th fault plane, "vel"-th velocity model and grid-step "du" such that the
+      !   requirement of having at least "input%advanced%avecuts" cuts per triangle is fulfilled.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      INTEGER(i32), INTENT(IN) :: pl, vel
+      REAL(r32),    INTENT(IN) :: du
+      INTEGER(i32)             :: layer
+      REAL(r32)                :: ztop, zmax, vmax
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      ztop = plane(pl)%z + plane(pl)%v(1) * SIN(plane(pl)%dip * DEG_TO_RAD)     !< for point-source, "z" (u=v=0) is center, not top
+      zmax = ztop + plane(pl)%width * SIN(plane(pl)%dip * DEG_TO_RAD)
+
+      vmax = 0._r32
+
+      ! loop over layers to find maximum shear wave speed on fault plane
+      ASSOCIATE(model => input%velocity(vel))
+
+        DO layer = 1, SIZE(model%depth) - 1
+          vmax = MAX(vmax, model%vsgrad(layer) * (ztop - model%depth(layer)) + model%vs(layer))    !< top
+          vmax = MAX(vmax, model%vsgrad(layer) * (MIN(model%depth(layer + 1), zmax) - model%depth(layer)) + model%vs(layer))  !< bottom
+          ztop = model%depth(layer + 1)
+          IF (zmax .lt. ztop) EXIT
+        ENDDO
+
+        IF (zmax .ge. ztop) THEN
+          vmax = MAX(vmax, model%vsgrad(layer) * (ztop - model%depth(layer)) + model%vs(layer))    !< top
+          vmax = MAX(vmax, model%vsgrad(layer) * (zmax - model%depth(layer)) + model%vs(layer))    !< bottom
+        ENDIF
+
+      END ASSOCIATE
+
+      time_stepping = du / vmax / input%source%vrfact / input%advanced%avecuts
+
+    END FUNCTION time_stepping
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    REAL(r32) ELEMENTAL FUNCTION get_phys(ztop, phys, gradient, z)
+
+      ! Purpose:
+      !   to return a physical property (e.g. velocity, density, etc) at depth "z" given a model where property "phys", gradient
+      !   "gradient" and depth to layer "ztop" are defined for each layer.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      REAL(r32), DIMENSION(:), INTENT(IN) :: ztop, phys, gradient
+      REAL(r32),               INTENT(IN) :: z
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      DO i = SIZE(ztop), 1, -1
+        IF (z .ge. ztop(i)) THEN
+          get_phys = phys(i) + gradient(i)*(z - ztop(i))
+          EXIT
+        ENDIF
+      ENDDO
+
+    END FUNCTION get_phys
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
 
-    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
-    !===============================================================================================================================
-    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
-
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
-
 
 
 END MODULE m_source
