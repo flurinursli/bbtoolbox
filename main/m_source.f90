@@ -17,7 +17,7 @@ MODULE m_source
   PRIVATE
 
   PUBLIC :: hypocenter, plane
-  PUBLIC :: setup_source
+  PUBLIC :: setup_source, meshing
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -772,14 +772,17 @@ MODULE m_source
       !
 
       INTEGER(i32), INTENT(IN) :: pl, vel
+      INTEGER(i32)             :: nu, nv
+      INTEGER(i32)             :: nutr, nvtr, nugr, nvgr
       REAL(r32)                :: du, dv, dt, beta
+      REAL(r32)                :: umingr, umaxgr, vmingr, vmaxgr, dutr, dvtr
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
       IF (input%source%is_point) THEN
 
         ASSOCIATE(model => input%velocity(vel))
-          beta = get_phys(model%depth, model%vs, model%vsgrad, plan(pl)%z)           !< s-wave velocity at source depth
+          beta = vinterp(model%depth, model%vs, model%vsgrad, plane(pl)%z)           !< s-wave velocity at source depth
         END ASSOCIATE
 
         ! first condition for point-sources: lambda_min >> d, where d is diagonal of a square fault
@@ -808,21 +811,23 @@ MODULE m_source
       nu = SIZE(plane(pl)%u)
       nv = SIZE(plane(pl)%v)
 
-      mesh%umin = plane(pl)%u(1)
-      mesh%umax = plane(pl)%u(nu)
-      mesh%vmin = plane(pl)%v(1)
-      mesh%vmax = plane(pl)%v(nv)
+      ! determine grid extension
+      umingr = plane(pl)%u(1)
+      umaxgr = plane(pl)%u(nu)
+      vmingr = plane(pl)%v(1)
+      vmaxgr = plane(pl)%v(nv)
 
-      mesh%nu = (mesh%umax - mesh%umin) / du  + 0.5
-      mesh%nv = (mesh%vmax - mesh%vmin) / du  + 0.5
+      ! find roughly how many triangles with desired size we can cram onto the fault plane
+      nutr = (umaxgr - umingr) / du  + 0.5
+      nvtr = (vmaxgr - vmingr) / du  + 0.5
 
-      mesh%du = (mesh%umax - mesh%umin) / mesh%nu
-      mesh%dv = (mesh%vmax - mesh%vmin) / mesh%nv
+      ! gets actual triangle base (du) and heigth (dv)
+      dutr = (umaxgr - umingr) / nutr
+      dvtr = (vmaxgr - vmingr) / nvtr
 
-      !mesh%umin = mesh%umin - mesh%du
-      !mesh%umax = mesh%umax + mesh%du
-
-      mesh%nu = mesh%nu + 2
+      !umingr = umingr - mesh%du
+      !umaxgr = umaxgr + mesh%du
+      ! mesh%nu = mesh%nu + 2
 
       ! compute maximum number of vertexes. note: nugr is (nutr + 1) for odd rows and (nutr) for
       ! even rows
@@ -842,6 +847,31 @@ MODULE m_source
       ! IF (V(NV) .LT. MESH%VMAXGR) V(NV) = MESH%VMAXGR !+ MESH%DVTR
       !
 
+      IF (input%advanced%verbose .eq. 2) THEN
+
+        CALL update_log(num2char('Fault segment', width=30, fill='.') + num2char('Umin', width=15, justify='r') + '|' + &
+                        num2char('Umax', width=15, justify='r') + '|' + num2char('Vmin', width=15, justify='r') + '|' + &
+                        num2char('Vmax', width=15, justify='r') + '|')
+
+        CALL update_log(num2char(pl, width=30, justify='c')  +  &
+                        num2char(umingr, width=15, notation='f', precision=2, justify='r') + '|' + &
+                        num2char(umaxgr, width=15, notation='f', precision=2, justify='r') + '|' + &
+                        num2char(vmingr, width=15, notation='f', precision=2, justify='r') + '|' + &
+                        num2char(vmaxgr, width=15, notation='f', precision=2, justify='r') + '|', blankline=.false.)
+
+        CALL update_log(num2char('Triangles', width=30) + num2char('Width', width=15, justify='r') + '|' + &
+                        num2char('Heigth', width=15, justify='r') + '|' + num2char('Along u', width=15, justify='r') + '|' + &
+                        num2char('Along v', width=15, justify='r') + '|' + num2char('Totals', width=15, justify='r') + '|',  &
+                        blankline=.false.)
+
+        CALL update_log(num2char('', width=30)  +  &
+                        num2char(dutr, width=15, notation='f', precision=2, justify='r') + '|' + &
+                        num2char(dvtr, width=15, notation='f', precision=2, justify='r') + '|' + &
+                        num2char(2*nutr - 1, width=15, notation='f', precision=2, justify='r') + '|' + &
+                        num2char(nvtr, width=15, notation='f', precision=2, justify='r') + '|' +  &
+                        num2char(nvtr*(2*nutr - 1), width=15, notation='f', precision=2, justify='r') + '|', blankline=.false.)
+
+      ENDIF
 
     END SUBROUTINE meshing
 
@@ -946,7 +976,7 @@ MODULE m_source
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    REAL(r32) ELEMENTAL FUNCTION get_phys(ztop, phys, gradient, z)
+    REAL(r32) FUNCTION vinterp(ztop, phys, gradient, z)
 
       ! Purpose:
       !   to return a physical property (e.g. velocity, density, etc) at depth "z" given a model where property "phys", gradient
@@ -958,19 +988,20 @@ MODULE m_source
       !   08/03/21                  original version
       !
 
-      REAL(r32), DIMENSION(:), INTENT(IN) :: ztop, phys, gradient
-      REAL(r32),               INTENT(IN) :: z
+      REAL(r32),   DIMENSION(:), INTENT(IN) :: ztop, phys, gradient
+      REAL(r32),                 INTENT(IN) :: z
+      INTEGER(i32)                          :: i
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
       DO i = SIZE(ztop), 1, -1
         IF (z .ge. ztop(i)) THEN
-          get_phys = phys(i) + gradient(i)*(z - ztop(i))
+          vinterp = phys(i) + gradient(i)*(z - ztop(i))
           EXIT
         ENDIF
       ENDDO
 
-    END FUNCTION get_phys
+    END FUNCTION vinterp
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================

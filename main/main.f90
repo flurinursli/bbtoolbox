@@ -80,7 +80,7 @@ PROGRAM main
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
   ! ------------------------------------------------- load input time-series  ------------------------------------------------------
 
-  CALL read_lp(ok, rank, ntasks)
+  ! CALL read_lp(ok, rank, ntasks)
 
 #ifdef MPI
   IF (ok .ne. 0) CALL mpi_abort(mpi_comm_world, ok, ierr)
@@ -125,7 +125,7 @@ PROGRAM main
 
       DO ivel = 1, SIZE(input%velocity)
 
-        !CALL meshing(pl, ivel)              !< 
+        CALL meshing(pl, ivel)              
         !CALL roughness(pl, iter)
 
         DO irec = 1, SIZE(input%receiver)
