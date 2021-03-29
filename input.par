@@ -17,7 +17,7 @@ output folder = '/home/walter/Software/bbtolbox/test/hf' variable = 'acceleratio
 # required fields are "x"/"y"/"z" (or "lon"/"lat"/"z" is receivers position is given in geographical coordinates), "strike", "dip", "rake" ...
 # ... "m0", "type" (default "Brune") and "freq" (default=6.28)
 #source x= 20350 y=15010 z=5000 strike=10 dip=90 rake=15 m0=1.0e+19 type='brune' freq=6.28
-#source lon= 16.1 lat=45.01 z=5000 strike=10 dip=90 rake=15 m0=1.0e+19 type='brune' freq=6.28
+#source lon= 16.1 lat=45.01 z=5.0 strike=10 dip=90 rake=15 m0=1.0e+19 type='brune' freq=6.28
 
 # ... or extended source (incl. roughness and RIK parameters: these are optional)
 # file format is determined from file extension
@@ -39,11 +39,11 @@ layer vp = 2400 vs = 1400 rho = 2400 depth = 500
 layer vp = 3800 vs = 2200 rho = 2700 depth = 2100
 
 # second model
-layer vp = 850  vs = 500  rho = 1800
+layer vp = 850  vs = 500 rho = 1800
 layer vp = 2600 vs = 1500 rho = 2400 depth = 350
 layer vp = 4650 vs = 2700 rho = 2800 depth = 1800
 
-# define attenuation model(s) (all fields are mandatory)
+# define attenuation model(s) (all fields are mandatory) (units: 1/km)
 # note: these properties are the same for the whole model
 # tip: to specify no scattering/attenuation, give a single frequency band (e.g. frequency=[1,30]) and set other fields to zero (i.e. gss = [0.], etc.)
 # first model

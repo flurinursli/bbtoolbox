@@ -125,7 +125,13 @@ PROGRAM main
 
       DO ivel = 1, SIZE(input%velocity)
 
-        CALL meshing(pl, ivel)              
+        CALL update_log(num2char('Iteration for', width=30, fill='.') + num2char('Source #', width=15, justify='r') + '|' +   &
+                        num2char('Segment #', width=15, justify='r') + '|' + num2char('Velocity #', width=15, justify='r') + '|')
+
+        CALL update_log(num2char('', width=30) + num2char(iter, width=15, justify='r') + '|' +  &
+                        num2char(pl, width=15, justify='r') + '|' + num2char(ivel, width=15, justify='r') + '|', blankline=.false.)
+
+        CALL meshing(pl, ivel)
         !CALL roughness(pl, iter)
 
         DO irec = 1, SIZE(input%receiver)

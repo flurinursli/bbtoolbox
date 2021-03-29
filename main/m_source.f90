@@ -21,6 +21,9 @@ MODULE m_source
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
+  INTEGER(i32) :: nutr, nvtr
+  REAL(r32)    :: dutr, dvtr, umingr, vmingr
+
   REAL(r32), PARAMETER :: PTSRC_FACTOR = 1._r32 / 10._r32
   REAL(r32), PARAMETER :: PI = 3.14159265358979323846_r64
   REAL(r32), PARAMETER :: DEG_TO_RAD = PI / 180._r32
@@ -33,7 +36,6 @@ MODULE m_source
   TYPE :: seg
     REAL(r32), ALLOCATABLE, DIMENSION(:) :: mrf
   END TYPE seg
-
 
   TYPE :: src
     REAL(r32)                                :: length, width, strike, dip         !< segment-specific
@@ -75,18 +77,10 @@ MODULE m_source
 
       IF (input%source%is_point) THEN
 
+        ! for point-sources, set a minimum amount of common parameters... other mesh-specific parameters will be set later on in
+        ! subroutine "meshing"
+
         ALLOCATE(plane(1))
-
-        ! first condition for point-sources: lambda_min >> l, where l is the length of a square fault
-        ! diagonal = l*sqrt(2) = 2*sqrt(2)*du (l = 2*du)
-        ! du = PTSRC_FACTOR * beta / input%coda%fmax / SQRT(2._r32) / 2._r32
-
-        ! second condition for point-source: max(rupture time) << tr, where tr is the shortes period observed (i.e. 1/fmax)
-        ! dt = PTSRC_FACTOR / input%coda%fmax
-
-        ! define all quantities on a small fault whose length=width=2*du
-        ! plane(1)%u = [-du, 0._r32, du]
-        ! plane(1)%v = [-du, 0._r32, du]
 
         plane(1)%targetm0 = input%source%m0
         plane(1)%strike   = input%source%strike
@@ -94,11 +88,6 @@ MODULE m_source
 
         ALLOCATE(plane(1)%u(3), plane(1)%v(3))
         ALLOCATE(plane(1)%rise(3,3), plane(1)%sslip(3,3), plane(1)%dslip(3,3), plane(1)%rupture(3,3))
-
-        ! define rupture times assuming rupture initiate in the middle of the small fault
-        ! plane(1)%rupture(:, 1) = [dt, dt/SQRT(2._r32), dt]                   !< proceed along-strike (along u)
-        ! plane(1)%rupture(:, 2) = [dt/SQRT(2._r32), 0._r32, dt/SQRT(2._r32)]
-        ! plane(1)%rupture(:, 3) = [dt, dt/SQRT(2._r32), dt]
 
         plane(1)%sslip(:,:) = 0._r32
         plane(1)%dslip(:,:) = 0._r32
@@ -113,11 +102,6 @@ MODULE m_source
         plane(1)%x = input%source%x
         plane(1)%y = input%source%y
         plane(1)%z = input%source%z
-
-        ! actual fault size is connected to velocity model, which may be receiver-dependent... therefore these will be set later on
-
-        ! make sure uppermost down-dip "edge" point is always slightly (1m) below free-surface
-        ! plane(1)%z = MAX(1._r32, plane(1)%z + MAX(0._r32, SIN(plane(1)%dip * DEG_TO_RAD) * du - plane(1)%z))
 
       ELSE
 
@@ -248,6 +232,9 @@ MODULE m_source
       CALL parse(ok, du, lu, 'Dx', ['=', ' '], '% Invs')       !< subfault size along strike
       CALL parse(ok, dv, lu, 'Dz', ['=', ' '], '% Invs')       !< subfault size down-dip
 
+      du = du * 1.E+03_r32        !km to m
+      dv = dv * 1.E+03_r32
+
       ! try to read hypocenter position (on-fault u-v coordinates)
       IF (n .eq. 1) THEN
         CALL parse(ok, hypocenter%u, lu, 'HypX', ['=', ' '], '%')
@@ -294,6 +281,9 @@ MODULE m_source
         ! ...as above
         IF (.not.is_empty(length)) plane(k)%length = length
         IF (.not.is_empty(width))  plane(k)%width  = width
+
+        plane(k)%length = plane(k)%length * 1.E+03_r32   !< km to m
+        plane(k)%width = plane(k)%width * 1.E+03_r32
 
         ! determine number of subfaults
         nu = NINT(plane(k)%length / du)
@@ -412,7 +402,7 @@ MODULE m_source
 
         ! make sure uppermost down-dip "edge" point is always slightly (1m) below free-surface
         !plane(k)%z = MAX(1._r32, plane(k)%z + MAX(0._r32, SIN(plane(k)%dip * DEG_TO_RAD) * dv / 2._r32 - plane(k)%z))
-        plane(k)%z = MAX(1._r32, plane(k)%z)
+        plane(k)%z = MAX(1._r32, plane(k)%z * 1.E+03_r32)
 
       ENDDO
 
@@ -765,6 +755,14 @@ MODULE m_source
       !   to discretize the "pl"-th fault segment in "vel"-th velocity model using a triangular mesh. Triangle size is determined by
       !   the number of points per minimum wavelength.
       !
+      !    _ _ _ _ _ _ _ _ _ _
+      !    \  1 / \  3 / \
+      !     \  / 2 \  / 4 \
+      !      \/__ _ \/_ _ _\/
+      !     / \ 2  / \  4 /
+      !    / 1 \  / 3 \  /
+      !   /_ _ _\/ _ _ \/
+      !
       ! Revisions:
       !     Date                    Description of change
       !     ====                    =====================
@@ -773,9 +771,12 @@ MODULE m_source
 
       INTEGER(i32), INTENT(IN) :: pl, vel
       INTEGER(i32)             :: nu, nv
-      INTEGER(i32)             :: nutr, nvtr, nugr, nvgr
+      INTEGER(i32)             :: nugr, nvgr
       REAL(r32)                :: du, dv, dt, beta
-      REAL(r32)                :: umingr, umaxgr, vmingr, vmaxgr, dutr, dvtr
+      REAL(r32)                :: umaxgr, vmaxgr
+
+integer(i32), dimension(3) :: iuc, ivc
+real(r32)                  :: u, v
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
@@ -818,16 +819,15 @@ MODULE m_source
       vmaxgr = plane(pl)%v(nv)
 
       ! find roughly how many triangles with desired size we can cram onto the fault plane
-      nutr = (umaxgr - umingr) / du  + 0.5
-      nvtr = (vmaxgr - vmingr) / du  + 0.5
+      nutr = (umaxgr - umingr) / du  + 0.5_r32
+      nvtr = (vmaxgr - vmingr) / du  + 0.5_r32
 
       ! gets actual triangle base (du) and heigth (dv)
       dutr = (umaxgr - umingr) / nutr
       dvtr = (vmaxgr - vmingr) / nvtr
 
-      !umingr = umingr - mesh%du
-      !umaxgr = umaxgr + mesh%du
-      ! mesh%nu = mesh%nu + 2
+      ! total number of triangles along a row
+      ! nutr = 2*nutr - 1
 
       ! compute maximum number of vertexes. note: nugr is (nutr + 1) for odd rows and (nutr) for
       ! even rows
@@ -849,17 +849,17 @@ MODULE m_source
 
       IF (input%advanced%verbose .eq. 2) THEN
 
-        CALL update_log(num2char('Fault segment', width=30, fill='.') + num2char('Umin', width=15, justify='r') + '|' + &
+        CALL update_log(num2char('<grid extension>', justify='c', width=30) + num2char('Umin', width=15, justify='r') + '|' +  &
                         num2char('Umax', width=15, justify='r') + '|' + num2char('Vmin', width=15, justify='r') + '|' + &
-                        num2char('Vmax', width=15, justify='r') + '|')
+                        num2char('Vmax', width=15, justify='r') + '|', blankline=.false.)
 
-        CALL update_log(num2char(pl, width=30, justify='c')  +  &
+        CALL update_log(num2char('', width=30, justify='c')  +  &
                         num2char(umingr, width=15, notation='f', precision=2, justify='r') + '|' + &
                         num2char(umaxgr, width=15, notation='f', precision=2, justify='r') + '|' + &
                         num2char(vmingr, width=15, notation='f', precision=2, justify='r') + '|' + &
                         num2char(vmaxgr, width=15, notation='f', precision=2, justify='r') + '|', blankline=.false.)
 
-        CALL update_log(num2char('Triangles', width=30) + num2char('Width', width=15, justify='r') + '|' + &
+        CALL update_log(num2char('<triangles>', justify='c', width=30) + num2char('Width', width=15, justify='r') + '|' + &
                         num2char('Heigth', width=15, justify='r') + '|' + num2char('Along u', width=15, justify='r') + '|' + &
                         num2char('Along v', width=15, justify='r') + '|' + num2char('Totals', width=15, justify='r') + '|',  &
                         blankline=.false.)
@@ -867,9 +867,9 @@ MODULE m_source
         CALL update_log(num2char('', width=30)  +  &
                         num2char(dutr, width=15, notation='f', precision=2, justify='r') + '|' + &
                         num2char(dvtr, width=15, notation='f', precision=2, justify='r') + '|' + &
-                        num2char(2*nutr - 1, width=15, notation='f', precision=2, justify='r') + '|' + &
-                        num2char(nvtr, width=15, notation='f', precision=2, justify='r') + '|' +  &
-                        num2char(nvtr*(2*nutr - 1), width=15, notation='f', precision=2, justify='r') + '|', blankline=.false.)
+                        num2char(nutr, width=15, justify='r') + '|' + &
+                        num2char(nvtr, width=15, justify='r') + '|' +  &
+                        num2char(nvtr*(2*nutr-1), width=15, justify='r') + '|', blankline=.false.)
 
       ENDIF
 
@@ -1007,6 +1007,97 @@ MODULE m_source
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
+    SUBROUTINE cornr(irow, itri, iuc, ivc)
+
+      ! Purpose:
+      !   to return corner indices "iuc" (along u) and "ivc" (along v) for the "itri"-th triangle in the "irow"-th row. Corners are
+      !   numbered sich that corner 1 has the least u value, corner 3 has the greatest and corner 2 is the intermediate.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      INTEGER(i32),               INTENT(IN)  :: irow, itri
+      INTEGER(i32), DIMENSION(3), INTENT(OUT) :: iuc, ivc
+      INTEGER(i32)                            :: i1, i2
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      i1 = (itri + 1) / 2
+      i2 = itri / 2
+
+      IF (MOD(irow, 2) .ne. 0) THEN               !< odd row
+         IF (MOD(itri, 2) .ne. 0) THEN            !< odd triangle
+            iuc(1) = i1
+            ivc(1) = irow
+            iuc(2) = i1
+            ivc(2) = irow + 1
+            iuc(3) = i1 + 1
+            ivc(3) = irow
+         ELSE
+            iuc(1) = i2
+            ivc(1) = irow + 1
+            iuc(2) = i2 + 1
+            ivc(2) = irow
+            iuc(3) = i2 + 1
+            ivc(3) = irow + 1
+         ENDIF
+      ELSE                                        !< even row
+         IF (MOD(itri, 2) .ne. 0) THEN            !< odd triangle
+            iuc(1) = i1
+            ivc(1) = irow + 1
+            iuc(2) = i1
+            ivc(2) = irow
+            iuc(3) = i1 + 1
+            ivc(3) = irow + 1
+         ELSE
+            iuc(1) = i2
+            ivc(1) = irow
+            iuc(2) = i2 + 1
+            ivc(2) = irow + 1
+            iuc(3) = i2 + 1
+            ivc(3) = irow
+         ENDIF
+      ENDIF
+
+    END SUBROUTINE cornr
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    SUBROUTINE cornr2uv(icr, iuc, ivc, u, v)
+
+      INTEGER(i32),               INTENT(IN)  :: icr
+      INTEGER(i32), DIMENSION(3), INTENT(IN)  :: iuc, ivc
+      REAL(r32),                  INTENT(OUT) :: u, v
+      INTEGER(i32)                            :: iu, iv
+      REAL(r32)                               :: du
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      iu = iuc(icr)
+      iv = ivc(icr)
+
+      du = 0._r32
+
+      IF (MOD(iv, 2) .eq. 0) du = dutr / 2._r32
+
+      u = umingr + (iu - 1) * dutr + du
+      v = vmingr + (iv - 1) * dvtr
+
+    END SUBROUTINE cornr2uv
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
