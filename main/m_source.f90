@@ -21,8 +21,8 @@ MODULE m_source
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
-  INTEGER(i32) :: nutr, nvtr
-  REAL(r32)    :: dutr, dvtr, umingr, vmingr
+  INTEGER(i32)         :: nutr, nvtr                        !< triangles along u, v
+  REAL(r32)            :: dutr, dvtr, umingr, vmingr        !< triangle base/height, minimum u,v values for triangular mesh
 
   REAL(r32), PARAMETER :: PTSRC_FACTOR = 1._r32 / 10._r32
   REAL(r32), PARAMETER :: PI = 3.14159265358979323846_r64
@@ -42,7 +42,7 @@ MODULE m_source
     REAL(r32)                                :: targetm0                           !< total moment (sum over all segments)
     REAL(r32)                                :: x, y, z                            !< absolute position of u=v=0
     REAL(r32),   ALLOCATABLE, DIMENSION(:)   :: u, v                               !< on-fault coordinates
-    REAL(r32),   ALLOCATABLE, DIMENSION(:,:) :: rise, rupture, sslip, dslip
+    REAL(r32),   ALLOCATABLE, DIMENSION(:,:) :: rise, rupture, sslip, dslip, tslip
     TYPE(seg),   ALLOCATABLE, DIMENSION(:,:) :: src
   END TYPE src
 
@@ -303,12 +303,13 @@ MODULE m_source
         nv = nv + 2
 
         ALLOCATE(plane(k)%rise(nu, nv), plane(k)%rupture(nu, nv))
-        ALLOCATE(plane(k)%sslip(nu, nv), plane(k)%dslip(nu, nv))
+        ALLOCATE(plane(k)%sslip(nu, nv), plane(k)%dslip(nu, nv), plane(k)%tslip(nu, nv))
 
         DO j = 1, nv
           DO i = 1, nu
             plane(k)%sslip(i, j) = 0._r32
             plane(k)%dslip(i, j) = 0._r32
+            plane(k)%tslip(i, j) = 0._r32
           ENDDO
         ENDDO
 
@@ -355,6 +356,7 @@ MODULE m_source
                   ! get along-strike and down-dip components of slip
                   plane(k)%sslip(i, j) = numeric(islip) * COS(rake)
                   plane(k)%dslip(i, j) = -numeric(islip) * SIN(rake)          !< in our system slip is positive down-dip
+                  plane(k)%tslip(i, j) = numeric(islip)                       !< total slip
 
                   IF (irupt .gt. 0) plane(k)%rupture(i, j) = numeric(irupt)
                   IF (irise .gt. 0) plane(k)%rise(i, j) = numeric(irise)
@@ -489,12 +491,13 @@ MODULE m_source
         nv = nv + 2
 
         ALLOCATE(plane(pl)%rupture(nu, nv), plane(pl)%sslip(nu, nv), plane(pl)%dslip(nu, nv), plane(pl)%src(nu, nv))
-        ALLOCATE(plane(pl)%rise(nu, nv), plane(pl)%u(nu), plane(pl)%v(nv))
+        ALLOCATE(plane(pl)%rise(nu, nv), plane(pl)%u(nu), plane(pl)%v(nv), plane(pl)%tslip(nu, nv))
 
         DO j = 1, nv
           DO i = 1, nu
             plane(pl)%sslip(i, j) = 0._r32
             plane(pl)%dslip(i, j) = 0._r32
+            plane(pl)%tslip(i, j) = 0._r32
           ENDDO
         ENDDO
 
@@ -536,6 +539,7 @@ MODULE m_source
             ! get along-strike and down-dip components of slip
             plane(pl)%sslip(i, j) = slip1 * COS(rake)
             plane(pl)%dslip(i, j) = -slip1 * SIN(rake)          !< in our system slip is positive down-dip
+            plane(pl)%tslip(i, j) = slip1                      !< total slip
 
             plane(pl)%rupture(i, j) = tinit
 
@@ -752,16 +756,23 @@ MODULE m_source
     SUBROUTINE meshing(pl, vel)
 
       ! Purpose:
-      !   to discretize the "pl"-th fault segment in "vel"-th velocity model using a triangular mesh. Triangle size is determined by
-      !   the number of points per minimum wavelength.
-      !
-      !    _ _ _ _ _ _ _ _ _ _
-      !    \  1 / \  3 / \
-      !     \  / 2 \  / 4 \
+      !   to discretize the "pl"-th fault segment for the "vel"-th velocity model using a triangular mesh. Triangle size is
+      !   determined by the number of points per minimum wavelength. Inside the mesh, triangles are organized as follows:
+      !    _ _ _ _ _ _ _ _ _ _ _
+      !    \  1 / \  3 / \  5 /
+      !     \  / 2 \  / 4 \  /         -> j-th (odd) row
       !      \/__ _ \/_ _ _\/
-      !     / \ 2  / \  4 /
-      !    / 1 \  / 3 \  /
-      !   /_ _ _\/ _ _ \/
+      !     / \  2 / \  4 / \
+      !    / 1 \  / 3 \  / 5 \         -> (j+1)-th (even) row
+      !   /_ _ _\/ _ _ \/_ _ _\
+      !
+      ! Corners are numbered as follows, depending whether the triangle points downwards or upwards:
+      !
+      !   1_ _ _ 3      2
+      !    \    /      / \
+      !     \  /      /   \
+      !      \/      /_ _ _\
+      !      2      1       3
       !
       ! Revisions:
       !     Date                    Description of change
@@ -770,10 +781,8 @@ MODULE m_source
       !
 
       INTEGER(i32), INTENT(IN) :: pl, vel
-      INTEGER(i32)             :: nu, nv
-      INTEGER(i32)             :: nugr, nvgr
-      REAL(r32)                :: du, dv, dt, beta
-      REAL(r32)                :: umaxgr, vmaxgr
+      INTEGER(i32)             :: nu, nv, nugr, nvgr
+      REAL(r32)                :: du, dv, dt, beta, umaxgr, vmaxgr
 
 integer(i32), dimension(3) :: iuc, ivc
 real(r32)                  :: u, v
@@ -833,19 +842,6 @@ real(r32)                  :: u, v
       ! even rows
       nugr = nutr + 1
       nvgr = nvtr + 1
-
-
-      ! ! COMPUTE NUMBER OF VERTEXES. NOTES: THESE VARY AT EACH ROW
-      ! MESH%NUGR = MESH%NUTR + 1
-      ! MESH%NVGR = MESH%NVTR + 1
-      !
-      ! ! CHECK WHETHER INPUT FAULT AND ITS EXTRA ROWS/COLUMNS COVER FULL MESH. IF NOT, ADJUST
-      ! ! EXTRA ROWS/COLUMNS
-      ! IF (U(1) .GT. MESH%UMINGR)  U(1)  = MESH%UMINGR !- MESH%DUTR
-      ! IF (U(NU) .LT. MESH%UMAXGR) U(NU) = MESH%UMAXGR !+ MESH%DUTR
-      ! IF (V(1) .GT. MESH%VMINGR)  V(1)  = MESH%VMINGR !- MESH%DVTR
-      ! IF (V(NV) .LT. MESH%VMAXGR) V(NV) = MESH%VMAXGR !+ MESH%DVTR
-      !
 
       IF (input%advanced%verbose .eq. 2) THEN
 
@@ -1013,6 +1009,33 @@ real(r32)                  :: u, v
       !   to return corner indices "iuc" (along u) and "ivc" (along v) for the "itri"-th triangle in the "irow"-th row. Corners are
       !   numbered sich that corner 1 has the least u value, corner 3 has the greatest and corner 2 is the intermediate.
       !
+      ! Corners are numbered as follows, depending whether the triangle points downwards ("itri" odd) or upwards ("itri" even) and
+      ! the "irow"-th row:
+      !
+      ! e.g. "irow"=1, "itri"=1 and 2
+      !
+      !    1_ _ _2        2                       1_ _ _1          1
+      !    \    /        / \                      \    /          / \
+      !     \  /        /   \       IUC            \  /          /   \      IVC
+      !      \/        /_ _ _\                      \/          /_ _ _\
+      !      1        1       2                     2          2       2
+      !
+      ! e.g. "irow"=2, "itri"=1 and 2
+      !
+      !       1       1_ _ _2                    1_ _ _1          1
+      !      / \      \    /                     \    /          / \
+      !     /   \      \  /         IUC           \  /          /   \      IVC
+      !    /_ _ _\      \/                         \/          /_ _ _\
+      !   1       2     2                          2          2       2
+      !
+      ! Corners indices for "iuc" and "ivc" are as follows, depending whether the triangle points downwards or upwards:
+      !
+      !   1_ _ _ 3      2
+      !    \    /      / \
+      !     \  /      /   \
+      !      \/      /_ _ _\
+      !      2      1       3
+      !
       ! Revisions:
       !     Date                    Description of change
       !     ====                    =====================
@@ -1069,6 +1092,16 @@ real(r32)                  :: u, v
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
     SUBROUTINE cornr2uv(icr, iuc, ivc, u, v)
+
+      ! Purpose:
+      !   to return position of "icr" corner in terms of on-fault coordinates "u" "v". Arrays "iuc" and "ivc" must be computed by
+      !   subroutine "cornr"
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
 
       INTEGER(i32),               INTENT(IN)  :: icr
       INTEGER(i32), DIMENSION(3), INTENT(IN)  :: iuc, ivc

@@ -135,11 +135,11 @@ MODULE m_interpolation_r32
       n = SIZE(x)
 
       IF ( (ix .eq. 0) .or. (ix .eq. n) ) THEN
-        !yo = extrafun(x, y, xo, ix)          !< does not work with PGI when nested
-        yo = extralin(x, y, xo, ix)
+        yo = extrafun(x, y, xo, ix)          !< does not work with PGI when nested
+        ! yo = extralin(x, y, xo, ix)
       ELSE
-        !yo = fun(x, y, xo, ix)               !< does not work with PGI when nested
-        yo = linear(x, y, xo, ix)
+        yo = fun(x, y, xo, ix)               !< does not work with PGI when nested
+        ! yo = linear(x, y, xo, ix)
       ENDIF
 
     END SUBROUTINE interp_core

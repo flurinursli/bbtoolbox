@@ -29,6 +29,7 @@ PROGRAM main
   USE, NON_INTRINSIC :: m_logfile
   USE, NON_INTRINSIC :: m_strings
   USE, NON_INTRINSIC :: m_noise
+  USE, NON_INTRINSIC :: m_rik
   USE, NON_INTRINSIC :: m_timeseries
 
   IMPLICIT none
@@ -133,6 +134,8 @@ PROGRAM main
 
         CALL meshing(pl, ivel)
         !CALL roughness(pl, iter)
+
+        CALL rik(ok, pl)
 
         DO irec = 1, SIZE(input%receiver)
           !IF (input%receiver(irec)%velocity .eq. ivel) CALL quake(irec, pl)
