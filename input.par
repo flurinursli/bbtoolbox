@@ -26,7 +26,7 @@ output folder = '/home/walter/Software/bbtolbox/test/hf' variable = 'acceleratio
 rupture file = '/home/walter/Software/bbtoolbox/test/s1999HECTOR01JONS.fsp' type='brune' freq=3.14 roughness=-2.0  +
 #rupture file = '/home/walter/Software/bbtoolbox/test/sample.srf' type='brune' freq=3.14 roughness=-2.0  +
 # rik
-corr=0.7 l0=0.3 aparam=1.0 vrfact=0.85 seed = 74921 samples = 1
+corr=0.8 l0=0.3 aparam=1.0 vrfact=0.85 seed = 74920 samples = 1
 
 # set position of geographical reference point (needed if we are working with geographical coordinates)
 # origin lon=10.2 lat=43.49

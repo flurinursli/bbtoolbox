@@ -169,9 +169,9 @@ MODULE m_noise
       CALL setup_rng(ok, 'normal', 0._r32, 1._r32, input%coda%seed)
 
       ! components for same receiver are not inter-correlated
-      CALL rng(timeseries%sp%x(:, 1))
-      CALL rng(timeseries%sp%y(:, 1))
-      CALL rng(timeseries%sp%z(:, 1))
+      CALL rng(timeseries%sp%x(:, 1), 1)
+      CALL rng(timeseries%sp%y(:, 1), 1)
+      CALL rng(timeseries%sp%z(:, 1), 1)
 
       DO comp = 1, 3
 
@@ -281,7 +281,7 @@ MODULE m_noise
             ! ----------------------------------------------- invert covariance matrix  --------------------------------------------
             CALL matinv(ok, c, v, is_singular)
 
-            CALL rng(rnorm)        !< draw two numbers from normal distribution
+            CALL rng(rnorm, 1)        !< draw two numbers from normal distribution
 
             ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
             ! --------------------------------------------- compute fourier coefficients  ------------------------------------------
@@ -512,10 +512,10 @@ MODULE m_noise
           IF (ok .ne. 0) warning = 1
 #endif
 
-          CALL rng(rnorm)
+          CALL rng(rnorm, 1)
           fc_a(fr, :) = MATMUL(c, rnorm)
 
-          CALL rng(rnorm)
+          CALL rng(rnorm, 1)
           fc_b(fr, :) = MATMUL(c, rnorm)
 
         ENDDO       !< end loop over frequency

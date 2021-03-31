@@ -20,9 +20,10 @@ x_flattened(1:c_npts) => x
 
 ! parallel region below is meant to parallelize the calculation of random numbers when "rng" is called from a serial region. In this
 ! case, "i0", "i1", "c_npts" and "c_skip" are modified and "setup_trng" called to update number of random deviates to be skipped.
+! Note that in such configuration leapfrogging is disabled.
 !$omp parallel default(shared) private(i0, i1) firstprivate(c_npts) copyin(c_skip)
 !$ c_skip = c_skip + omp_get_thread_num() * (c_npts / omp_get_num_threads())
-!$ IF (omp_get_num_threads() .gt. 1) CALL setup_trng(c_seed, c_skip)
+!$ IF (omp_get_num_threads() .gt. 1) CALL setup_trng(c_seed, c_skip, 1, 0)
 !$ i0 = omp_get_thread_num() * c_npts / omp_get_num_threads() + 1
 !$ i1 = (omp_get_thread_num() + 1) * c_npts / omp_get_num_threads()
 !$ c_npts = i1 - i0 + 1

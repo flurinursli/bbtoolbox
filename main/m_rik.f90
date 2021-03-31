@@ -1,10 +1,12 @@
 MODULE m_rik
 
+  USE                :: omp_lib
   USE, NON_INTRINSIC :: m_precisions
-  USE, NON_INTRINSIC :: m_interpolation
+  USE, NON_INTRINSIC :: m_interpolation_r32
   USE, NON_INTRINSIC :: m_logfile
   USE, NON_INTRINSIC :: m_random
   USE, NON_INTRINSIC :: m_source
+  USE, NON_INTRINSIC :: m_stat
   USE, NON_INTRINSIC :: m_strings
   USE, NON_INTRINSIC :: m_toolbox, ONLY: input
 ! #ifdef MPI
@@ -39,9 +41,14 @@ MODULE m_rik
 
       INTEGER(i32),                                      INTENT(OUT) :: ok
       INTEGER(i32),                                      INTENT(IN)  :: pl
-      INTEGER(i32)                                                   :: nu, nv, submin, submax, subtot, i, slevel, n
+      INTEGER(i32)                                                   :: nu, nv, submin, submax, i, j, slevel, n
+      INTEGER(i32),              DIMENSION(2)                        :: pos
       INTEGER(i32), ALLOCATABLE, DIMENSION(:)                        :: nsubs
-      REAL(r32)                                                      :: dh, umin, vmin, umax, vmax, du, dv
+      REAL(r32)                                                      :: dh, umin, vmin, umax, vmax, du, dv, cross
+      REAL(r32),                 DIMENSION(1)                        :: x
+      REAL(r32),                 DIMENSION(2)                        :: mu, std
+      REAL(r32),                 DIMENSION(PDFNU)                    :: u
+      REAL(r32),                 DIMENSION(PDFNV)                    :: v
       REAL(r32),                 DIMENSION(PDFNU, PDFNV)             :: cpdf, slip, tslip
 
       !-----------------------------------------------------------------------------------------------------------------------------
@@ -65,8 +72,6 @@ MODULE m_rik
       vmax = plane(pl)%v(nv - 1)
 
       CALL fillpdf(pl, umin, umax, vmin, vmax, cpdf)                  !< slip-based cpdf based on strong-motion area
-
-print*, umin, umax, vmin, vmax, minval(cpdf), maxval(cpdf)
 
       ! limit minimum subsource size to average mesh step
       submin = 2
@@ -100,6 +105,8 @@ print*, umin, umax, vmin, vmax, minval(cpdf), maxval(cpdf)
 
       CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%tslip, u, v, tslip)
 
+print*, minval(plane(pl)%tslip), minval(tslip)
+
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! ------------------------------------------------ generate slip model  ------------------------------------------------------
 
@@ -118,11 +125,11 @@ print*, umin, umax, vmin, vmax, minval(cpdf), maxval(cpdf)
 
             DO
 
-              CALL rng(x)
+              CALL rng(x, 1)
 
-              pos = MINLOC(ABS(cpdf - x))
+              pos = MINLOC(ABS(cpdf - x(1)))
 
-              su(n) = (pos(1) - 1) * du + umin      !< subsource position
+              su(n) = (pos(1) - 1) * du + umin        !< subsource position
               sv(n) = (pos(2) - 1) * dv + vmin
 
               ! accept subsource if located inside strong motion area. This check is necessary because "x" can be very close to 0
@@ -133,13 +140,21 @@ print*, umin, umax, vmin, vmax, minval(cpdf), maxval(cpdf)
           ENDDO
         ENDDO
 
-        slip = total_slip(u, v)
+        !$omp parallel do default(shared) private(i, j)
+        DO j = 1, PDFNV
+          DO i = 1, PDFNU
+            slip(i, j) = total_slip(u(i), v(j))
+          ENDDO
+        ENDDO
+        !$omp end parallel do
 
         mu(1) = mean(slip)
         mu(2) = mean(tslip)
 
-        std(1) = sigma(slip)
-        std(2) = sigma(tslip)
+        std(1) = SQRT(variance(slip))
+        std(2) = SQRT(variance(tslip))
+
+        cross = 0._r32
 
         DO j = 1, PDFNV
           DO i = 1, PDFNU
@@ -149,16 +164,17 @@ print*, umin, umax, vmin, vmax, minval(cpdf), maxval(cpdf)
 
         cross = cross / PRODUCT(std) / (PDFNU * PDFNV)     !< zero-normalized cross-correlation
 
-print*, cross, mu, std
+
+print*, cross, minval(slip), maxval(slip), minval(tslip), maxval(tslip)
 
         IF (cross .ge. input%source%correlation) EXIT
 
       ENDDO
 
+      ! lc = input%source%l0 * (umax - umin)          !< rescale "l0" after strong motion area
 
-      lc = input%source%l0 * (umax - umin)          !< rescale "l0" after strong motion area
 
-
+      DEALLOCATE(su, sv, sradius)
 
     END SUBROUTINE rik
 
@@ -182,7 +198,7 @@ print*, cross, mu, std
       INTEGER(i32),                        INTENT(IN)  :: pl
       REAL(r32),                           INTENT(IN)  :: umin, umax, vmin, vmax
       REAL(r32),    DIMENSION(:,:),        INTENT(OUT) :: cpdf
-      INTEGER(i32)                                     :: i, j
+      INTEGER(i32)                                     :: i, j, ok
       REAL(r32)                                        :: du, dv, cumul
       REAL(r32),    DIMENSION(PDFNU)                   :: u
       REAL(r32),    DIMENSION(PDFNV)                   :: v
@@ -230,7 +246,7 @@ print*, cross, mu, std
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    ELEMENTAL REAL(r32) FUNCTION total_slip(u, v)
+    REAL(r32) FUNCTION total_slip(u, v)
 
       ! Purpose:
       !   to compute slip at fault position "u" "v" due to contribution of all subsources.
@@ -253,7 +269,11 @@ print*, cross, mu, std
 
         x = sradius(i)**2 - (u - su(i))**2 - (v - sv(i))**2
 
-        IF (x .gt. 0._r32) total_slip = total_slip + SQRT(x)
+        x = MAX(0._r32, x)
+
+        total_slip = total_slip + SQRT(x)
+
+        !IF (x .gt. 0._r32) total_slip = total_slip + SQRT(x)
 
       ENDDO
 

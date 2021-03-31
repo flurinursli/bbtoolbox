@@ -12,8 +12,9 @@ MODULE m_random
   !   Parallelization at module level is based on OPENMP and is enabled when "rng" is called from a serial region. In this case, the
   !   random number calculation is distributed internally amongst threads by means of the "block-splitting" method.
   !   Similarly, parallelization at the calling program can be obtained by using MPI, OPENMP, etc. as long as each process/thread
-  !   initialise the random number generator indicating the amount of variates to be skipped (i.e. already drawn). For OPENMP, this
-  !   implies placing both calls to "setup_rng" and "rng" inside parallel regions.
+  !   initialise the random number generator indicating the amount of variates to be skipped (i.e. already drawn) and/or the number
+  !   of substreams to be generated. For OPENMP, this implies placing both calls to "setup_rng" and "rng" inside one or more parallel
+  !   regions.
   !   Both approaches work out as expected as long as nested OPENMP parallel regions are disabled (default).
   !
   !   Precision is determined at compile-time ("-DDOUBLE_PREC" flag)
@@ -53,11 +54,12 @@ MODULE m_random
   ! interface to TRNG C++ routines
   INTERFACE
 
-    SUBROUTINE setup_trng(seed, skip) BIND(c, name="setup_trng")
+    SUBROUTINE setup_trng(seed, skip, streams, nostream) BIND(c, name="setup_trng")
       USE, INTRINSIC     :: iso_c_binding
       USE, NON_INTRINSIC :: m_precisions
       INTEGER(c_i32), VALUE :: seed
       INTEGER(c_i64), VALUE :: skip
+      INTEGER(c_i32), VALUE :: streams, nostream
     END SUBROUTINE setup_trng
 
     SUBROUTINE uni01(a, b, npts, rand) BIND(c, name="uni01")
@@ -118,8 +120,10 @@ MODULE m_random
 
   ! random variates to be skipped
   INTEGER(c_i64) :: c_skip
+  INTEGER(c_i32) :: c_streams, c_nostream
 
   !$omp threadprivate(c_skip)
+  !$omp threadprivate(c_streams, c_nostream)
 
   ! generic pointer to distribution routines
   PROCEDURE(uni), POINTER :: fun
@@ -132,17 +136,19 @@ MODULE m_random
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE setup_rng(ok, dist, p1, p2, seed, skip)
+    SUBROUTINE setup_rng(ok, dist, p1, p2, seed, skip, streams, nostream)
 
       ! Purpose:
-      !   To set up the random number generator by providing the desired distribution and its parameters, the seed number and,
-      !   optionally, the amount of random numbers already extracted. The latter parameter is useful for parallel execution relying
-      !   on the "block splitting" technique (see TRNG manual).
+      !   To set up the random number generator by providing distribution "dist" and its parameters, seed number "seed", the amount
+      !   ("skip") of random numbers already extracted and the "nostream"-th substream of "streams" substreams.
+      !   The last three parameters are useful for parallel execution based on the block-splitting ("skip") and/or leapfrogging
+      !   ("streams", "nostream") technique (see TRNG manual). Note that "nostream" must be in the range [0, streams-1].
       !
       ! Revisions:
       !     Date                    Description of change
       !     ====                    =====================
       !   02/09/20                  original version
+      !   08/03/21                  leapfrog added
       !
 
       INTEGER(i32),               INTENT(OUT) :: ok                 !< error flag
@@ -150,14 +156,24 @@ MODULE m_random
       REAL(r__),                  INTENT(IN)  :: p1, p2             !< distribution parameters
       INTEGER(i32),               INTENT(IN)  :: seed               !< seed number
       INTEGER(i32),     OPTIONAL, INTENT(IN)  :: skip               !< amount of random numbers already consumed (e.g. by a thread)
+      INTEGER(i32),     OPTIONAL, INTENT(IN)  :: streams, nostream  !< generate "nostream"-th substream of "streams" substreams
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
       ok = 0
 
-      c_skip = 0
+      c_skip = 0             !< default: skip no random number
+      c_streams = 1          !<          generate one substream only
+      c_nostream = 0         !<          take the only existant substream
 
       IF (PRESENT(skip)) c_skip = skip
+      IF (PRESENT(streams)) c_streams = streams
+      IF (PRESENT(nostream)) c_nostream = nostream
+
+      IF (c_nostream .ge. c_streams) THEN
+        ok = 2
+        RETURN
+      ENDIF
 
       c_seed = seed
 
@@ -182,7 +198,7 @@ MODULE m_random
       END SELECT
 
       ! setup trng generator
-      CALL setup_trng(c_seed, c_skip)
+      CALL setup_trng(c_seed, c_skip, c_streams, c_nostream)
 
     END SUBROUTINE setup_rng
 
@@ -208,13 +224,16 @@ MODULE m_random
 
       SELECT CASE(ierr)
         CASE(1)
-          msg = 'wrong value for argument "dist" in setup_rng: unknown distribution type'
+          msg = 'invalid argument in setup_rng: unknown distribution type'
 
         CASE(2)
-          msg = 'wrong value for argument "p1" and "p2" in setup_rng: uniform distributions require "p1 < p2"'
+          msg = 'invalid argument in setup_rng: uniform distributions require "p1 < p2"'
 
         CASE(3)
-          msg = 'wrong value for argument "p2" in setup_rng: normal distributions must have positive std.dev. ("p2 > 0")'
+          msg = 'invalid argument in setup_rng: normal distributions must have positive std.dev. ("p2 > 0")'
+
+        CASE(4)
+          msg = 'invalid argument in setup_rng: condition "nostream" < "streams" violated'
 
       END SELECT
 

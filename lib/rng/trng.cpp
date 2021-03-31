@@ -6,6 +6,7 @@
      Date                    Description of change
      ====                    =====================
    02/09/20                  original version
+   08/03/21                  leapfrog added
 */
 
 #include <omp.h>
@@ -20,7 +21,7 @@
 
 extern "C"
 {
-  void setup_trng(int seed, long skip);
+  void setup_trng(int seed, long skip, int streams, int nostream);
 #ifdef DOUBLE_PREC
   void uni01(double a, double b, int npts, double * x);
   void uni(double a, double b, int npts, double * x);
@@ -37,7 +38,7 @@ static trng::yarn2 * r;
 
 // -----------------------------------------------------------------------------
 
-void setup_trng(int seed, long skip){
+void setup_trng(int seed, long skip, int streams, int nostream){
 
   unsigned long myseed = seed;
 
@@ -50,6 +51,7 @@ void setup_trng(int seed, long skip){
 
     r->seed(myseed);
     r->jump(skip);
+    r->split(streams, nostream);
 
   }
 

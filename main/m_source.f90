@@ -17,7 +17,7 @@ MODULE m_source
   PRIVATE
 
   PUBLIC :: hypocenter, plane
-  PUBLIC :: setup_source, meshing
+  PUBLIC :: setup_source, meshing, dutr, dvtr
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -783,9 +783,6 @@ MODULE m_source
       INTEGER(i32), INTENT(IN) :: pl, vel
       INTEGER(i32)             :: nu, nv, nugr, nvgr
       REAL(r32)                :: du, dv, dt, beta, umaxgr, vmaxgr
-
-integer(i32), dimension(3) :: iuc, ivc
-real(r32)                  :: u, v
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
