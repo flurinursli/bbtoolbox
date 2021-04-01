@@ -30,6 +30,12 @@ MODULE m_rik
   INTEGER(i32)                            :: subtot
   REAL(i32),    ALLOCATABLE, DIMENSION(:) :: su, sv, sradius
 
+  TYPE :: grd
+    REAL(r32), ALLOCATABLE, DIMENSION(:) :: slip, rupture, rise
+  END TYPE grd
+
+  TYPE(grd), ALLOCATABLE, DIMENSION(:,:) :: node
+
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
   CONTAINS
@@ -45,7 +51,7 @@ MODULE m_rik
       INTEGER(i32)                                                   :: nu, nv, submin, submax, i, j, slevel, n
       INTEGER(i32),              DIMENSION(2)                        :: pos
       INTEGER(i32), ALLOCATABLE, DIMENSION(:)                        :: nsubs
-      REAL(r32)                                                      :: dh, umin, vmin, umax, vmax, du, dv, cross
+      REAL(r32)                                                      :: dh, umin, vmin, umax, vmax, du, dv, cross, lc
       REAL(r32),                 DIMENSION(1)                        :: x
       REAL(r32),                 DIMENSION(2)                        :: mu, std
       REAL(r32),                 DIMENSION(PDFNU)                    :: u
@@ -55,6 +61,8 @@ MODULE m_rik
       !-----------------------------------------------------------------------------------------------------------------------------
 
       ok = 0
+
+      IF (ALLOCATED(node)) DEALLOCATE(node)
 
       ! average grid-step in input slip model
       dh = (plane(pl)%u(3) - plane(pl)%u(2)) + (plane(pl)%v(3) - plane(pl)%v(2))
@@ -172,10 +180,11 @@ print*, cross, minval(slip), maxval(slip), minval(tslip), maxval(tslip)
 
       ENDDO
 
-      ! lc = input%source%l0 * (umax - umin)          !< rescale "l0" after strong motion area
+      lc = input%source%l0 * (umax - umin)          !< rescale "l0" after strong motion area
 
+      ALLOCATE(node(nugr, nvgr))
 
-      CALL rupture_on_grid(lc)
+      CALL rupture_on_grid(pl, lc)
 
       DEALLOCATE(su, sv, sradius)
 
@@ -286,21 +295,28 @@ print*, cross, minval(slip), maxval(slip), minval(tslip), maxval(tslip)
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE rupture_on_grid(lc)
+    SUBROUTINE rupture_on_grid(pl, lc)
 
+      INTEGER(i32),                    INTENT(IN) :: pl
       REAL(r32),                       INTENT(IN) :: lc
       INTEGER(i32)                                :: iv, iu, nsubs, n, i, skip, ok
-      REAL(r32)                                   :: x, v, du, u, x, rise, rupture, phi, r, pu, pv, subvr
+      REAL(r32)                                   :: x, v, du, u, rise, rupture, phi, r, subvr
+      REAL(r32),   DIMENSION(6)                   :: vec
       REAL(r32),   DIMENSION(subtot)              :: sub2node, pu, pv, subrupt
       REAL(r32),   DIMENSION(2,subtot)            :: z
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
+#ifdef DEBUG
+      vec = -HUGE(0._r32)
+#endif
+
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+      ! -------------------------------------------- generate nucleation points  ---------------------------------------------------
+
       ! CALL setup_rng(ok, 'uniform', 0._r32, 1._r32, input%source%seed)
 
-      CALL rng(z)      !< this is parallelized
-
-      ! pick a random point inside each subsource and compute rupture time from hypocenter to this point
+      CALL rng(z)      !< this is parallelized if openmp flag is set
 
       !$omp parallel do default(shared) private(phi, r)
       DO i = 1, subtot
@@ -316,14 +332,23 @@ print*, cross, minval(slip), maxval(slip), minval(tslip), maxval(tslip)
         pv(i) = MAX(pv(i), vmingr)
         pv(i) = MIN(pv(i), vmaxgr)
 
+        ! compute rupture time from hypocenter to random point inside subsource
         CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%rupture, pu(i), pv(i), subrupt(i))
 
       ENDDO
       !$omp end parallel do
 
+print*, 'subrupt ', minval(subrupt), maxval(subrupt)
+
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+      ! ---------------------------------------- slip, rupture and rise-time at nodes ----------------------------------------------
 
       ! cycle over nodes
+#ifdef DEBUG
+      !$omp parallel do default(shared) private(iv, v, du, iu, u, x, sub2node, nsubs, n, i, subvr, rise, rupture) reduction(max:vec)
+#else
       !$omp parallel do default(shared) private(iv, v, du, iu, u, x, sub2node, nsubs, n, i, subvr, rise, rupture)
+#endif
       DO iv = 1, nvgr
 
         v = vmingr + (iv - 1) * dvtr
@@ -340,6 +365,8 @@ print*, cross, minval(slip), maxval(slip), minval(tslip), maxval(tslip)
           ENDDO
 
           nsubs = subtot - COUNT(sub2node .eq. 0._r32)          !< find number of subsources affecting current node
+
+          IF (nsubs .eq. 0) CYCLE          !< skip current node if not affected by any subsource
 
           ALLOCATE(node(iu,iv)%slip(nsubs), node(iu,iv)%rupture(nsubs), node(iu,iv)%rise(nsubs))
 
@@ -363,21 +390,31 @@ print*, cross, minval(slip), maxval(slip), minval(tslip), maxval(tslip)
             ELSE
 
               ! add rupture time from random point to current node
-              rupture = subrupt(i) + SQRT((u - pu)**2 + (v - pv)**2) / subvr
+              rupture = subrupt(i) + SQRT((u - pu(n))**2 + (v - pv(n))**2) / subvr
 
               rise = input%source%aparam * 2 * sradius(i) / subvr
 
             ENDIF
 
-            node(iu, iv)%slip(n) = SQRT(sub2node(i))
+            node(iu, iv)%slip(n) = SQRT(sub2node(i))      !< note that slip here is simply proportional to final slip
             node(iu, iv)%rupture(n) = rupture
             node(iu, iv)%rise(n) = rise
 
           ENDDO
 
+#ifdef DEBUG
+          vec = [MIN(vec(1), MINVAL(node(iu, iv)%slip)), MAX(vec(2), MAXVAL(node(iu, iv)%slip)),  &
+                 MIN(vec(3), MINVAL(node(iu, iv)%rupture)), MAX(vec(4), MAXVAL(node(iu, iv)%rupture)),  &
+                 MIN(vec(5), MINVAL(node(iu, iv)%rise)), MAX(vec(6), MAXVAL(node(iu, iv)%rise))]
+#endif
+
         ENDDO
       ENDDO
       !$omp end parallel do
+
+#ifdef DEBUG
+      print*, 'node stats: ', vec
+#endif
 
     END SUBROUTINE rupture_on_grid
 

@@ -17,13 +17,14 @@ MODULE m_source
   PRIVATE
 
   PUBLIC :: hypocenter, plane
-  PUBLIC :: setup_source, meshing, dutr, dvtr
+  PUBLIC :: setup_source, meshing, dutr, dvtr, nugr, nvgr, umingr, vmingr, umaxgr, vmaxgr
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
   INTEGER(i32)         :: nutr, nvtr                        !< triangles along u, v
   INTEGER(i32)         :: nugr, nvgr                        !< nodes along u, v
-  REAL(r32)            :: dutr, dvtr, umingr, vmingr        !< triangle base/height, minimum u,v values for triangular mesh
+  REAL(r32)            :: dutr, dvtr                        !< triangle base/height
+  REAL(r32)            :: umingr, vmingr, umaxgr, vmaxgr    !< minimum u,v values for triangular mesh
 
   REAL(r32), PARAMETER :: PTSRC_FACTOR = 1._r32 / 10._r32
   REAL(r32), PARAMETER :: PI = 3.14159265358979323846_r64
@@ -783,7 +784,7 @@ MODULE m_source
 
       INTEGER(i32), INTENT(IN) :: pl, vel
       INTEGER(i32)             :: nu, nv
-      REAL(r32)                :: du, dv, dt, beta, umaxgr, vmaxgr
+      REAL(r32)                :: du, dv, dt, beta
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
