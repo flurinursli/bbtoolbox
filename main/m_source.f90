@@ -22,6 +22,7 @@ MODULE m_source
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
   INTEGER(i32)         :: nutr, nvtr                        !< triangles along u, v
+  INTEGER(i32)         :: nugr, nvgr                        !< nodes along u, v
   REAL(r32)            :: dutr, dvtr, umingr, vmingr        !< triangle base/height, minimum u,v values for triangular mesh
 
   REAL(r32), PARAMETER :: PTSRC_FACTOR = 1._r32 / 10._r32
@@ -781,7 +782,7 @@ MODULE m_source
       !
 
       INTEGER(i32), INTENT(IN) :: pl, vel
-      INTEGER(i32)             :: nu, nv, nugr, nvgr
+      INTEGER(i32)             :: nu, nv
       REAL(r32)                :: du, dv, dt, beta, umaxgr, vmaxgr
 
       !-----------------------------------------------------------------------------------------------------------------------------
@@ -835,8 +836,7 @@ MODULE m_source
       ! total number of triangles along a row
       ! nutr = 2*nutr - 1
 
-      ! compute maximum number of vertexes. note: nugr is (nutr + 1) for odd rows and (nutr) for
-      ! even rows
+      ! define number of nodes in the triangular mesh, where each node is determined unambiguosly by "iuc" and "ivc"
       nugr = nutr + 1
       nvgr = nvtr + 1
 
@@ -1004,7 +1004,8 @@ MODULE m_source
 
       ! Purpose:
       !   to return corner indices "iuc" (along u) and "ivc" (along v) for the "itri"-th triangle in the "irow"-th row. Corners are
-      !   numbered sich that corner 1 has the least u value, corner 3 has the greatest and corner 2 is the intermediate.
+      !   numbered sich that corner 1 has the least u value, corner 3 has the greatest and corner 2 is the intermediate. "iuc" and
+      !   "ivc" identify unambiguosly each corner.
       !
       ! Corners are numbered as follows, depending whether the triangle points downwards ("itri" odd) or upwards ("itri" even) and
       ! the "irow"-th row:
@@ -1019,11 +1020,11 @@ MODULE m_source
       !
       ! e.g. "irow"=2, "itri"=1 and 2
       !
-      !       1       1_ _ _2                    1_ _ _1          1
-      !      / \      \    /                     \    /          / \
-      !     /   \      \  /         IUC           \  /          /   \      IVC
-      !    /_ _ _\      \/                         \/          /_ _ _\
-      !   1       2     2                          2          2       2
+      !       1       1_ _ _2                        2         2_ _ _2
+      !      / \      \    /                        / \        \    /
+      !     /   \      \  /         IUC            /   \        \  /        IVC
+      !    /_ _ _\      \/                        /_ _ _\        \/
+      !   1       2     2                        3       3       3
       !
       ! Corners indices for "iuc" and "ivc" are as follows, depending whether the triangle points downwards or upwards:
       !

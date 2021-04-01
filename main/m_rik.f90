@@ -25,6 +25,7 @@ MODULE m_rik
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
   INTEGER(i32), PARAMETER :: PDFNU = 200, PDFNV = 100
+  REAL(r32),    PARAMETER :: TWOPI = 2._r64 * 3.14159265358979323846_r64
 
   INTEGER(i32)                            :: subtot
   REAL(i32),    ALLOCATABLE, DIMENSION(:) :: su, sv, sradius
@@ -73,7 +74,7 @@ MODULE m_rik
 
       CALL fillpdf(pl, umin, umax, vmin, vmax, cpdf)                  !< slip-based cpdf based on strong-motion area
 
-      ! limit minimum subsource size to average mesh step
+      ! limit minimum subsource size to average triangular mesh step
       submin = 2
       submax = NINT((vmax - vmin) / (dutr + dvtr) / 4)
 
@@ -105,7 +106,7 @@ MODULE m_rik
 
       CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%tslip, u, v, tslip)
 
-print*, minval(plane(pl)%tslip), minval(tslip)
+print*, minval(plane(pl)%tslip), minval(tslip), submin, submax, subtot
 
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! ------------------------------------------------ generate slip model  ------------------------------------------------------
@@ -173,6 +174,8 @@ print*, cross, minval(slip), maxval(slip), minval(tslip), maxval(tslip)
 
       ! lc = input%source%l0 * (umax - umin)          !< rescale "l0" after strong motion area
 
+
+      CALL rupture_on_grid(lc)
 
       DEALLOCATE(su, sv, sradius)
 
@@ -283,7 +286,100 @@ print*, cross, minval(slip), maxval(slip), minval(tslip), maxval(tslip)
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
+    SUBROUTINE rupture_on_grid(lc)
 
+      REAL(r32),                       INTENT(IN) :: lc
+      INTEGER(i32)                                :: iv, iu, nsubs, n, i, skip, ok
+      REAL(r32)                                   :: x, v, du, u, x, rise, rupture, phi, r, pu, pv, subvr
+      REAL(r32),   DIMENSION(subtot)              :: sub2node, pu, pv, subrupt
+      REAL(r32),   DIMENSION(2,subtot)            :: z
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      ! CALL setup_rng(ok, 'uniform', 0._r32, 1._r32, input%source%seed)
+
+      CALL rng(z)      !< this is parallelized
+
+      ! pick a random point inside each subsource and compute rupture time from hypocenter to this point
+
+      !$omp parallel do default(shared) private(phi, r)
+      DO i = 1, subtot
+
+        phi = z(1, i) * TWOPI
+        r   = SQRT(z(2, i)) * sradius(i)          !< not sure why we have SQRT here
+
+        pu(i) = r * COS(phi) + su(i)
+        pv(i) = r * SIN(phi) + sv(i)
+
+        pu(i) = MAX(pu(i), umingr)
+        pu(i) = MIN(pu(i), umaxgr)
+        pv(i) = MAX(pv(i), vmingr)
+        pv(i) = MIN(pv(i), vmaxgr)
+
+        CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%rupture, pu(i), pv(i), subrupt(i))
+
+      ENDDO
+      !$omp end parallel do
+
+
+      ! cycle over nodes
+      !$omp parallel do default(shared) private(iv, v, du, iu, u, x, sub2node, nsubs, n, i, subvr, rise, rupture)
+      DO iv = 1, nvgr
+
+        v = vmingr + (iv - 1) * dvtr
+
+        du = (1 - MOD(iv, 2)) * dutr / 2._r32          !< "du" is 0 for odd "iv", dutr/2 for even "iv"
+
+        DO iu = 1, nugr + MOD(iv, 2) - 1               !< "i" tops at "nugr" for odd "j", at "nugr-1" for even "j"
+
+          u = umingr + (iu - 1) * dutr + du
+
+          DO i = 1, subtot
+            x = sradius(i)**2 - (u - su(i))**2 - (v - sv(i))**2
+            sub2node(i) = MAX(0._r32, x)                                 !< "0" if outside, "> 0" if inside
+          ENDDO
+
+          nsubs = subtot - COUNT(sub2node .eq. 0._r32)          !< find number of subsources affecting current node
+
+          ALLOCATE(node(iu,iv)%slip(nsubs), node(iu,iv)%rupture(nsubs), node(iu,iv)%rise(nsubs))
+
+          n = 0
+
+          ! define slip, rupture time and rise-time on current node
+          DO i = 1, subtot
+
+            IF (sub2node(i) .eq. 0._r32) CYCLE       !< skip if current subsource is outside
+
+            n = n + 1
+
+            !subvr = meanvr(su(i), sv(i), sradius(i))
+
+            IF (2*sradius(i) .ge. lc) THEN
+
+              CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%rupture, u, v, rupture)
+
+              rise = input%source%aparam * lc / subvr
+
+            ELSE
+
+              ! add rupture time from random point to current node
+              rupture = subrupt(i) + SQRT((u - pu)**2 + (v - pv)**2) / subvr
+
+              rise = input%source%aparam * 2 * sradius(i) / subvr
+
+            ENDIF
+
+            node(iu, iv)%slip(n) = SQRT(sub2node(i))
+            node(iu, iv)%rupture(n) = rupture
+            node(iu, iv)%rise(n) = rise
+
+          ENDDO
+
+        ENDDO
+      ENDDO
+      !$omp end parallel do
+
+    END SUBROUTINE rupture_on_grid
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
