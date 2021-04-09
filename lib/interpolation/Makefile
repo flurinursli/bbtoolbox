@@ -9,10 +9,10 @@ LIB32 = libinterplf.a
 interpolation: dirs $(LIB64) $(LIB32)
 
 $(R64_OBJ) : lib64/%.o : %.f90
-	$(FC) $(OPT) -cpp -DDOUBLE_PREC -I../common/include -c -o $@ $<
+	$(FC) $(OPT) $(OMP) -cpp -DDOUBLE_PREC -I../common/include -c -o $@ $<
 
 $(R32_OBJ) : lib32/%.o : %.f90
-	$(FC) $(OPT) -cpp -I../common/include -c -o $@ $<
+	$(FC) $(OPT) $(OMP) -cpp -I../common/include -c -o $@ $<
 
 $(LIB64) : $(R64_OBJ)
 	ar qc $@ $(R64_OBJ)

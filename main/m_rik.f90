@@ -46,17 +46,17 @@ MODULE m_rik
 
     SUBROUTINE rik(ok, pl)
 
-      INTEGER(i32),                                      INTENT(OUT) :: ok
-      INTEGER(i32),                                      INTENT(IN)  :: pl
-      INTEGER(i32)                                                   :: nu, nv, submin, submax, i, j, slevel, n
-      INTEGER(i32),              DIMENSION(2)                        :: pos
-      INTEGER(i32), ALLOCATABLE, DIMENSION(:)                        :: nsubs
-      REAL(r32)                                                      :: dh, umin, vmin, umax, vmax, du, dv, cross, lc
-      REAL(r32),                 DIMENSION(1)                        :: x
-      REAL(r32),                 DIMENSION(2)                        :: mu, std
-      REAL(r32),                 DIMENSION(PDFNU)                    :: u
-      REAL(r32),                 DIMENSION(PDFNV)                    :: v
-      REAL(r32),                 DIMENSION(PDFNU, PDFNV)             :: cpdf, slip, tslip
+      INTEGER(i32),                                     INTENT(OUT) :: ok
+      INTEGER(i32),                                     INTENT(IN)  :: pl
+      INTEGER(i32)                                                  :: nu, nv, submin, submax, i, j, slevel, n
+      INTEGER(i32),              DIMENSION(2)                       :: pos
+      INTEGER(i32), ALLOCATABLE, DIMENSION(:)                       :: nsubs
+      REAL(r32)                                                     :: dh, umin, vmin, umax, vmax, du, dv, cross, lc
+      REAL(r32),                 DIMENSION(1)                       :: x
+      REAL(r32),                 DIMENSION(2)                       :: mu, std
+      REAL(r32),                 DIMENSION(PDFNU)                   :: u
+      REAL(r32),                 DIMENSION(PDFNV)                   :: v
+      REAL(r32),                 DIMENSION(PDFNU,PDFNV)             :: cpdf, slip, tslip
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
@@ -114,7 +114,15 @@ MODULE m_rik
 
       CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%tslip, u, v, tslip)
 
-print*, minval(plane(pl)%tslip), minval(tslip), submin, submax, subtot
+#ifdef DEBUG
+      CALL update_log(num2char('RIK', justify='l', width=30) + num2char('Submin', width=15, justify='r') + '|' + &
+                      num2char('Submax', width=15, justify='r') + '|' + num2char('Subtot', width=15, justify='r') + '|')
+
+      CALL update_log(num2char('', width=30)  +  &
+                      num2char(submin, width=15, justify='r') + '|' + &
+                      num2char(submax, width=15, justify='r') + '|' + &
+                      num2char(subtot, width=15, justify='r') + '|', blankline=.false.)
+#endif
 
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! ------------------------------------------------ generate slip model  ------------------------------------------------------
@@ -173,8 +181,10 @@ print*, minval(plane(pl)%tslip), minval(tslip), submin, submax, subtot
 
         cross = cross / PRODUCT(std) / (PDFNU * PDFNV)     !< zero-normalized cross-correlation
 
-
-print*, cross, minval(slip), maxval(slip), minval(tslip), maxval(tslip)
+#ifdef DEBUG
+        CALL update_log(num2char('<correlation>', justify='c', width=30) + num2char(cross, width=15, justify='r') + '|',  &
+                        blankline=.false.)
+#endif
 
         IF (cross .ge. input%source%correlation) EXIT
 
@@ -261,7 +271,7 @@ print*, cross, minval(slip), maxval(slip), minval(tslip), maxval(tslip)
     REAL(r32) FUNCTION total_slip(u, v)
 
       ! Purpose:
-      !   to compute slip at fault position "u" "v" due to contribution of all subsources.
+      !   to compute slip at fault position "u" "v" as contribution of all subsources.
       !
       ! Revisions:
       !     Date                    Description of change
@@ -301,24 +311,24 @@ print*, cross, minval(slip), maxval(slip), minval(tslip), maxval(tslip)
       REAL(r32),                       INTENT(IN) :: lc
       INTEGER(i32)                                :: iv, iu, nsubs, n, i, skip, ok
       REAL(r32)                                   :: x, v, du, u, rise, rupture, phi, r, subvr
-      REAL(r32),   DIMENSION(6)                   :: vec
+      REAL(r32),   DIMENSION(3)                   :: lvec, hvec
       REAL(r32),   DIMENSION(subtot)              :: sub2node, pu, pv, subrupt
       REAL(r32),   DIMENSION(2,subtot)            :: z
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
-#ifdef DEBUG
-      vec = -HUGE(0._r32)
-#endif
-
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! -------------------------------------------- generate nucleation points  ---------------------------------------------------
+
+plane(pl)%rupture(:,:) = 2
+
+      CALL setup_interpolation('linear', 'zero', ok)
 
       ! CALL setup_rng(ok, 'uniform', 0._r32, 1._r32, input%source%seed)
 
       CALL rng(z)      !< this is parallelized if openmp flag is set
 
-      !$omp parallel do default(shared) private(phi, r)
+      !$omp parallel do default(shared) private(phi, r, i)
       DO i = 1, subtot
 
         phi = z(1, i) * TWOPI
@@ -338,16 +348,19 @@ print*, cross, minval(slip), maxval(slip), minval(tslip), maxval(tslip)
       ENDDO
       !$omp end parallel do
 
-print*, 'subrupt ', minval(subrupt), maxval(subrupt)
+#ifdef DEBUG
+      CALL update_log(num2char('<Min/Max Subrupt>', justify='c', width=30) + num2char(num2char(MINVAL(subrupt), notation='f',  &
+                      width=6, precision=2) + ', ' + num2char(MAXVAL(subrupt), notation='f', width=6, precision=2), width=15,  &
+                      justify='r') + '|')
+#endif
 
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! ---------------------------------------- slip, rupture and rise-time at nodes ----------------------------------------------
 
       ! cycle over nodes
+      !$omp parallel do default(shared) private(iv, v, du, iu, u, x, sub2node, nsubs, n, i, subvr, rise, rupture) &
 #ifdef DEBUG
-      !$omp parallel do default(shared) private(iv, v, du, iu, u, x, sub2node, nsubs, n, i, subvr, rise, rupture) reduction(max:vec)
-#else
-      !$omp parallel do default(shared) private(iv, v, du, iu, u, x, sub2node, nsubs, n, i, subvr, rise, rupture)
+      !$omp& reduction(max:hvec) reduction(min:lvec)
 #endif
       DO iv = 1, nvgr
 
@@ -368,6 +381,14 @@ print*, 'subrupt ', minval(subrupt), maxval(subrupt)
 
           IF (nsubs .eq. 0) CYCLE          !< skip current node if not affected by any subsource
 
+!WARNING: IT MAY HAPPEN THAT, IN A TRIANGLE, A VERTEX MAY NOT BE AFFECTED BY ANY SUBSOURCE - IN THIS CASE THE FOLLOWING CONDITIONS
+!         MUST BE MET:
+!         NODE(IU,IV)%SLIP(1) = 0
+!         NODE(IU,IV)%RUPTURE(1) = COMPUTED FROM "INTERPOLATE" AT "U,V"
+!         NODE(IU,IV)%RISE(1) = 1
+! THIS WAY, QUAKE DOES NOT NEED ADDITIONAL CHECK AND MRF IS BUILT SMOOTHLY
+
+
           ALLOCATE(node(iu,iv)%slip(nsubs), node(iu,iv)%rupture(nsubs), node(iu,iv)%rise(nsubs))
 
           n = 0
@@ -379,7 +400,8 @@ print*, 'subrupt ', minval(subrupt), maxval(subrupt)
 
             n = n + 1
 
-            !subvr = meanvr(su(i), sv(i), sradius(i))
+            subvr = 1
+            !subvr = meanvr(sv(i), sradius(i)) * input%source%vrfact
 
             IF (2*sradius(i) .ge. lc) THEN
 
@@ -403,9 +425,10 @@ print*, 'subrupt ', minval(subrupt), maxval(subrupt)
           ENDDO
 
 #ifdef DEBUG
-          vec = [MIN(vec(1), MINVAL(node(iu, iv)%slip)), MAX(vec(2), MAXVAL(node(iu, iv)%slip)),  &
-                 MIN(vec(3), MINVAL(node(iu, iv)%rupture)), MAX(vec(4), MAXVAL(node(iu, iv)%rupture)),  &
-                 MIN(vec(5), MINVAL(node(iu, iv)%rise)), MAX(vec(6), MAXVAL(node(iu, iv)%rise))]
+          lvec = [MIN(lvec(1), MINVAL(node(iu, iv)%slip)), MIN(lvec(2), MINVAL(node(iu, iv)%rupture)),    &
+                  MIN(lvec(3), MINVAL(node(iu, iv)%rise))]
+          hvec = [MAX(hvec(1), MAXVAL(node(iu, iv)%slip)), MAX(hvec(2), MAXVAL(node(iu, iv)%rupture)),    &
+                  MAX(hvec(3), MAXVAL(node(iu, iv)%rise))]
 #endif
 
         ENDDO
@@ -413,7 +436,17 @@ print*, 'subrupt ', minval(subrupt), maxval(subrupt)
       !$omp end parallel do
 
 #ifdef DEBUG
-      print*, 'node stats: ', vec
+      CALL update_log(num2char('<Min/Max at nodes>', justify='c', width=30) + num2char('Slip', width=15, justify='r') + '|' + &
+                      num2char('Rupture', width=15, justify='r') + '|' + num2char('Rise', width=15, justify='r') + '|')
+
+      CALL update_log(num2char('', width=30)  +  &
+                      num2char(num2char(lvec(1), notation='f', width=6, precision=1) + ', ' +   &
+                               num2char(hvec(1), notation='f', width=6, precision=1), width=15, justify='r') + '|' + &
+                      num2char(num2char(lvec(2), notation='f', width=6, precision=1) + ', ' +   &
+                               num2char(hvec(2), notation='f', width=6, precision=1), width=15, justify='r') + '|' + &
+                      num2char(num2char(lvec(3), notation='f', width=6, precision=1) + ', ' +   &
+                               num2char(hvec(3), notation='f', width=6, precision=1), width=15, justify='r') + '|',  &
+                      blankline=.false.)
 #endif
 
     END SUBROUTINE rupture_on_grid
@@ -421,6 +454,37 @@ print*, 'subrupt ', minval(subrupt), maxval(subrupt)
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    REAL(r32) FUNCTION meanvr(z, radius)
+
+      ! Purpose:
+      !   to compute the average rupture time inside a circular subsource of radius "radius" and centered at "z" (absolute depth).
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      REAL(r32), INTENT(IN) :: v, radius
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+
+
+
+    END FUNCTION meanvr
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
 
 
 END MODULE m_rik
