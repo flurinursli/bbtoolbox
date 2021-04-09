@@ -25,7 +25,10 @@ MODULE m_rik
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
   INTEGER(i32), PARAMETER :: PDFNU = 200, PDFNV = 100
-  REAL(r32),    PARAMETER :: TWOPI = 2._r64 * 3.14159265358979323846_r64
+  REAL(r32),    PARAMETER :: PI = 3.14159265358979323846_r64
+  REAL(r32),    PARAMETER :: DEG_TO_RAD = PI / 180._r32
+  REAL(r32),    PARAMETER :: TWOPI = 2._r64 * PI
+
 
   INTEGER(i32)                            :: subtot
   REAL(i32),    ALLOCATABLE, DIMENSION(:) :: su, sv, sradius
@@ -44,10 +47,10 @@ MODULE m_rik
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE rik(ok, pl)
+    SUBROUTINE rik(ok, pl, vel)
 
       INTEGER(i32),                                     INTENT(OUT) :: ok
-      INTEGER(i32),                                     INTENT(IN)  :: pl
+      INTEGER(i32),                                     INTENT(IN)  :: pl, vel
       INTEGER(i32)                                                  :: nu, nv, submin, submax, i, j, slevel, n
       INTEGER(i32),              DIMENSION(2)                       :: pos
       INTEGER(i32), ALLOCATABLE, DIMENSION(:)                       :: nsubs
@@ -194,7 +197,7 @@ MODULE m_rik
 
       ALLOCATE(node(nugr, nvgr))
 
-      CALL rupture_on_grid(pl, lc)
+      CALL rupture_on_grid(pl, vel, lc)
 
       DEALLOCATE(su, sv, sradius)
 
@@ -305,15 +308,16 @@ MODULE m_rik
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE rupture_on_grid(pl, lc)
+    SUBROUTINE rupture_on_grid(pl, vel, lc)
 
-      INTEGER(i32),                    INTENT(IN) :: pl
-      REAL(r32),                       INTENT(IN) :: lc
-      INTEGER(i32)                                :: iv, iu, nsubs, n, i, skip, ok
-      REAL(r32)                                   :: x, v, du, u, rise, rupture, phi, r, subvr
-      REAL(r32),   DIMENSION(3)                   :: lvec, hvec
-      REAL(r32),   DIMENSION(subtot)              :: sub2node, pu, pv, subrupt
-      REAL(r32),   DIMENSION(2,subtot)            :: z
+      INTEGER(i32),                                  INTENT(IN) :: pl, vel
+      REAL(r32),                                     INTENT(IN) :: lc
+      INTEGER(i32)                                              :: iv, iu, nsubs, n, i, skip, ok
+      REAL(r32)                                                 :: x, v, du, u, rise, rupture, phi, r, subvr, sd, z0
+      REAL(r32),                 DIMENSION(3)                   :: lvec, hvec
+      REAL(r32),                 DIMENSION(subtot)              :: sub2node, pu, pv, subrupt
+      REAL(r32),                 DIMENSION(2,subtot)            :: z
+      REAL(r32),    ALLOCATABLE, DIMENSION(:)                   :: depth, vs, vsgrad
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
@@ -357,6 +361,15 @@ plane(pl)%rupture(:,:) = 2
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! ---------------------------------------- slip, rupture and rise-time at nodes ----------------------------------------------
 
+      sd = SIN(plane(pl)%dip * DEG_TO_RAD)
+      z0 = plane(pl)%z
+
+      ASSOCIATE(model => input%velocity(vel))
+        depth  = model%depth
+        vs     = model%vs
+        vsgrad = model%vsgrad
+      END ASSOCIATE
+
       ! cycle over nodes
       !$omp parallel do default(shared) private(iv, v, du, iu, u, x, sub2node, nsubs, n, i, subvr, rise, rupture) &
 #ifdef DEBUG
@@ -379,50 +392,56 @@ plane(pl)%rupture(:,:) = 2
 
           nsubs = subtot - COUNT(sub2node .eq. 0._r32)          !< find number of subsources affecting current node
 
-          IF (nsubs .eq. 0) CYCLE          !< skip current node if not affected by any subsource
+          ! no subsources act on current node: set slip to 0 and interpolate rupture time...
+          IF (nsubs .eq. 0) THEN
 
-!WARNING: IT MAY HAPPEN THAT, IN A TRIANGLE, A VERTEX MAY NOT BE AFFECTED BY ANY SUBSOURCE - IN THIS CASE THE FOLLOWING CONDITIONS
-!         MUST BE MET:
-!         NODE(IU,IV)%SLIP(1) = 0
-!         NODE(IU,IV)%RUPTURE(1) = COMPUTED FROM "INTERPOLATE" AT "U,V"
-!         NODE(IU,IV)%RISE(1) = 1
-! THIS WAY, QUAKE DOES NOT NEED ADDITIONAL CHECK AND MRF IS BUILT SMOOTHLY
+            CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%rupture, u, v, rupture)
 
+            ALLOCATE(node(iu,iv)%slip(1), node(iu,iv)%rupture(1), node(iu,iv)%rise(1))
 
-          ALLOCATE(node(iu,iv)%slip(nsubs), node(iu,iv)%rupture(nsubs), node(iu,iv)%rise(nsubs))
+            node(iu, iv)%slip = 0._r32
+            node(iu, iv)%rupture = rupture
+            node(iu, iv)%rise = 1._r32
 
-          n = 0
+          !... otherwise evaluate and store the contribution of each subsource
+          ELSE
 
-          ! define slip, rupture time and rise-time on current node
-          DO i = 1, subtot
+            ALLOCATE(node(iu,iv)%slip(nsubs), node(iu,iv)%rupture(nsubs), node(iu,iv)%rise(nsubs))
 
-            IF (sub2node(i) .eq. 0._r32) CYCLE       !< skip if current subsource is outside
+            n = 0
 
-            n = n + 1
+            ! define slip, rupture time and rise-time on current node
+            DO i = 1, subtot
 
-            subvr = 1
-            !subvr = meanvr(sv(i), sradius(i)) * input%source%vrfact
+              IF (sub2node(i) .eq. 0._r32) CYCLE       !< skip if current subsource is outside
 
-            IF (2*sradius(i) .ge. lc) THEN
+              n = n + 1
 
-              CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%rupture, u, v, rupture)
+              ! subvr = 1
+              subvr = meanvr(sv(i), sradius(i), z0, sd, depth, vs, vsgrad) * input%source%vrfact
 
-              rise = input%source%aparam * lc / subvr
+              IF (2*sradius(i) .ge. lc) THEN
 
-            ELSE
+                CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%rupture, u, v, rupture)
 
-              ! add rupture time from random point to current node
-              rupture = subrupt(i) + SQRT((u - pu(n))**2 + (v - pv(n))**2) / subvr
+                rise = input%source%aparam * lc / subvr
 
-              rise = input%source%aparam * 2 * sradius(i) / subvr
+              ELSE
 
-            ENDIF
+                ! add rupture time from random point to current node
+                rupture = subrupt(i) + SQRT((u - pu(n))**2 + (v - pv(n))**2) / subvr
 
-            node(iu, iv)%slip(n) = SQRT(sub2node(i))      !< note that slip here is simply proportional to final slip
-            node(iu, iv)%rupture(n) = rupture
-            node(iu, iv)%rise(n) = rise
+                rise = input%source%aparam * 2 * sradius(i) / subvr
 
-          ENDDO
+              ENDIF
+
+              node(iu, iv)%slip(n) = SQRT(sub2node(i))      !< note that slip here is simply proportional to final slip
+              node(iu, iv)%rupture(n) = rupture
+              node(iu, iv)%rise(n) = rise
+
+            ENDDO
+
+          ENDIF
 
 #ifdef DEBUG
           lvec = [MIN(lvec(1), MINVAL(node(iu, iv)%slip)), MIN(lvec(2), MINVAL(node(iu, iv)%rupture)),    &
@@ -455,10 +474,12 @@ plane(pl)%rupture(:,:) = 2
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    REAL(r32) FUNCTION meanvr(z, radius)
+    REAL(r32) FUNCTION meanvr(v, radius, z0, sd, depth, vs, vsgrad)
 
       ! Purpose:
-      !   to compute the average rupture time inside a circular subsource of radius "radius" and centered at "z" (absolute depth).
+      !   to compute the average rupture time inside a circular subsource of radius "radius" and centered at "v" (downdip) on a
+      !   fault plane having minimum depth "z0", sin(dip) "sd" and embedded in a velocity model whose properties are given by "depth"
+      !   "vs" and "vsgrad".
       !
       ! Revisions:
       !     Date                    Description of change
@@ -466,12 +487,30 @@ plane(pl)%rupture(:,:) = 2
       !   08/03/21                  original version
       !
 
-      REAL(r32), INTENT(IN) :: v, radius
+      REAL(r32),                 INTENT(IN) :: v, radius, z0, sd
+      REAL(r32),   DIMENSION(:), INTENT(IN) :: depth, vs, vsgrad
+      INTEGER(i32)                          :: i
+      INTEGER(i32),              PARAMETER  :: npts = 11
+      REAL(r32)                             :: dz, z, tau
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
+      tau = 0._r32
 
+      dz = 2._r32 * radius / npts          !< subdivide circular subsource in "npts"-1 segments
 
+      DO i = 1, npts
+
+        z = v - radius + (i - 0.5_r32) * dz         !< on-fault coordinates (segment midpoint)
+        z = z0 + z * sd                             !< absolute coordinates
+
+        z = MAX(0._r32, z)          !< avoid small negative values: is this needed??
+
+        tau = tau + dz / vinterp(depth, vs, vsgrad, z)       !< add time needed by rupture front to cover distance "dz"
+
+      ENDDO
+
+      meanvr = 2._r32 * radius / tau           !< return average rupture speed (assuming vr=vs)
 
     END FUNCTION meanvr
 
@@ -479,7 +518,32 @@ plane(pl)%rupture(:,:) = 2
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
+    REAL(r32) FUNCTION vinterp(ztop, phys, gradient, z)
 
+      ! Purpose:
+      !   to return a physical property (e.g. velocity, density, etc) at depth "z" given a model where property "phys", gradient
+      !   "gradient" and depth to layer "ztop" are defined for each layer.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      REAL(r32),   DIMENSION(:), INTENT(IN) :: ztop, phys, gradient
+      REAL(r32),                 INTENT(IN) :: z
+      INTEGER(i32)                          :: i
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      DO i = SIZE(ztop), 1, -1
+        IF (z .ge. ztop(i)) THEN
+          vinterp = phys(i) + gradient(i)*(z - ztop(i))
+          EXIT
+        ENDIF
+      ENDDO
+
+    END FUNCTION vinterp
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================

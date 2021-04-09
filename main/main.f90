@@ -135,7 +135,7 @@ PROGRAM main
         CALL meshing(pl, ivel)
         !CALL roughness(pl, iter)
 
-        CALL rik(ok, pl)
+        CALL rik(ok, pl, ivel)
 
         DO irec = 1, SIZE(input%receiver)
           !IF (input%receiver(irec)%velocity .eq. ivel) CALL quake(irec, pl)
