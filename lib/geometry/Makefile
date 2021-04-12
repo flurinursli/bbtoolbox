@@ -1,13 +1,11 @@
 include ../../Makefile.inc
 
-INCL = -I$(TRNG4_PATH)/include
-
 PRECISION = single
 
 ifeq ($(PRECISION),double)
-	LIB_NAME = librng.a
+	LIB_NAME = libcompgeo.a
 else
-	LIB_NAME = librngf.a
+	LIB_NAME = libcompgeof.a
 endif
 
 PP_FLAGS =
@@ -16,22 +14,15 @@ ifeq ($(PRECISION),double)
 	PP_FLAGS += -DDOUBLE_PREC
 endif
 
-# list Fortran objects
-F90_OBJS = m_random.o
+F90_OBJS = m_compgeo.o
 
-# default rule
-rng : dirs $(LIB_NAME)
+geometry: dirs $(LIB_NAME)
 
-# compile Fortran objects
 $(F90_OBJS) : %.o : %.f90
-	$(FC) $(OPT) $(OMP) -cpp $(PP_FLAGS) -I../common/include -c -o $@ $<
+	$(FC) $(OPT) -cpp $(PP_FLAGS) -I../common/include -c -o $@ $<
 
 # list C++ objects
-CPP_OBJS = trng.o
-
-# compile C++ objects
-#$(CPP_OBJ) : %.o : %.cpp
-#	$(C++) -O2 -c -o $@ $<
+CPP_OBJS = opttritri.o
 
 # compile C++ objects
 $(CPP_OBJS) : %.o : %.cpp
@@ -54,3 +45,5 @@ clean:
 	rm -rf lib
 	rm -rf *.o
 	rm -rf *.mod
+
+.PHONY: clean

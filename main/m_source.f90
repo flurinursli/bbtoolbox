@@ -5,6 +5,7 @@ MODULE m_source
   USE, NON_INTRINSIC :: m_parser
   USE, NON_INTRINSIC :: m_logfile
   !USE, NON_INTRINSIC :: m_roughness
+  USE, NON_INTRINSIC :: m_fmm
   USE, NON_INTRINSIC :: m_toolbox, ONLY: input, geo2utm, missing_arg
 #ifdef MPI
   USE                :: mpi
@@ -23,6 +24,10 @@ MODULE m_source
 
   INTEGER(i32)         :: nutr, nvtr                        !< triangles along u, v
   INTEGER(i32)         :: nugr, nvgr                        !< nodes along u, v
+
+  INTEGER(i32), PARAMETER :: REFINE = 4              !< grid refinement factor for fast-marching
+  INTEGER(i32), PARAMETER :: MAX_EXPAND = 10
+
   REAL(r32)            :: dutr, dvtr                        !< triangle base/height
   REAL(r32)            :: umingr, vmingr, umaxgr, vmaxgr    !< minimum u,v values for triangular mesh
 
@@ -360,8 +365,11 @@ MODULE m_source
                   plane(k)%dslip(i, j) = -numeric(islip) * SIN(rake)          !< in our system slip is positive down-dip
                   plane(k)%tslip(i, j) = numeric(islip)                       !< total slip
 
+                  plane(k)%rise(i, j)    = input%source%freq
+                  plane(k)%rupture(i, j) = -999._r32
+
                   IF (irupt .gt. 0) plane(k)%rupture(i, j) = numeric(irupt)
-                  IF (irise .gt. 0) plane(k)%rise(i, j) = numeric(irise)
+                  IF (irise .gt. 0) plane(k)%rise(i, j) = 2._r32 * PI / numeric(irise)         !< assume "fc=1/rise"
 
                 ENDDO
               ENDDO
@@ -375,16 +383,6 @@ MODULE m_source
         ENDDO
 
         REWIND(lu)
-
-        ! at this point rise-time may be in seconds or empty: convert to "freq" or assign constant input value
-        IF (irise .gt. 0) THEN
-          plane(k)%rise(:,:) = 2._r32 * PI / plane(k)%rise(:,:)         !< assume "fc=1/rise"
-        ELSE
-          plane(k)%rise(:,:) = input%source%freq
-        ENDIF
-
-        ! rupture time may be empty... if so, set first element to negative value
-        plane(k)%rupture(1, 1) = -999._r32
 
         ALLOCATE(plane(k)%u(nu), plane(k)%v(nv))
 
@@ -1126,15 +1124,204 @@ MODULE m_source
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
+    SUBROUTINE missing_rupture(ok, ivel)
+
+      INTEGER(i32), INTENT(OUT) :: ok
+      INTEGER(i32), INTENT(IN)  :: ivel
+
+      INTEGER(i32)                         :: np, nu, nv, ucell, vcell, i, j
+      LOGICAL,      DIMENSION(SIZE(plane)) :: missing, missing_cpy
+      REAL(r32)                            :: t0
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      np = SIZE(plane)
+      nu = SIZE(plane(hypocenter%plane)%u)
+      nv = SIZE(plane(hypocenter%plane)%v)
+
+      ! snap hypocenter to grid...
+      ucell = MINLOC(plane(hypocenter%plane)%u - hypocenter%u)
+      vcell = MINLOC(plane(hypocenter%plane)%v - hypocenter%v)
+
+      !... but exclude edge points
+      ucell = MAX(2, ucell)
+      ucell = MIN(nu - 1, ucell)
+      vcell = MAX(2, vcell)
+      vcell = MIN(nv - 1, vcell)
+
+      CALL compute_rupture(hypocenter%plane, ivel, ucell, vcell)
+
+      missing(:) = .true.
+      missing(hypocenter%plane) = .false.
+
+      DO WHILE (ANY(missing))
+
+        missing_cpy = missing
+
+        DO i = 1, np
+
+          IF (.not.missing(i)) THEN          !< rupture times available for i-th plane
+
+            DO j = 1, np
+
+              IF (missing(j)) THEN           !< rupture times missing for j-th plane
+
+                CALL connection(j, i, expand, ucell, vcell, t0)
+
+                IF (t0 .ge. 0._r32) THEN                     !< planes are connected
+                  CALL compute_rupture(j, ivel, ucell, vcell, t0)
+                  missing(j) = .false.                       !< remove j-th plane from list of planes with missing rupture
+                ENDIF
+
+              ENDIF
+
+            ENDDO
+
+          ENDIF
+
+        ENDDO
+
+        IF (ALL(missing_cpy .eq. missing)) expand = expand + 1         !< raise tolerance to find connections
+
+        IF (expand .eq. MAX_EXPAND) THEN
+          CALL report_error('missing_rupture - ERROR: max expand reached')
+          ok = 1
+          RETURN
+        ENDIF
+
+      ENDDO
+
+#ifdef DEBUG
+      CALL update_log(num2char('Computed rupture time', fill='.', justify='l', width=30) +   &
+                      num2char('Plane', width=15, justify='r') + '|' + num2char('Min/Max', width=15, justify='r') + '|')
+
+      DO i = 1, np
+        CALL update_log(num2char('', width=30) + num2char(i, width=15, justify='r') + '|' + &
+                        num2char(num2char(MINVAL(plane(i)%rupture), notation='f', width=6, precision=1) + ', ' +   &
+                                 num2char(MAXVAL(plane(i)%rupture), notation='f', width=6, precision=1),           &
+                        width=15, justify='r') + '|', blankline=.false.)
+      ENDDO
+#endif
+
+    END SUBROUTINE missing_rupture
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    SUBROUTINE compute_rupture(pl, vel, uc, vc, t0)
+
+      INTEGER(i32),                           INTENT(IN) :: pl, vel, uc, vc
+      REAL(r32),                              INTENT(IN) :: t0
+
+      INTEGER(i32)                                       :: i, j, nu, nv
+      REAL(r32)                                          :: du, dv, dh, z, z0, sd, beta
+      REAL(r32),    ALLOCATABLE, DIMENSION(:)            :: u, v
+      REAL(r32),    ALLOCATABLE, DIMENSION(:,:)          :: vsvr, solution
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      du = plane(pl)%u(3) - plane(pl)%u(2)
+      dv = plane(pl)%v(3) - plane(pl)%v(2)
+
+      dh = (du + dv) * 0.5_r32               !< average grid step
+      dh = dh / REFINE                       !< refined grid step
+
+      nu = SIZE(plane(pl)%u)
+      nv = SIZE(plane(pl)%v)
+
+      nu = NINT((plane(pl)%u(nu) - plane(pl)%u(1)) / dh) + 1
+      nv = NINT((plane(pl)%v(nv) - plane(pl)%v(1)) / dh) + 1
+
+      ALLOCATE(u(nu), v(nv))
+
+      DO i = 1, nu
+        u(i) = (i - 1) * dh + plane(pl)%u(1)
+      ENDDO
+      DO i = 1, nv
+        v(i) = (i - 1) * dh + plane(pl)%v(1)
+      ENDDO
+
+      ALLOCATE(vsvr(nu, nv))
+
+      z0 = plane(pl)%z
+      sd = SIN(plane(pl)%dip * DEG_TO_RAD)
+
+      DO j = 1, nv
+
+        z = z0 + v(j) * sd                             !< absolute coordinates
+        z = MAX(0._r32, z)                             !< avoid small negative values: is this needed??
+
+        beta = vinterp(depth, vs, vsgrad, z) * input%advanced%vrfact    !< vs * vrfact
+
+        DO i = 1, nu
+          vsvr(i, j) = beta
+        ENDDO
+
+      ENDDO
+
+      init = [NINT(plane(pl)%u(uc) / dh), NINT(plane(pl)%v(vc) / dh)] + 1     !< rupture nucleation point in refined grid
+
+      CALL fast_marching(init, vsvr, solution)
+
+      DO j = 1, nv
+        DO i = 1, nu
+          solution(i, j) = solution(i, j) * dh + t0
+        ENDDO
+      ENDDO
+
+      CALL setup_interpolation('linear', 'linear', ok)
+
+      CALL interpolate(u, v, solution, plane(pl)%u, plane(pl)%v, plane(pl)%rupture)     !< interpolate onto original grid
+
+    END SUBROUTINE compute_rupture
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    SUBROUTINE connection(trg, src, uc, vc, t0)
+
+      ! Purpose:
+      !   to return at which subcell "uc, vc" the "trg"-th fault plane is connected with (touched by) the "src"-th plane.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      INTEGER(i32), INTENT(IN)  :: trg, src
+      INTEGER(i32), INTENT(OUT) :: uc, vc
+      REAL(r32),    INTENT(OUT) :: t0
+
+      INTEGER(i32)              :: i, j
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      DO j = 1, SIZE(plane(trg)%v)
+        DO i = 1, SIZE(plane(trg)%u)
+
+          ! CALL cell_to_triangle(i, j, )
+
+
+
+        ENDDO
+      ENDDO
+
+    END SUBROUTINE connection
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
 
+
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+
 
 
 END MODULE m_source
