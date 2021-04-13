@@ -4,8 +4,8 @@ MODULE m_source
   USE, NON_INTRINSIC :: m_strings
   USE, NON_INTRINSIC :: m_parser
   USE, NON_INTRINSIC :: m_logfile
+  USE, NON_INTRINSIC :: m_eikonal
   !USE, NON_INTRINSIC :: m_roughness
-  USE, NON_INTRINSIC :: m_fmm
   USE, NON_INTRINSIC :: m_toolbox, ONLY: input, geo2utm, missing_arg
 #ifdef MPI
   USE                :: mpi
@@ -1262,7 +1262,7 @@ MODULE m_source
 
       init = [NINT(plane(pl)%u(uc) / dh), NINT(plane(pl)%v(vc) / dh)] + 1     !< rupture nucleation point in refined grid
 
-      CALL fast_marching(init, vsvr, solution)
+      CALL fast_marching(ok, init, [dh, dh], vsvr, solution)
 
       DO j = 1, nv
         DO i = 1, nu

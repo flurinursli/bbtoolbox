@@ -1,4 +1,4 @@
-lib : common llsq fft filter interpolation rtt rng geometry
+lib : common llsq fft filter interpolation rtt rng geometry eikonal
 
 common:
 	cd $@; $(MAKE) $@ $<
@@ -24,6 +24,9 @@ rng:
 geometry:
 	cd $@; $(MAKE) $@ $<
 
+eikonal:
+	cd $@; $(MAKE) $@ $<
+
 clean:
 	cd common; $(MAKE) $@
 	cd filter; $(MAKE) $@
@@ -33,7 +36,8 @@ clean:
 	cd rtt; $(MAKE) $@
 	cd rng; $(MAKE) $@
 	cd geometry; $(MAKE) $@
+	cd eikonal; $(MAKE) $@
 	rm -rf *.mod
 	rm -rf *.o
 
-.PHONY : common filter fft llsq interpolation rtt rng geometry clean
+.PHONY : common filter fft llsq interpolation rtt rng geometry eikonal clean
