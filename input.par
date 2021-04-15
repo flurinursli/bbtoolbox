@@ -55,13 +55,12 @@ attenuation gpp = [0.11, 0.21, 0.31, 0.41] gps = [0.11, 0.21, 0.31, 0.41] gss = 
 # set receiver-related fields
 # required fields are "x"/"y"/"z" (or "lon"/"lat"/"z"), "file", "velocity" (default=1) and "attenuation" (default=1)
 #rec x=2100 y=100 z=0 file ='st01' velocity = 1 attenuation = 1
-rec x=1000 y=5000 z=0 file= 'st02' velocity = 1 attenuation = 2
-rec x=1000 y=5050 z=0 file= 'st02' velocity = 1 attenuation = 2
-#rec x=1000 y=5851 z=0 file= 'st02' velocity = 1 attenuation = 2
-rec x=1000 y=5100 z=0 file= 'st02' velocity = 1 attenuation = 2
-rec x=1000 y=5150 z=0 file= 'st02' velocity=1 attenuation= 2
-rec x=1000 y=5200 z=0 file= 'st02' velocity=1 attenuation= 2
-rec x=1000 y=5250 z=0 file= 'st02' velocity=1 attenuation= 2
+rec lon=-116.31209 lat=34.63536 z=0 file= 'STCH' velocity = 1 attenuation = 2
+rec lon=-116.17601 lat=34.49103 z=0 file= 'EBON' velocity = 1 attenuation = 2
+rec lon=-116.14020 lat=34.33330 z=0 file= 'ISBO' velocity = 1 attenuation = 2
+rec lon=-116.42070 lat=34.78498 z=0 file= 'HECT' velocity=1 attenuation= 2
+rec lon=-116.02762 lat=34.28803 z=0 file= 'DUMB' velocity=1 attenuation= 2
+#rec x=1000 y=5250 z=0 file= 'st02' velocity=1 attenuation= 2
 
 #rec lon=11.23 lat=43.89 z=0 file ='st01' velocity = 1 attenuation = 1
 #rec lon=14.82 lat=45.14 z=0 file= 'st02' velocity = 1 attenuation = 2

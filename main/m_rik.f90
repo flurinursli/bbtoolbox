@@ -193,6 +193,15 @@ MODULE m_rik
 
       ENDDO
 
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+      ! -------------------------------------------- add rupture time if missing ---------------------------------------------------
+
+      print*, 'missing rupture'
+      CALL missing_rupture(ok, vel)
+      print*, 'end missing'
+
+
+
       lc = input%source%l0 * (umax - umin)          !< rescale "l0" after strong motion area
 
       ALLOCATE(node(nugr, nvgr))
@@ -323,8 +332,6 @@ MODULE m_rik
 
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! -------------------------------------------- generate nucleation points  ---------------------------------------------------
-
-plane(pl)%rupture(:,:) = 2
 
       CALL setup_interpolation('linear', 'zero', ok)
 
