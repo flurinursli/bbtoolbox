@@ -79,7 +79,7 @@ MODULE m_toolbox
   END TYPE hf
 
   TYPE :: adv
-    INTEGER(i32) :: pmw = 4, avecuts = 2, sheets = 0, waves = 2, verbose = 2
+    INTEGER(i32) :: pmw = 4, avecuts = 2, sheets = 0, waves = 2, verbose = 1
     REAL(r32)    :: vrfact = 0.85_r32
   END TYPE adv
 
@@ -1150,6 +1150,18 @@ MODULE m_toolbox
                       num2char(input%advanced%verbose, width=15, justify='r') + '|', blankline=.false.)
 
       CALL update_log('-----------------------------------------------------------------------------------------------------------')
+
+      IF (input%origin%is_geo .and. (input%advanced%verbose .eq. 2)) THEN
+
+        CALL update_log(num2char('Receivers List (Cartesian)', width=30, justify='l', fill='.') +  &
+                        num2char('x', width=15, justify='r') + '|' + num2char('y', width=15, justify='r') + '|')
+
+        DO i = 1, SIZE(input%receiver)
+          CALL update_log(num2char('', width=30)  +   &
+                          num2char(input%receiver(i)%x, width=15, notation='f', precision=3, justify='r') + '|' + &
+                          num2char(input%receiver(i)%y, width=15, notation='f', precision=3, justify='r') + '|', blankline=.false.)
+        ENDDO
+      ENDIF
 
     END SUBROUTINE echo
 

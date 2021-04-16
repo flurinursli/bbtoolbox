@@ -54,7 +54,7 @@ PROGRAM main
   CALL watch_start(tictoc(1))
 
   ! IF (world_rank .eq. 0) CALL set_log_module(ok, screen = .true.)
-  CALL set_log_module(ok, screen = .true., errclr = 'red')
+  CALL set_log_module(ok, screen = .true., errclr = 'red')      !< errors are printed in red
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
   ! --------------------------------- read main input file and stop execution if error is raised -----------------------------------
@@ -135,7 +135,7 @@ PROGRAM main
         CALL meshing(pl, ivel)
         !CALL roughness(pl, iter)
 
-        CALL rik(ok, pl, ivel)
+        CALL rik(ok, pl, ivel, iter)
 
         DO irec = 1, SIZE(input%receiver)
           !IF (input%receiver(irec)%velocity .eq. ivel) CALL quake(irec, pl)
