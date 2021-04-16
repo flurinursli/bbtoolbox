@@ -24,6 +24,7 @@ MODULE m_interpolation_r32
   !   02/09/20                  original version
   !
 
+  USE                :: omp_lib
   USE, NON_INTRINSIC :: m_precisions
 
   IMPLICIT none
@@ -136,10 +137,10 @@ MODULE m_interpolation_r32
 
       IF ( (ix .eq. 0) .or. (ix .eq. n) ) THEN
         yo = extrafun(x, y, xo, ix)          !< does not work with PGI when nested
-        ! yo = extralin(x, y, xo, ix)
+         ! yo = extrazero(x, y, xo, ix)
       ELSE
         yo = fun(x, y, xo, ix)               !< does not work with PGI when nested
-        ! yo = linear(x, y, xo, ix)
+         ! yo = linear(x, y, xo, ix)
       ENDIF
 
     END SUBROUTINE interp_core

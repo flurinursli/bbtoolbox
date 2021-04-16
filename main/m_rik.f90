@@ -52,7 +52,7 @@ MODULE m_rik
       INTEGER(i32),                                     INTENT(OUT) :: ok
       INTEGER(i32),                                     INTENT(IN)  :: pl, vel, iter
       CHARACTER(:), ALLOCATABLE                                     :: fo
-      INTEGER(i32)                                                  :: nu, nv, submin, submax, i, j, slevel, n, lu
+      INTEGER(i32)                                                  :: nu, nv, submin, submax, i, j, slevel, n, lu, seed
       INTEGER(i32),              DIMENSION(2)                       :: pos
       INTEGER(i32), ALLOCATABLE, DIMENSION(:)                       :: nsubs
       LOGICAL                                                       :: is_estimated
@@ -66,6 +66,9 @@ MODULE m_rik
       !-----------------------------------------------------------------------------------------------------------------------------
 
       ok = 0
+
+      ! set "seed" such that random numbers depend on fault plane number and iteration
+      seed = input%source%seed + (iter - 1) * SIZE(plane) + pl
 
       IF (ALLOCATED(node)) DEALLOCATE(node)
 
@@ -111,8 +114,8 @@ MODULE m_rik
                         num2char('Total', width=15, justify='r') + '|')
 
         CALL update_log(num2char('', width=30)  +  &
-                        num2char((vmax-vmin)/submin/2., width=15, justify='r', notation='f', precision=1) + '|' + &
                         num2char((vmax-vmin)/submax/2., width=15, justify='r', notation='f', precision=1) + '|' + &
+                        num2char((vmax-vmin)/submin/2., width=15, justify='r', notation='f', precision=1) + '|' + &
                         num2char(subtot, width=15, justify='r') + '|', blankline=.false.)
       ENDIF
 
@@ -134,7 +137,7 @@ MODULE m_rik
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! ------------------------------------------------ generate slip model  ------------------------------------------------------
 
-      CALL setup_rng(ok, 'uniform', 0._r32, 1._r32, input%source%seed + iter)         !< initialise random number generator
+      CALL setup_rng(ok, 'uniform', 0._r32, 1._r32, seed)         !< initialise random number generator
 
       DO     !< cycle until RIK slip model correlates well with input slip model
 
@@ -215,7 +218,7 @@ MODULE m_rik
 
       ALLOCATE(node(nugr, nvgr))
 
-      CALL rupture_on_grid(pl, vel, iter, lc)
+      CALL rupture_on_grid(pl, vel, seed, lc)
 
       DEALLOCATE(su, sv, sradius)
 
@@ -332,9 +335,9 @@ MODULE m_rik
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE rupture_on_grid(pl, vel, iter, lc)
+    SUBROUTINE rupture_on_grid(pl, vel, seed, lc)
 
-      INTEGER(i32),                                  INTENT(IN) :: pl, vel, iter
+      INTEGER(i32),                                  INTENT(IN) :: pl, vel, seed
       REAL(r32),                                     INTENT(IN) :: lc
       INTEGER(i32)                                              :: iv, iu, nsubs, n, i, skip, ok
       REAL(r32)                                                 :: x, v, du, u, rise, rupture, phi, r, subvr, sd, z0
@@ -350,7 +353,7 @@ MODULE m_rik
 
       CALL setup_interpolation('linear', 'zero', ok)
 
-      CALL setup_rng(ok, 'uniform', 0._r32, 1._r32, input%source%seed + iter)
+      CALL setup_rng(ok, 'uniform', 0._r32, 1._r32, seed)
 
       CALL rng(z)      !< this is parallelized if openmp flag is set
 

@@ -1206,7 +1206,6 @@ MODULE m_source
                         blankline=.false.)
       ENDIF
 
-
 #ifdef DEBUG
 
       fo = 'estimated_rupture_' + num2char(pl) + '_' + num2char(ivel) + '.txt'

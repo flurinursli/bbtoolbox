@@ -33,7 +33,8 @@ extern "C"
 #endif
 }
 
-static trng::yarn2 * r;
+//static trng::yarn2 * r;
+thread_local trng::yarn2 * r;
 #pragma omp threadprivate(r)
 
 // -----------------------------------------------------------------------------
