@@ -3,8 +3,8 @@ FC = mpif90
 C++ = mpic++
 
 # optimization flags for GCC (add "-march=native" if compute node eqv. compile node)
-#OPT = -g -std=f2008 -fcheck=all -fbacktrace
-OPT = -O2 -std=f2008 -march=native
+OPT = -g -std=f2008 -fcheck=all -fbacktrace
+#OPT = -O2 -std=f2008 -march=native 
 OMP = -fopenmp
 
 # optimization flags for INTEL (add "-xHost" if compute node eqv. compile node)
@@ -36,4 +36,4 @@ TRNG4_PATH = $(TRNG_PATH)
 ERROR_TRAP = y
 
 # Flag for perfomance analysis
-PERF = n
+PERF = y

@@ -19,19 +19,20 @@ MODULE m_source
 
   PRIVATE
 
-  PUBLIC :: hypocenter, plane, dutr, dvtr, nugr, nvgr, umingr, vmingr, umaxgr, vmaxgr
+  PUBLIC :: hypocenter, plane, dutr, dvtr, nugr, nvgr, umingr, vmingr, umaxgr, vmaxgr, grd
   PUBLIC :: setup_source, meshing, missing_rupture
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
-  INTEGER(i32)         :: nutr, nvtr                        !< triangles along u, v
-  INTEGER(i32)         :: nugr, nvgr                        !< nodes along u, v
+  INTEGER(i32), ALLOCATABLE, DIMENSION(:) :: nutr, nvtr                        !< triangles along u, v
+  INTEGER(i32), ALLOCATABLE, DIMENSION(:) :: nugr, nvgr                        !< nodes along u, v
 
   INTEGER(i32), PARAMETER :: REFINE = 4                     !< grid refinement factor for fast-marching
   INTEGER(i32), PARAMETER :: MAX_EXPAND = 20
 
-  REAL(r32)            :: dutr, dvtr                        !< triangle base/height
-  REAL(r32)            :: umingr, vmingr, umaxgr, vmaxgr    !< minimum u,v values for triangular mesh
+  REAL(r32)                            :: umingr, umaxgr                    !< minimum u values for triangular mesh
+  REAL(r32), ALLOCATABLE, DIMENSION(:) :: dutr, dvtr                        !< triangle base/height
+  REAL(r32), ALLOCATABLE, DIMENSION(:) :: vmingr, vmaxgr                    !< minimum v values for triangular mesh
 
   REAL(r32), PARAMETER :: PTSRC_FACTOR = 1._r32 / 10._r32
   REAL(r32), PARAMETER :: PI = 3.14159265358979323846_r64
@@ -57,6 +58,10 @@ MODULE m_source
 
   TYPE(hyp)                            :: hypocenter
   TYPE(src), ALLOCATABLE, DIMENSION(:) :: plane
+
+  TYPE :: grd
+    REAL(r32), ALLOCATABLE, DIMENSION(:) :: slip, rupture, rise
+  END TYPE grd
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -783,10 +788,15 @@ MODULE m_source
       !
 
       INTEGER(i32), INTENT(IN) :: pl, vel
-      INTEGER(i32)             :: nu, nv
-      REAL(r32)                :: du, dv, dt, beta
+      INTEGER(i32)             :: nu, nv, layer, bottom, i
+      REAL(r32)                :: du, dv, dt, beta, sd, ztop, zmax, vbottom, vs, eps
 
       !-----------------------------------------------------------------------------------------------------------------------------
+
+      sd = SIN(plane(pl)%dip * DEG_TO_RAD)
+
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+      ! ------------------------------------------------ point-source case  --------------------------------------------------------
 
       IF (input%source%is_point) THEN
 
@@ -809,37 +819,90 @@ MODULE m_source
         plane(pl)%rupture(:, 3) = dt * [1._r32, 1._r32/SQRT(2._r32), 1._r32]
 
         ! make sure uppermost down-dip "edge" point is always slightly (1m) below free-surface
-        plane(pl)%z = MAX(1._r32, plane(pl)%z + MAX(0._r32, SIN(plane(pl)%dip * DEG_TO_RAD) * du - plane(pl)%z))
+        plane(pl)%z = MAX(1._r32, plane(pl)%z + MAX(0._r32, sd * du - plane(pl)%z))
 
       ELSE
 
-        du = mesh_spacing(pl, vel)
+        ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+        ! ------------------------------------------------ extended source case ----------------------------------------------------
+
+        ! release memory from previous meshing
+        IF (ALLOCATED(vmingr)) DEALLOCATE(vmingr, vmaxgr, nutr, nvtr, dutr, dvtr)
+
+        umingr = plane(pl)%u(1)
+        umaxgr = plane(pl)%u(SIZE(plane(pl)%u))
+
+        ztop = plane(pl)%z                         !< depth fault plane upper edge
+        zmax = ztop + plane(pl)%width * sd         !< depth fault plane lower edge
+
+        ASSOCIATE(model => input%velocity(vel))
+
+          vbottom = vinterp(model%depth, model%vs, model%vsgrad, zmax, bottom)        !< vs at lower edge
+
+          DO
+
+            vs = vinterp(model%depth, model%vs, model%vsgrad, ztop, layer)
+
+            IF (layer .ne. bottom) THEN
+
+              eps = EPSILON(model%depth(layer + 1))
+
+              ! "vs" is minimum speed inside current layer
+              vs = MIN(vs, vinterp(model%depth, model%vs, model%vsgrad, model%depth(layer + 1)*(1._r32 - eps)))
+
+              zmax = model%depth(layer + 1)
+
+            ELSE
+
+              ! "vs" is minimum speed inside current layer
+              vs = MIN(vs, vbottom)
+
+              zmax = plane(pl)%z + plane(pl)%width * sd
+
+            ENDIF
+
+            du = vs / input%coda%fmax / input%advanced%pmw
+
+            IF (ALLOCATED(vmingr)) THEN
+
+              vmingr = [vmingr, (ztop - plane(pl)%z) / sd]
+              vmaxgr = [vmaxgr, (zmax - plane(pl)%z) / sd]
+
+              nutr = [nutr, INT((umaxgr - umingr) / du  + 0.5_r32)]
+              nvtr = [nvtr, INT((vmaxgr(SIZE(vmaxgr)) - vmingr(SIZE(vmingr))) / du  + 0.5_r32)]
+
+            ELSE
+
+              vmingr = [(ztop - plane(pl)%z) / sd]
+              vmaxgr = [(zmax - plane(pl)%z) / sd]
+
+              ! find how many triangles with desired size we can cram onto the fault plane
+              nutr = [(umaxgr - umingr) / du  + 0.5_r32]         !< this is the number of triangles pointing down on odd rows
+              nvtr = [(vmaxgr - vmingr) / du  + 0.5_r32]
+
+            ENDIF
+
+            IF (layer .ne. bottom) ztop = model%depth(layer + 1)         !< set top to next layer
+            IF (layer .eq. bottom) EXIT      !< fault top and bottom are inside same layer, no need to continue
+
+          ENDDO
+
+        END ASSOCIATE
+
+        ! gets actual triangle base (du) and heigth (dv)
+        dutr = [(umaxgr - umingr) / nutr]
+        dvtr = [(vmaxgr - vmingr) / nvtr]
 
       ENDIF
 
-      nu = SIZE(plane(pl)%u)
-      nv = SIZE(plane(pl)%v)
 
-      ! determine grid extension
-      umingr = plane(pl)%u(1)
-      umaxgr = plane(pl)%u(nu)
-      vmingr = plane(pl)%v(1)
-      vmaxgr = plane(pl)%v(nv)
-
-      ! find roughly how many triangles with desired size we can cram onto the fault plane
-      nutr = (umaxgr - umingr) / du  + 0.5_r32         !< this is the number of triangles pointing down on odd rows
-      nvtr = (vmaxgr - vmingr) / du  + 0.5_r32
-
-      ! gets actual triangle base (du) and heigth (dv)
-      dutr = (umaxgr - umingr) / nutr
-      dvtr = (vmaxgr - vmingr) / nvtr
-
-      ! total number of triangles along a row
-      ! nutr = 2*nutr - 1
-
-      ! define number of nodes in the triangular mesh, where each node is determined unambiguosly by "iuc" and "ivc"
-      nugr = nutr + 1
-      nvgr = nvtr + 1
+      !
+      ! ! total number of triangles along a row
+      ! ! nutr = 2*nutr - 1
+      !
+      ! ! define number of nodes in the triangular mesh, where each node is determined unambiguosly by "iuc" and "ivc"
+      nugr = [nutr + 1]
+      nvgr = [nvtr + 1]
 
       IF (input%advanced%verbose .eq. 2) THEN
 
@@ -847,75 +910,32 @@ MODULE m_source
                         num2char('Umax', width=15, justify='r') + '|' + num2char('Vmin', width=15, justify='r') + '|' + &
                         num2char('Vmax', width=15, justify='r') + '|', blankline=.false.)
 
-        CALL update_log(num2char('', width=30, justify='c')  +  &
-                        num2char(umingr, width=15, notation='f', precision=2, justify='r') + '|' + &
-                        num2char(umaxgr, width=15, notation='f', precision=2, justify='r') + '|' + &
-                        num2char(vmingr, width=15, notation='f', precision=2, justify='r') + '|' + &
-                        num2char(vmaxgr, width=15, notation='f', precision=2, justify='r') + '|', blankline=.false.)
+        DO i = 1, SIZE(vmingr)
+          CALL update_log(num2char('', width=30, justify='c')  +  &
+                          num2char(umingr, width=15, notation='f', precision=2, justify='r') + '|' + &
+                          num2char(umaxgr, width=15, notation='f', precision=2, justify='r') + '|' + &
+                          num2char(vmingr(i), width=15, notation='f', precision=2, justify='r') + '|' + &
+                          num2char(vmaxgr(i), width=15, notation='f', precision=2, justify='r') + '|', blankline=.false.)
+        ENDDO
 
         CALL update_log(num2char('<triangles>', justify='c', width=30) + num2char('Width', width=15, justify='r') + '|' + &
                         num2char('Heigth', width=15, justify='r') + '|' + num2char('Along u', width=15, justify='r') + '|' + &
-                        num2char('Along v', width=15, justify='r') + '|' + num2char('Totals', width=15, justify='r') + '|',  &
-                        blankline=.false.)
+                        num2char('Along v', width=15, justify='r') + '|' + num2char('Totals', width=15, justify='r') + '|' +  &
+                        num2char('Nodes', width=15, justify='r') + '|', blankline=.false.)
 
-        CALL update_log(num2char('', width=30)  +  &
-                        num2char(dutr, width=15, notation='f', precision=2, justify='r') + '|' + &
-                        num2char(dvtr, width=15, notation='f', precision=2, justify='r') + '|' + &
-                        num2char(nutr, width=15, justify='r') + '|' + &
-                        num2char(nvtr, width=15, justify='r') + '|' +  &
-                        num2char(nvtr*(2*nutr-1), width=15, justify='r') + '|', blankline=.false.)
+        DO i = 1, SIZE(dutr)
+          CALL update_log(num2char('', width=30)  +  &
+                          num2char(dutr(i), width=15, notation='f', precision=2, justify='r') + '|' + &
+                          num2char(dvtr(i), width=15, notation='f', precision=2, justify='r') + '|' + &
+                          num2char(2*nutr(i)-1, width=15, justify='r') + '|' + &
+                          num2char(nvtr(i), width=15, justify='r') + '|' +  &
+                          num2char(nvtr(i)*(2*nutr(i)-1), width=15, justify='r') + '|' +  &
+                          num2char((nvtr(i)+1)*(nutr(i)+1), width=15, justify='r') + '|', blankline=.false.)
+        ENDDO
 
       ENDIF
 
     END SUBROUTINE meshing
-
-    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
-    !===============================================================================================================================
-    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
-
-    REAL(r32) FUNCTION mesh_spacing(pl, vel)
-
-      ! Purpose:
-      !   to compute mesh spacing (i.e. triangle side) for "pl"-th fault plane and "vel"-th velocity model such that the requirement
-      !   of having "input%advanced%pmw" points per minimum wavelength is fulfilled.
-      !
-      ! Revisions:
-      !     Date                    Description of change
-      !     ====                    =====================
-      !   08/03/21                  original version
-      !
-
-      INTEGER(i32), INTENT(IN) :: pl, vel
-      INTEGER(i32)             :: layer
-      REAL(r32)                :: ztop, zmax, vmin
-
-      !-----------------------------------------------------------------------------------------------------------------------------
-
-      ztop = plane(pl)%z
-      zmax = ztop + plane(pl)%width * SIN(plane(pl)%dip * DEG_TO_RAD)
-
-      vmin = HUGE(0._r32)
-
-      ! loop over layers to find minimum shear wave speed on fault plane
-      ASSOCIATE(model => input%velocity(vel))
-
-        DO layer = 1, SIZE(model%depth) - 1
-          vmin = MIN(vmin, model%vsgrad(layer) * (ztop - model%depth(layer)) + model%vs(layer))    !< top
-          vmin = MIN(vmin, model%vsgrad(layer) * (MIN(model%depth(layer + 1), zmax) - model%depth(layer)) + model%vs(layer))  !< bottom
-          ztop = model%depth(layer + 1)
-          IF (zmax .lt. ztop) EXIT
-        ENDDO
-
-        IF (zmax .ge. ztop) THEN
-          vmin = MIN(vmin, model%vsgrad(layer) * (ztop - model%depth(layer)) + model%vs(layer))    !< top
-          vmin = MIN(vmin, model%vsgrad(layer) * (zmax - model%depth(layer)) + model%vs(layer))    !< bottom
-        ENDIF
-
-      END ASSOCIATE
-
-      mesh_spacing = vmin / input%coda%fmax / input%advanced%pmw
-
-    END FUNCTION mesh_spacing
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
@@ -970,11 +990,12 @@ MODULE m_source
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    REAL(r32) FUNCTION vinterp(ztop, phys, gradient, z)
+    REAL(r32) FUNCTION vinterp(ztop, phys, gradient, z, layer)
 
       ! Purpose:
       !   to return a physical property (e.g. velocity, density, etc) at depth "z" given a model where property "phys", gradient
-      !   "gradient" and depth to layer "ztop" are defined for each layer.
+      !   "gradient" and depth to layer "ztop" are defined for each layer. The layer number at depth "z" may be returned as well in
+      !   variable "layer".
       !
       ! Revisions:
       !     Date                    Description of change
@@ -982,8 +1003,9 @@ MODULE m_source
       !   08/03/21                  original version
       !
 
-      REAL(r32),   DIMENSION(:), INTENT(IN) :: ztop, phys, gradient
-      REAL(r32),                 INTENT(IN) :: z
+      REAL(r32),    DIMENSION(:),           INTENT(IN)  :: ztop, phys, gradient
+      REAL(r32),                            INTENT(IN)  :: z
+      INTEGER(i32),               OPTIONAL, INTENT(OUT) :: layer
       INTEGER(i32)                          :: i
 
       !-----------------------------------------------------------------------------------------------------------------------------
@@ -991,6 +1013,7 @@ MODULE m_source
       DO i = SIZE(ztop), 1, -1
         IF (z .ge. ztop(i)) THEN
           vinterp = phys(i) + gradient(i)*(z - ztop(i))
+          IF (PRESENT(layer)) layer = i
           EXIT
         ENDIF
       ENDDO
@@ -1090,8 +1113,9 @@ MODULE m_source
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE cornr2uv(icr, iuc, ivc, u, v)
-
+    SUBROUTINE cornr2uv(iuc, ivc, refinement, u, v)
+      !SUBROUTINE cornr2uv(icr, iuc, ivc, refinement, u, v)
+      !
       ! Purpose:
       !   to return position of "icr" corner in terms of on-fault coordinates "u" "v". Arrays "iuc" and "ivc" must be computed by
       !   subroutine "cornr"
@@ -1102,23 +1126,42 @@ MODULE m_source
       !   08/03/21                  original version
       !
 
-      INTEGER(i32),               INTENT(IN)  :: icr
+      !INTEGER(i32),               INTENT(IN)  :: icr
       INTEGER(i32), DIMENSION(3), INTENT(IN)  :: iuc, ivc
-      REAL(r32),                  INTENT(OUT) :: u, v
-      INTEGER(i32)                            :: iu, iv
+      INTEGER(i32),               INTENT(IN)  :: refinement
+      REAL(r32),    DIMENSION(3), INTENT(OUT) :: u, v
+      ! INTEGER(i32)                            :: iu, iv
       REAL(r32)                               :: du
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
-      iu = iuc(icr)
-      iv = ivc(icr)
+      ! DO icr = 1, 3
+      !
+      !   iu = iuc(icr)
+      !   iv = ivc(icr)
+      !
+      !   du = 0._r32
+      !
+      !   IF (MOD(iv, 2) .eq. 0) du = dutr(refinement) / 2._r32
+      !
+      !   u = umingr + (iu - 1) * dutr(refinement) + du
+      !   v = vmingr(refinement) + (iv - 1) * dvtr(refinement)
+      !
+      ! ENDDO
 
-      du = 0._r32
+      v(1) = vmingr(refinement) + (ivc(1) - 1) * dvtr(refinement)
+      v(2) = vmingr(refinement) + (ivc(2) - 1) * dvtr(refinement)
+      v(3) = vmingr(refinement) + (ivc(3) - 1) * dvtr(refinement)
 
-      IF (MOD(iv, 2) .eq. 0) du = dutr / 2._r32
+      u(1) = umingr + (iuc(1) - 1) * dutr(refinement)
+      u(2) = umingr + (iuc(2) - 1) * dutr(refinement)
+      u(3) = umingr + (iuc(3) - 1) * dutr(refinement)
 
-      u = umingr + (iu - 1) * dutr + du
-      v = vmingr + (iv - 1) * dvtr
+      du = dutr(refinement) / 2._r32
+
+      IF (MOD(ivc(1), 2) .eq. 0) u(1) = u(1) + du
+      IF (MOD(ivc(2), 2) .eq. 0) u(2) = u(2) + du
+      IF (MOD(ivc(3), 2) .eq. 0) u(3) = u(3) + du
 
     END SUBROUTINE cornr2uv
 
@@ -1202,8 +1245,7 @@ MODULE m_source
       IF (input%advanced%verbose .eq. 2) THEN
         CALL update_log(num2char('<est. min/max rupture>', justify='c', width=30) +   &
                         num2char(num2char(MINVAL(plane(pl)%rupture), notation='f', width=6, precision=1) + ', ' +   &
-                        num2char(MAXVAL(plane(pl)%rupture), notation='f', width=6, precision=1), width=15, justify='r') + '|',  &
-                        blankline=.false.)
+                        num2char(MAXVAL(plane(pl)%rupture), notation='f', width=6, precision=1), width=15, justify='r') + '|')
       ENDIF
 
 #ifdef DEBUG

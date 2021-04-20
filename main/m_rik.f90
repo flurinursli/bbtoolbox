@@ -8,10 +8,10 @@ MODULE m_rik
   USE, NON_INTRINSIC :: m_source
   USE, NON_INTRINSIC :: m_stat
   USE, NON_INTRINSIC :: m_strings
-  USE, NON_INTRINSIC :: m_toolbox, ONLY: input
-! #ifdef MPI
-!   USE :: mpi
-! #endif
+  USE, NON_INTRINSIC :: m_toolbox, ONLY: input, watch_start, watch_stop
+#ifdef MPI
+  USE :: mpi
+#endif
 
   IMPLICIT none
 
@@ -29,15 +29,14 @@ MODULE m_rik
   REAL(r32),    PARAMETER :: DEG_TO_RAD = PI / 180._r32
   REAL(r32),    PARAMETER :: TWOPI = 2._r64 * PI
 
+#ifdef MPI
+  INTEGER(i32), PARAMETER :: COMM = MPI_COMM_SELF
+#else
+  INTEGER(i32), PARAMETER :: COMM = 0
+#endif
 
   INTEGER(i32)                            :: subtot
   REAL(i32),    ALLOCATABLE, DIMENSION(:) :: su, sv, sradius
-
-  TYPE :: grd
-    REAL(r32), ALLOCATABLE, DIMENSION(:) :: slip, rupture, rise
-  END TYPE grd
-
-  TYPE(grd), ALLOCATABLE, DIMENSION(:,:) :: node
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -62,6 +61,8 @@ MODULE m_rik
       REAL(r32),                 DIMENSION(PDFNU)                   :: u
       REAL(r32),                 DIMENSION(PDFNV)                   :: v
       REAL(r32),                 DIMENSION(PDFNU,PDFNV)             :: cpdf, slip, tslip
+      REAL(r64),                 DIMENSION(3)                       :: tictoc
+      TYPE(grd),    ALLOCATABLE, DIMENSION(:,:)                     :: nodes
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
@@ -69,8 +70,6 @@ MODULE m_rik
 
       ! set "seed" such that random numbers depend on fault plane number and iteration
       seed = input%source%seed + (iter - 1) * SIZE(plane) + pl
-
-      IF (ALLOCATED(node)) DEALLOCATE(node)
 
       ! average grid-step in input slip model
       dh = (plane(pl)%u(3) - plane(pl)%u(2)) + (plane(pl)%v(3) - plane(pl)%v(2))
@@ -92,7 +91,7 @@ MODULE m_rik
 
       ! limit minimum subsource size to average triangular mesh step
       submin = 2
-      submax = NINT((vmax - vmin) / (dutr + dvtr) / 4)
+      submax = NINT((vmax - vmin) / (MINVAL(dutr + dvtr)) / 2)
 
       ALLOCATE(nsubs(submax))
 
@@ -114,8 +113,8 @@ MODULE m_rik
                         num2char('Total', width=15, justify='r') + '|')
 
         CALL update_log(num2char('', width=30)  +  &
-                        num2char((vmax-vmin)/submax/2., width=15, justify='r', notation='f', precision=1) + '|' + &
-                        num2char((vmax-vmin)/submin/2., width=15, justify='r', notation='f', precision=1) + '|' + &
+                        num2char((vmax-vmin)/submax/2._r32, width=15, justify='r', notation='f', precision=1) + '|' + &
+                        num2char((vmax-vmin)/submin/2._r32, width=15, justify='r', notation='f', precision=1) + '|' + &
                         num2char(subtot, width=15, justify='r') + '|', blankline=.false.)
       ENDIF
 
@@ -139,6 +138,10 @@ MODULE m_rik
 
       CALL setup_rng(ok, 'uniform', 0._r32, 1._r32, seed)         !< initialise random number generator
 
+#ifdef PERF
+      CALL watch_start(tictoc(1), COMM)
+#endif
+
       DO     !< cycle until RIK slip model correlates well with input slip model
 
         n = 0
@@ -156,7 +159,7 @@ MODULE m_rik
 
               pos = MINLOC(ABS(cpdf - x(1)))
 
-              su(n) = (pos(1) - 1) * du + umin        !< subsource position
+              su(n) = (pos(1) - 1) * du + umin        !< subsource (center) position
               sv(n) = (pos(2) - 1) * dv + vmin
 
               ! accept subsource if located inside strong motion area. This check is necessary because "x" can be very close to 0
@@ -193,12 +196,20 @@ MODULE m_rik
 
         IF (input%advanced%verbose .eq. 2) THEN
           CALL update_log(num2char('<slip correlation>', justify='c', width=30) +    &
-                          num2char(cross, width=15, notation='f', precision=3, justify='r') + '|', blankline=.false.)
+                          num2char(cross, width=15, notation='f', precision=3, justify='r') + '|')
         ENDIF
 
         IF (cross .ge. input%source%correlation) EXIT
 
       ENDDO
+
+#ifdef PERF
+      CALL watch_stop(tictoc(1), COMM)
+      IF (input%advanced%verbose .eq. 2) THEN
+        CALL update_log(num2char('<<elapsed time>>', justify='c', width=30) + num2char(tictoc(1), width=15, notation='f',   &
+                        precision=3, justify='r') + '|', blankline=.false.)
+      ENDIF
+#endif
 
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! -------------------------------------------- add rupture time if missing ---------------------------------------------------
@@ -209,16 +220,40 @@ MODULE m_rik
         is_estimated = .false.
       ENDIF
 
-      IF (is_estimated) CALL missing_rupture(ok, pl, vel)
+      IF (is_estimated) THEN
+#ifdef PERF
+        CALL watch_start(tictoc(2), COMM)
+#endif
+        CALL missing_rupture(ok, pl, vel)
+#ifdef PERF
+        CALL watch_stop(tictoc(2), COMM)
+        CALL update_log(num2char('<<elapsed time>>', justify='c', width=30) + num2char(tictoc(2), width=15, notation='f',   &
+                        precision=3, justify='r') + '|', blankline=.false.)
+#endif
+      ENDIF
 
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! ------------------------------------------- generate rupture model on grid -------------------------------------------------
 
-      lc = input%source%l0 * (umax - umin)          !< rescale "l0" after strong motion area
+      DO i = 1, SIZE(nugr)
 
-      ALLOCATE(node(nugr, nvgr))
+#ifdef PERF
+        CALL watch_start(tictoc(3), COMM)
+#endif
 
-      CALL rupture_on_grid(pl, vel, seed, lc)
+        ALLOCATE(nodes(nugr(i), nvgr(i)))
+
+        CALL parameters_at_nodes(i, pl, vel, seed, nodes)
+
+        DEALLOCATE(nodes)
+
+#ifdef PERF
+        CALL watch_stop(tictoc(3), COMM)
+        CALL update_log(num2char('<<elapsed time>>', justify='c', width=30) + num2char(tictoc(3), width=15, notation='f',   &
+                        precision=3, justify='r') + '|', blankline=.false.)
+#endif
+
+      ENDDO
 
       DEALLOCATE(su, sv, sradius)
 
@@ -335,18 +370,27 @@ MODULE m_rik
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE rupture_on_grid(pl, vel, seed, lc)
+    SUBROUTINE parameters_at_nodes(ref, pl, vel, seed, nodes)
 
-      INTEGER(i32),                                  INTENT(IN) :: pl, vel, seed
-      REAL(r32),                                     INTENT(IN) :: lc
-      INTEGER(i32)                                              :: iv, iu, nsubs, n, i, skip, ok
-      REAL(r32)                                                 :: x, v, du, u, rise, rupture, phi, r, subvr, sd, z0
-      REAL(r32),                 DIMENSION(3)                   :: lvec, hvec
-      REAL(r32),                 DIMENSION(subtot)              :: sub2node, pu, pv, subrupt
-      REAL(r32),                 DIMENSION(2,subtot)            :: z
-      REAL(r32),    ALLOCATABLE, DIMENSION(:)                   :: depth, vs, vsgrad
+      INTEGER(i32),                                  INTENT(IN)  :: ref, pl, vel, seed
+      TYPE(grd),                 DIMENSION(:,:),     INTENT(OUT) :: nodes
+      INTEGER(i32)                                               :: iv, iu, nsubs, n, i, skip, ok, nrefs
+      REAL(r32)                                                  :: x, v, du, u, rise, rupture, phi, r, subvr, sd, z0
+      REAL(r32)                                                  :: lc, umax, umin
+      REAL(r32),                 DIMENSION(3)                    :: lvec, hvec
+      REAL(r32),                 DIMENSION(subtot)               :: sub2node, pu, pv, subrupt
+      REAL(r32),                 DIMENSION(2,subtot)             :: z
+      REAL(r32),    ALLOCATABLE, DIMENSION(:)                    :: depth, vs, vsgrad
+      REAL(r64)                                                  :: tictoc
 
       !-----------------------------------------------------------------------------------------------------------------------------
+
+      nrefs = SIZE(vmaxgr)       !< number of mesh refinements
+
+      umin = plane(pl)%u(2)
+      umax = plane(pl)%u(SIZE(plane(pl)%u)-1)
+
+      lc = input%source%l0 * (umax - umin)          !< rescale "l0" after strong motion area
 
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! -------------------------------------------- generate nucleation points  ---------------------------------------------------
@@ -354,6 +398,10 @@ MODULE m_rik
       CALL setup_interpolation('linear', 'zero', ok)
 
       CALL setup_rng(ok, 'uniform', 0._r32, 1._r32, seed)
+
+#ifdef PERF
+      CALL watch_start(tictoc, COMM)
+#endif
 
       CALL rng(z)      !< this is parallelized if openmp flag is set
 
@@ -366,10 +414,10 @@ MODULE m_rik
         pu(i) = r * COS(phi) + su(i)
         pv(i) = r * SIN(phi) + sv(i)
 
-        pu(i) = MAX(pu(i), umingr)
+        pu(i) = MAX(pu(i), umingr)                !< make point falls inside mesh
         pu(i) = MIN(pu(i), umaxgr)
-        pv(i) = MAX(pv(i), vmingr)
-        pv(i) = MIN(pv(i), vmaxgr)
+        pv(i) = MAX(pv(i), vmingr(1))
+        pv(i) = MIN(pv(i), vmaxgr(nrefs))
 
         ! compute rupture time from hypocenter to random point inside subsource
         CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%rupture, pu(i), pv(i), subrupt(i))
@@ -377,11 +425,18 @@ MODULE m_rik
       ENDDO
       !$omp end parallel do
 
+#ifdef PERF
+      CALL watch_stop(tictoc, COMM)
+#endif
+
       IF (input%advanced%verbose .eq. 2) THEN
         CALL update_log(num2char('<min/max rupt-to-point>', justify='c', width=30) +   &
                         num2char(num2char(MINVAL(subrupt), notation='f', width=6, precision=2) + ', ' +  &
-                        num2char(MAXVAL(subrupt), notation='f', width=6, precision=2), width=15, justify='r') + '|',   &
-                        blankline=.false.)
+                        num2char(MAXVAL(subrupt), notation='f', width=6, precision=2), width=15, justify='r') + '|')
+#ifdef PERF
+        CALL update_log(num2char('<<elapsed time>>', justify='c', width=30) + num2char(tictoc, width=15, notation='f',   &
+                        precision=3, justify='r') + '|', blankline=.false.)
+#endif
       ENDIF
 
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
@@ -396,17 +451,19 @@ MODULE m_rik
         vsgrad = model%vsgrad
       END ASSOCIATE
 
-      ! cycle over nodes
-      !$omp parallel do default(shared) private(iv, v, du, iu, u, x, sub2node, nsubs, n, i, subvr, rise, rupture)
-      DO iv = 1, nvgr
+      ! nugr = SIZE(nodes, 1)
+      ! nvgr = SIZE(nodes, 2)
 
-        v = vmingr + (iv - 1) * dvtr
+      !$omp parallel do default(shared) private(iv, iu, v, du, u, x, nsubs, n, i, subvr, rise, rupture, sub2node)
+      DO iv = 1, SIZE(nodes, 2)
 
-        du = (1 - MOD(iv, 2)) * dutr / 2._r32          !< "du" is 0 for odd "iv", dutr/2 for even "iv"
+        v = vmingr(ref) + (iv - 1) * dvtr(ref)
 
-        DO iu = 1, nugr + MOD(iv, 2) - 1               !< "i" tops at "nugr" for odd "j", at "nugr-1" for even "j"
+        du = (1 - MOD(iv, 2)) * dutr(ref) / 2._r32          !< "du" is 0 for odd "iv", dutr/2 for even "iv"
 
-          u = umingr + (iu - 1) * dutr + du
+        DO iu = 1, SIZE(nodes, 1) + MOD(iv, 2) - 1               !< "i" tops at "nugr" for odd "j", at "nugr-1" for even "j"
+
+          u = umingr + (iu - 1) * dutr(ref) + du
 
           ! compute difference between radius and node-to-source distance (positive only when node is inside source)
           DO i = 1, subtot
@@ -421,16 +478,16 @@ MODULE m_rik
 
             CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%rupture, u, v, rupture)
 
-            ALLOCATE(node(iu,iv)%slip(1), node(iu,iv)%rupture(1), node(iu,iv)%rise(1))
+            ALLOCATE(nodes(iu,iv)%slip(1), nodes(iu,iv)%rupture(1), nodes(iu,iv)%rise(1))
 
-            node(iu, iv)%slip = 0._r32
-            node(iu, iv)%rupture = rupture
-            node(iu, iv)%rise = 1._r32
+            nodes(iu, iv)%slip = 0._r32
+            nodes(iu, iv)%rupture = rupture
+            nodes(iu, iv)%rise = 1._r32
 
           !... otherwise evaluate and store the contribution of each subsource
           ELSE
 
-            ALLOCATE(node(iu,iv)%slip(nsubs), node(iu,iv)%rupture(nsubs), node(iu,iv)%rise(nsubs))
+            ALLOCATE(nodes(iu,iv)%slip(nsubs), nodes(iu,iv)%rupture(nsubs), nodes(iu,iv)%rise(nsubs))
 
             n = 0
 
@@ -458,9 +515,9 @@ MODULE m_rik
 
               ENDIF
 
-              node(iu, iv)%slip(n) = SQRT(sub2node(i))      !< note that slip here is simply proportional to final slip
-              node(iu, iv)%rupture(n) = rupture
-              node(iu, iv)%rise(n) = rise
+              nodes(iu, iv)%slip(n) = SQRT(sub2node(i))      !< note that slip here is simply proportional to final slip
+              nodes(iu, iv)%rupture(n) = rupture
+              nodes(iu, iv)%rise(n) = rise
 
             ENDDO
 
@@ -476,17 +533,17 @@ MODULE m_rik
         hvec(:) = -lvec(:)
 
         !$omp parallel do default(shared) private(iu, iv) reduction(min:lvec) reduction(max:hvec)
-        DO iv = 1, nvgr
-          DO iu = 1, nugr + MOD(iv, 2) - 1
-            lvec = [MIN(lvec(1), MINVAL(node(iu, iv)%slip)), MIN(lvec(2), MINVAL(node(iu, iv)%rupture)),    &
-                    MIN(lvec(3), MINVAL(node(iu, iv)%rise))]
-            hvec = [MAX(hvec(1), MAXVAL(node(iu, iv)%slip)), MAX(hvec(2), MAXVAL(node(iu, iv)%rupture)),    &
-                    MAX(hvec(3), MAXVAL(node(iu, iv)%rise))]
+        DO iv = 1, SIZE(nodes, 2)
+          DO iu = 1, SIZE(nodes, 1) + MOD(iv, 2) - 1
+            lvec = [MIN(lvec(1), MINVAL(nodes(iu, iv)%slip)), MIN(lvec(2), MINVAL(nodes(iu, iv)%rupture)),    &
+                    MIN(lvec(3), MINVAL(nodes(iu, iv)%rise))]
+            hvec = [MAX(hvec(1), MAXVAL(nodes(iu, iv)%slip)), MAX(hvec(2), MAXVAL(nodes(iu, iv)%rupture)),    &
+                    MAX(hvec(3), MAXVAL(nodes(iu, iv)%rise))]
           ENDDO
         ENDDO
         !$omp end parallel do
 
-        CALL update_log(num2char('<Min/Max at nodes>', justify='c', width=30) + num2char('Slip', width=15, justify='r') + '|' + &
+        CALL update_log(num2char('<min/max at nodes>', justify='c', width=30) + num2char('Slip', width=15, justify='r') + '|' + &
                         num2char('Rupture', width=15, justify='r') + '|' + num2char('Rise', width=15, justify='r') + '|')
 
         CALL update_log(num2char('', width=30)  +  &
@@ -497,10 +554,9 @@ MODULE m_rik
                         num2char(num2char(lvec(3), notation='f', width=6, precision=2) + ', ' +   &
                                 num2char(hvec(3), notation='f', width=6, precision=2), width=15, justify='r') + '|',  &
                         blankline=.false.)
-
       ENDIF
 
-    END SUBROUTINE rupture_on_grid
+    END SUBROUTINE parameters_at_nodes
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
@@ -550,11 +606,12 @@ MODULE m_rik
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    REAL(r32) FUNCTION vinterp(ztop, phys, gradient, z)
+    REAL(r32) FUNCTION vinterp(ztop, phys, gradient, z, layer)
 
       ! Purpose:
       !   to return a physical property (e.g. velocity, density, etc) at depth "z" given a model where property "phys", gradient
-      !   "gradient" and depth to layer "ztop" are defined for each layer.
+      !   "gradient" and depth to layer "ztop" are defined for each layer. The layer number at depth "z" may be returned as well in
+      !   variable "layer".
       !
       ! Revisions:
       !     Date                    Description of change
@@ -562,8 +619,9 @@ MODULE m_rik
       !   08/03/21                  original version
       !
 
-      REAL(r32),   DIMENSION(:), INTENT(IN) :: ztop, phys, gradient
-      REAL(r32),                 INTENT(IN) :: z
+      REAL(r32),    DIMENSION(:),           INTENT(IN)  :: ztop, phys, gradient
+      REAL(r32),                            INTENT(IN)  :: z
+      INTEGER(i32),               OPTIONAL, INTENT(OUT) :: layer
       INTEGER(i32)                          :: i
 
       !-----------------------------------------------------------------------------------------------------------------------------
@@ -571,6 +629,7 @@ MODULE m_rik
       DO i = SIZE(ztop), 1, -1
         IF (z .ge. ztop(i)) THEN
           vinterp = phys(i) + gradient(i)*(z - ztop(i))
+          IF (PRESENT(layer)) layer = i
           EXIT
         ENDIF
       ENDDO
