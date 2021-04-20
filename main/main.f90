@@ -124,7 +124,7 @@ PROGRAM main
 
     DO pl = 1, SIZE(plane)
 
-      DO ivel = 2, SIZE(input%velocity)
+      DO ivel = 1, SIZE(input%velocity)
 
         CALL update_log(num2char('Iteration for', width=30, fill='.') + num2char('Source #', width=15, justify='r') + '|' +   &
                         num2char('Segment #', width=15, justify='r') + '|' + num2char('Velocity #', width=15, justify='r') + '|')

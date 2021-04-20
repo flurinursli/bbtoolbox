@@ -19,24 +19,25 @@ MODULE m_source
 
   PRIVATE
 
-  PUBLIC :: hypocenter, plane, dutr, dvtr, nugr, nvgr, umingr, vmingr, umaxgr, vmaxgr, grd
+  PUBLIC :: hypocenter, plane, dutr, dvtr, nugr, nvgr, umingr, vmingr, umaxgr, vmaxgr, nodes
   PUBLIC :: setup_source, meshing, missing_rupture
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
-  INTEGER(i32), ALLOCATABLE, DIMENSION(:) :: nutr, nvtr                        !< triangles along u, v
-  INTEGER(i32), ALLOCATABLE, DIMENSION(:) :: nugr, nvgr                        !< nodes along u, v
-
   INTEGER(i32), PARAMETER :: REFINE = 4                     !< grid refinement factor for fast-marching
   INTEGER(i32), PARAMETER :: MAX_EXPAND = 20
+  REAL(r32),    PARAMETER :: PTSRC_FACTOR = 1._r32 / 10._r32
+  REAL(r32),    PARAMETER :: PI = 3.14159265358979323846_r64
+  REAL(r32),    PARAMETER :: DEG_TO_RAD = PI / 180._r32
 
-  REAL(r32)                            :: umingr, umaxgr                    !< minimum u values for triangular mesh
-  REAL(r32), ALLOCATABLE, DIMENSION(:) :: dutr, dvtr                        !< triangle base/height
-  REAL(r32), ALLOCATABLE, DIMENSION(:) :: vmingr, vmaxgr                    !< minimum v values for triangular mesh
+  ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
-  REAL(r32), PARAMETER :: PTSRC_FACTOR = 1._r32 / 10._r32
-  REAL(r32), PARAMETER :: PI = 3.14159265358979323846_r64
-  REAL(r32), PARAMETER :: DEG_TO_RAD = PI / 180._r32
+  INTEGER(i32), ALLOCATABLE, DIMENSION(:) :: nutr, nvtr, nugr, nvgr            !< triangles/nodes along u, v
+  REAL(r32)                               :: umingr, umaxgr                    !< min/max u values for triangular mesh
+  REAL(r32),    ALLOCATABLE, DIMENSION(:) :: dutr, dvtr                        !< triangle base/height
+  REAL(r32),    ALLOCATABLE, DIMENSION(:) :: vmingr, vmaxgr                    !< min/max v values for triangular mesh
+
+  ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
   TYPE :: hyp
     INTEGER(i32) :: plane        !< plane number where hypocenter is located
@@ -56,12 +57,13 @@ MODULE m_source
     TYPE(seg),   ALLOCATABLE, DIMENSION(:,:) :: src
   END TYPE src
 
-  TYPE(hyp)                            :: hypocenter
-  TYPE(src), ALLOCATABLE, DIMENSION(:) :: plane
-
   TYPE :: grd
     REAL(r32), ALLOCATABLE, DIMENSION(:) :: slip, rupture, rise
   END TYPE grd
+
+  TYPE(hyp)                              :: hypocenter
+  TYPE(src), ALLOCATABLE, DIMENSION(:)   :: plane
+  TYPE(grd), ALLOCATABLE, DIMENSION(:,:) :: nodes            !< stores slip/rupture/risetime on mesh nodes
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 

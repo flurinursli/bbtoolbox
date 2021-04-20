@@ -35,7 +35,7 @@ CPP_OBJS = trng.o
 
 # compile C++ objects
 $(CPP_OBJS) : %.o : %.cpp
-	$(CXX) -O2 -cpp $(PP_FLAGS) $(INCL) -c -o $@ $<
+	$(CXX) -O2 $(OMP) -cpp $(PP_FLAGS) $(INCL) -c -o $@ $<
 
 # define list of Fortran + C objects
 OBJS = $(F90_OBJS)

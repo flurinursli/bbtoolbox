@@ -62,7 +62,6 @@ MODULE m_rik
       REAL(r32),                 DIMENSION(PDFNV)                   :: v
       REAL(r32),                 DIMENSION(PDFNU,PDFNV)             :: cpdf, slip, tslip
       REAL(r64),                 DIMENSION(3)                       :: tictoc
-      TYPE(grd),    ALLOCATABLE, DIMENSION(:,:)                     :: nodes
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
@@ -243,7 +242,7 @@ MODULE m_rik
 
         ALLOCATE(nodes(nugr(i), nvgr(i)))
 
-        CALL parameters_at_nodes(i, pl, vel, seed, nodes)
+        CALL parameters_at_nodes(i, pl, vel, seed)
 
         DEALLOCATE(nodes)
 
@@ -370,22 +369,23 @@ MODULE m_rik
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE parameters_at_nodes(ref, pl, vel, seed, nodes)
+    SUBROUTINE parameters_at_nodes(ref, pl, vel, seed)
 
       INTEGER(i32),                                  INTENT(IN)  :: ref, pl, vel, seed
-      TYPE(grd),                 DIMENSION(:,:),     INTENT(OUT) :: nodes
       INTEGER(i32)                                               :: iv, iu, nsubs, n, i, skip, ok, nrefs
       REAL(r32)                                                  :: x, v, du, u, rise, rupture, phi, r, subvr, sd, z0
       REAL(r32)                                                  :: lc, umax, umin
       REAL(r32),                 DIMENSION(3)                    :: lvec, hvec
-      REAL(r32),                 DIMENSION(subtot)               :: sub2node, pu, pv, subrupt
+      REAL(r32),                 DIMENSION(subtot)               :: pu, pv, subrupt
+      REAL(r32),    ALLOCATABLE, DIMENSION(:)                    :: sub2node
       REAL(r32),                 DIMENSION(2,subtot)             :: z
-      REAL(r32),    ALLOCATABLE, DIMENSION(:)                    :: depth, vs, vsgrad
       REAL(r64)                                                  :: tictoc
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
-      nrefs = SIZE(vmaxgr)       !< number of mesh refinements
+      ALLOCATE(sub2node(subtot))    !< this is allocatable to avoid stack limitation with openmp below
+
+      nrefs = SIZE(vmaxgr)          !< number of mesh refinements
 
       umin = plane(pl)%u(2)
       umax = plane(pl)%u(SIZE(plane(pl)%u)-1)
@@ -445,15 +445,6 @@ MODULE m_rik
       sd = SIN(plane(pl)%dip * DEG_TO_RAD)
       z0 = plane(pl)%z
 
-      ASSOCIATE(model => input%velocity(vel))
-        depth  = model%depth
-        vs     = model%vs
-        vsgrad = model%vsgrad
-      END ASSOCIATE
-
-      ! nugr = SIZE(nodes, 1)
-      ! nvgr = SIZE(nodes, 2)
-
       !$omp parallel do default(shared) private(iv, iu, v, du, u, x, nsubs, n, i, subvr, rise, rupture, sub2node)
       DO iv = 1, SIZE(nodes, 2)
 
@@ -498,7 +489,9 @@ MODULE m_rik
 
               n = n + 1
 
-              subvr = meanvr(sv(i), sradius(i), z0, sd, depth, vs, vsgrad) * input%source%vrfact
+              ASSOCIATE(depth => input%velocity(vel)%depth, vs => input%velocity(vel)%vs, vsgrad => input%velocity(vel)%vsgrad)
+                subvr = meanvr(sv(i), sradius(i), z0, sd, depth, vs, vsgrad) * input%source%vrfact
+              END ASSOCIATE
 
               IF (2*sradius(i) .ge. lc) THEN
 
