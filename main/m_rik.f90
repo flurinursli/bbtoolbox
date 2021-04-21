@@ -19,8 +19,7 @@ MODULE m_rik
 
   PRIVATE
 
-  PUBLIC :: rik
-  !PUBLIC ::
+  PUBLIC :: rik, rik_at_nodes
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -49,6 +48,15 @@ MODULE m_rik
 
     SUBROUTINE rik(ok, pl, vel, iter)
 
+      ! Purpose:
+      !   to define rupture parameters for plane "pl", velocity model "vel" and iteration "iter" based on the RIK model.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
       INTEGER(i32),                                     INTENT(OUT) :: ok
       INTEGER(i32),                                     INTENT(IN)  :: pl, vel, iter
       CHARACTER(:), ALLOCATABLE                                     :: fo
@@ -68,6 +76,8 @@ MODULE m_rik
       !-----------------------------------------------------------------------------------------------------------------------------
 
       ok = 0
+
+      IF (ALLOCATED(su)) DEALLOCATE(su, sv, sradius)      !< free resources from previous call to "rik"
 
       ! set "seed" such that random numbers depend on fault plane number and iteration
       seed = input%source%seed + (iter - 1) * SIZE(plane) + pl
@@ -238,7 +248,7 @@ MODULE m_rik
         is_estimated = .false.
       ENDIF
 
-      IF (is_estimated) THEN
+      IF (plane(pl)%is_rupture_missing) THEN
 #ifdef PERF
         CALL watch_start(tictoc(2), COMM)
 #endif
@@ -250,6 +260,7 @@ MODULE m_rik
 #endif
       ENDIF
 
+      ! this is just to test "rik_at_nodes", it will be actually called in m_isochron.f90
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! ------------------------------------------- generate rupture model on grid -------------------------------------------------
 
@@ -261,9 +272,9 @@ MODULE m_rik
 
         ALLOCATE(nodes(nugr(i), nvgr(i)))
 
-        CALL parameters_at_nodes(i, pl, vel, seed)
+        CALL rik_at_nodes(i, pl, vel, seed)
 
-        DEALLOCATE(nodes)
+        CALL dealloc_nodes()
 
 #ifdef PERF
         CALL watch_stop(tictoc(3), COMM)
@@ -272,14 +283,6 @@ MODULE m_rik
 #endif
 
       ENDDO
-
-      DEALLOCATE(su, sv, sradius)
-
-      IF (is_estimated) THEN
-        DO i = 1, SIZE(plane)
-          plane(i)%rupture(:,:) = -999._r32       !< reset to not-available
-        ENDDO
-      ENDIF
 
     END SUBROUTINE rik
 
@@ -388,7 +391,23 @@ MODULE m_rik
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE parameters_at_nodes(ref, pl, vel, seed)
+    SUBROUTINE rik_at_nodes(ref, pl, vel, seed)
+
+      ! Purpose:
+      !   to define rupture parameters directly on nodes of the "ref"-th mesh belonging to fault plane "pl" and embedded in velocity
+      !   model "vel". "seed" initialise the random number generator to obtain rupture times at small subsources. The subroutine
+      !   assigns a set of slip, rupture time and rise-time values to each node such that:
+      !
+      !   SUM(nodes(i,j)%slip) is the total slip at node i,j
+      !   MINVAL(nodes(i,j)%rupture) is the actual rupture time at node i,j
+      !
+      !   By cycling over the three sets of values for a given triangle we can compute the moment rate function referring to it.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
 
       INTEGER(i32),                                  INTENT(IN)  :: ref, pl, vel, seed
       INTEGER(i32)                                               :: iv, iu, nsubs, n, i, skip, ok, nrefs
@@ -418,9 +437,9 @@ MODULE m_rik
 
       CALL setup_rng(ok, 'uniform', 0._r32, 1._r32, seed)
 
-#ifdef PERF
-      CALL watch_start(tictoc, COMM)
-#endif
+! #ifdef PERF
+!       CALL watch_start(tictoc, COMM)
+! #endif
 
       CALL rng(z)      !< this is parallelized if openmp flag is set
 
@@ -444,19 +463,19 @@ MODULE m_rik
       ENDDO
       !$omp end parallel do
 
-#ifdef PERF
-      CALL watch_stop(tictoc, COMM)
-#endif
-
-      IF (input%advanced%verbose .eq. 2) THEN
-        CALL update_log(num2char('<min/max rupt-to-point>', justify='c', width=30) +   &
-                        num2char(num2char(MINVAL(subrupt), notation='f', width=6, precision=2) + ', ' +  &
-                        num2char(MAXVAL(subrupt), notation='f', width=6, precision=2), width=15, justify='r') + '|')
-#ifdef PERF
-        CALL update_log(num2char('<<elapsed time>>', justify='c', width=30) + num2char(tictoc, width=15, notation='f',   &
-                        precision=3, justify='r') + '|', blankline=.false.)
-#endif
-      ENDIF
+! #ifdef PERF
+!       CALL watch_stop(tictoc, COMM)
+! #endif
+!
+!       IF (input%advanced%verbose .eq. 2) THEN
+!         CALL update_log(num2char('<min/max rupt-to-point>', justify='c', width=30) +   &
+!                         num2char(num2char(MINVAL(subrupt), notation='f', width=6, precision=2) + ', ' +  &
+!                         num2char(MAXVAL(subrupt), notation='f', width=6, precision=2), width=15, justify='r') + '|')
+! #ifdef PERF
+!         CALL update_log(num2char('<<elapsed time>>', justify='c', width=30) + num2char(tictoc, width=15, notation='f',   &
+!                         precision=3, justify='r') + '|', blankline=.false.)
+! #endif
+!       ENDIF
 
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! ---------------------------------------- slip, rupture and rise-time at nodes ----------------------------------------------
@@ -555,7 +574,7 @@ MODULE m_rik
         ENDDO
         !$omp end parallel do
 
-        CALL update_log(num2char('<min/max at nodes>', justify='c', width=30) + num2char('Slip', width=15, justify='r') + '|' + &
+        CALL update_log(num2char('<min/max at nodes>', justify='c', width=30) + num2char('Un. Slip', width=15, justify='r') +'|'+ &
                         num2char('Rupture', width=15, justify='r') + '|' + num2char('Rise', width=15, justify='r') + '|')
 
         CALL update_log(num2char('', width=30)  +  &
@@ -568,7 +587,7 @@ MODULE m_rik
                         blankline=.false.)
       ENDIF
 
-    END SUBROUTINE parameters_at_nodes
+    END SUBROUTINE rik_at_nodes
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================

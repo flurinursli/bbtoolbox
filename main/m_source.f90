@@ -20,7 +20,7 @@ MODULE m_source
   PRIVATE
 
   PUBLIC :: hypocenter, plane, dutr, dvtr, nutr, nvtr, nugr, nvgr, umingr, vmingr, umaxgr, vmaxgr, nodes
-  PUBLIC :: setup_source, meshing, missing_rupture, cornr, cornr2uv
+  PUBLIC :: setup_source, meshing, missing_rupture, dealloc_nodes, cornr, cornr2uv
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -49,6 +49,7 @@ MODULE m_source
   END TYPE seg
 
   TYPE :: src
+    LOGICAL                                  :: is_rupture_missing                 !< signal if rupture times are midding
     REAL(r32)                                :: length, width, strike, dip         !< segment-specific
     REAL(r32)                                :: targetm0                           !< total moment (sum over all segments)
     REAL(r32)                                :: x, y, z                            !< absolute position of u=v=0
@@ -103,18 +104,20 @@ MODULE m_source
         plane(1)%dip      = input%source%dip
 
         ALLOCATE(plane(1)%u(3), plane(1)%v(3))
-        ALLOCATE(plane(1)%rise(3,3), plane(1)%sslip(3,3), plane(1)%dslip(3,3), plane(1)%rupture(3,3))
+        ALLOCATE(plane(1)%rise(3,3), plane(1)%sslip(3,3), plane(1)%dslip(3,3), plane(1)%tslip(3,3), plane(1)%rupture(3,3))
 
         plane(1)%sslip(:,:) = 0._r32
         plane(1)%dslip(:,:) = 0._r32
+        plane(1)%tslip(:,:) = 0._r32
 
         ! slip in this context does not matter, as we will rescale output according to input "m0"
         plane(1)%sslip(2, 2) = COS(input%source%rake * DEG_TO_RAD)
         plane(1)%dslip(2, 2) = -SIN(input%source%rake * DEG_TO_RAD)          !< in our system slip is positive down-dip
+        plane(1)%tslip(2, 2) = 1._r32
 
         plane(1)%rise(:,:) = input%source%freq
 
-        ! this is where u=v=0 (i.e. middle of fault)
+        ! this is where u=v=0
         plane(1)%x = input%source%x
         plane(1)%y = input%source%y
         plane(1)%z = input%source%z
@@ -375,9 +378,11 @@ MODULE m_source
                   plane(k)%tslip(i, j) = numeric(islip)                       !< total slip
 
                   plane(k)%rise(i, j)    = input%source%freq
-                  plane(k)%rupture(i, j) = -999._r32              !< default to negative number to indicate values not available
+
+                  plane(k)%is_rupture_missing = .true.
 
                   IF (irupt .gt. 0) plane(k)%rupture(i, j) = numeric(irupt)
+                  IF (irupt .gt. 0) plane(k)%is_rupture_missing = .false.
                   IF (irise .gt. 0) plane(k)%rise(i, j) = 2._r32 * PI / numeric(irise)         !< assume "fc=1/rise"
 
                 ENDDO
@@ -551,6 +556,8 @@ MODULE m_source
             plane(pl)%tslip(i, j) = slip1                      !< total slip
 
             plane(pl)%rupture(i, j) = tinit
+
+            plane(pl)%is_rupture_missing = .false.
 
             ALLOCATE(plane(pl)%src(i, j)%mrf(nt1 + 1))
 
@@ -811,7 +818,7 @@ MODULE m_source
         du = PTSRC_FACTOR * beta / input%coda%fmax / SQRT(2._r32) / 2._r32
 
         plane(pl)%u = [-du, 0._r32, du]
-        plane(pl)%v = [-dv, 0._r32, dv]
+        plane(pl)%v = [-du, 0._r32, du]
 
         ! second condition for point-source: max(rupture time) << tr, where tr is the shortes period observed (i.e. 1/fmax)
         dt = PTSRC_FACTOR / input%coda%fmax
@@ -823,13 +830,25 @@ MODULE m_source
         ! make sure uppermost down-dip "edge" point is always slightly (1m) below free-surface
         plane(pl)%z = MAX(1._r32, plane(pl)%z + MAX(0._r32, sd * du - plane(pl)%z))
 
+        IF (ALLOCATED(vmingr)) DEALLOCATE(vmingr, vmaxgr, nutr, nvtr, dutr, dvtr, nugr, nvgr)
+
+        ! set mesh parameters
+        umingr = -du
+        umaxgr = du
+        vmingr = [-du]
+        vmaxgr = [du]
+        nutr = [2]
+        nvtr = [2]
+        dutr = [du]
+        dvtr = [du]
+
       ELSE
 
         ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
         ! ------------------------------------------------ extended source case ----------------------------------------------------
 
         ! release memory from previous meshing
-        IF (ALLOCATED(vmingr)) DEALLOCATE(vmingr, vmaxgr, nutr, nvtr, dutr, dvtr)
+        IF (ALLOCATED(vmingr)) DEALLOCATE(vmingr, vmaxgr, nutr, nvtr, dutr, dvtr, nugr, nvgr)
 
         umingr = plane(pl)%u(1)
         umaxgr = plane(pl)%u(SIZE(plane(pl)%u))
@@ -897,12 +916,10 @@ MODULE m_source
 
       ENDIF
 
+      ! total number of triangles along a row
+      ! nutr = 2*nutr - 1
 
-      !
-      ! ! total number of triangles along a row
-      ! ! nutr = 2*nutr - 1
-      !
-      ! ! define number of nodes in the triangular mesh, where each node is determined unambiguosly by "iuc" and "ivc"
+      ! define number of nodes in the triangular mesh, where each node is determined unambiguosly by "iuc" and "ivc"
       nugr = [nutr + 1]
       nvgr = [nvtr + 1]
 
@@ -910,7 +927,7 @@ MODULE m_source
 
         CALL update_log(num2char('<grid extension>', justify='c', width=30) + num2char('Umin', width=15, justify='r') + '|' +  &
                         num2char('Umax', width=15, justify='r') + '|' + num2char('Vmin', width=15, justify='r') + '|' + &
-                        num2char('Vmax', width=15, justify='r') + '|', blankline=.false.)
+                        num2char('Vmax', width=15, justify='r') + '|')
 
         DO i = 1, SIZE(vmingr)
           CALL update_log(num2char('', width=30, justify='c')  +  &
@@ -923,7 +940,7 @@ MODULE m_source
         CALL update_log(num2char('<triangles>', justify='c', width=30) + num2char('Width', width=15, justify='r') + '|' + &
                         num2char('Heigth', width=15, justify='r') + '|' + num2char('Along u', width=15, justify='r') + '|' + &
                         num2char('Along v', width=15, justify='r') + '|' + num2char('Totals', width=15, justify='r') + '|' +  &
-                        num2char('Nodes', width=15, justify='r') + '|', blankline=.false.)
+                        num2char('Nodes', width=15, justify='r') + '|')
 
         DO i = 1, SIZE(dutr)
           CALL update_log(num2char('', width=30)  +  &
@@ -1599,12 +1616,77 @@ MODULE m_source
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
+    SUBROUTINE ptrsrc_at_nodes(ref, pl, vel, seed)
+
+      ! Purpose:
+      !   to define rupture parameters directly on the mesh nodes for a point-source. Most input arguments are kept to guarantee
+      !   same interface with its finite-fault counterpart. All parameters are assigned by interpolation.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      INTEGER(i32), INTENT(IN) :: ref, pl, vel, seed
+      INTEGER(i32)             :: i, j, ok
+      REAL(r32)                :: u, v, du, x
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      CALL setup_interpolation('linear', 'zero', ok)
+
+      DO j = 1, SIZE(nodes, 2)
+
+        v = vmingr(ref) + (j - 1) * dvtr(ref)
+
+        du = (1 - MOD(j, 2)) * dutr(ref) / 2._r32          !< "du" is 0 for odd "iv", dutr/2 for even "iv"
+
+        DO i = 1, SIZE(nodes, 1) + MOD(j, 2) - 1               !< "i" tops at "nugr" for odd "j", at "nugr-1" for even "j"
+
+          u = umingr + (i - 1) * dutr(ref) + du
+
+          CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%tslip, u, v, x)
+          nodes(i, j)%slip = [x]
+          CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%rupture, u, v, x)
+          nodes(i, j)%rupture = [x]
+          CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%rise, u, v, x)
+          nodes(i, j)%rise = [x]
+
+        ENDDO
+
+      ENDDO
+
+    END SUBROUTINE ptrsrc_at_nodes
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
+    SUBROUTINE dealloc_nodes()
 
+      ! Purpose:
+      !   to completely deallocate the derived array "nodes".
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      INTEGER(i32) :: i, j
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      DO j = 1, SIZE(nodes, 2)
+        DO i = 1, SIZE(nodes, 1) + MOD(j, 2) - 1
+          DEALLOCATE(nodes(i, j)%slip, nodes(i, j)%rupture, nodes(i, j)%rise)
+        ENDDO
+      ENDDO
+
+      DEALLOCATE(nodes)
+
+    END SUBROUTINE dealloc_nodes
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================

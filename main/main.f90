@@ -34,7 +34,7 @@ PROGRAM main
 
   IMPLICIT none
 
-  INTEGER(i32)              :: ierr, rank, ntasks, ok, i0, i1, iter, irec, pl, ivel
+  INTEGER(i32)              :: ierr, rank, ntasks, ok, i0, i1, iter, irec, pl, vlc
   REAL(r64),   DIMENSION(2) :: tictoc
 
   !---------------------------------------------------------------------------------------------------------------------------------
@@ -124,22 +124,24 @@ PROGRAM main
 
     DO pl = 1, SIZE(plane)
 
-      DO ivel = 1, SIZE(input%velocity)
+      DO vlc = 1, SIZE(input%velocity)
 
         CALL update_log(num2char('Iteration for', width=30, fill='.') + num2char('Source #', width=15, justify='r') + '|' +   &
                         num2char('Segment #', width=15, justify='r') + '|' + num2char('Velocity #', width=15, justify='r') + '|')
 
         CALL update_log(num2char('', width=30) + num2char(iter, width=15, justify='r') + '|' +  &
-                        num2char(pl, width=15, justify='r') + '|' + num2char(ivel, width=15, justify='r') + '|', blankline=.false.)
+                        num2char(pl, width=15, justify='r') + '|' + num2char(vlc, width=15, justify='r') + '|', blankline=.false.)
 
-        CALL meshing(pl, ivel)
+        CALL meshing(pl, vlc)
         !CALL roughness(pl, iter)
 
-        CALL rik(ok, pl, ivel, iter)
+        CALL rik(ok, pl, vlc, iter)
 
-        DO irec = 1, SIZE(input%receiver)
-          !IF (input%receiver(irec)%velocity .eq. ivel) CALL quake(irec, pl)
-        ENDDO
+        !CALL solve_isochron_integral(ok, pl, vlc)
+
+        ! DO irec = 1, SIZE(input%receiver)
+        !   !IF (input%receiver(irec)%velocity .eq. vlc) CALL quake(irec, pl)
+        ! ENDDO
 
       ENDDO
 

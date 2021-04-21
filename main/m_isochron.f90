@@ -15,6 +15,7 @@ MODULE m_isochron
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
+  PROCEDURE(rik_at_nodes), POINTER :: nodefun
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -24,10 +25,10 @@ MODULE m_isochron
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE solve_isochron_integral(ok, pl, vel)
+    SUBROUTINE solve_isochron_integral(ok, pl, vel, seed)
 
       INTEGER(i32),                           INTENT(OUT) :: ok
-      INTEGER(i32),                           INTENT(IN)  :: pl, vel
+      INTEGER(i32),                           INTENT(IN)  :: pl, vel, seed
       INTEGER(i32)                                        :: ref, totnutr, i, j
       INTEGER(i32),              DIMENSION(3)             :: iuc, ivc
       REAL(r32),                 DIMENSION(3)             :: slip, dslip, sslip, u, v, rake
@@ -47,7 +48,7 @@ MODULE m_isochron
 
         ALLOCATE(nodes(nugr(ref), nvgr(ref)))
 
-        !CALL nodefun(ref, nodes)               !< define slip, rupture time and rise time on mesh nodes
+        !CALL nodefun(ref, pl, vel, seed)               !< define slip, rupture time and rise time on mesh nodes
 
         totnutr = nvtr(ref) * (2 * nutr(ref) - 1)  !< total triangles in a row
 
@@ -76,7 +77,7 @@ MODULE m_isochron
         ENDDO
         !$omp end parallel do
 
-        DEALLOCATE(nodes)
+        CALL dealloc_nodes()
 
       ENDDO        !< end loop over mesh refinements
 
