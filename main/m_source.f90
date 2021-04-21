@@ -19,8 +19,8 @@ MODULE m_source
 
   PRIVATE
 
-  PUBLIC :: hypocenter, plane, dutr, dvtr, nugr, nvgr, umingr, vmingr, umaxgr, vmaxgr, nodes
-  PUBLIC :: setup_source, meshing, missing_rupture
+  PUBLIC :: hypocenter, plane, dutr, dvtr, nutr, nvtr, nugr, nvgr, umingr, vmingr, umaxgr, vmaxgr, nodes
+  PUBLIC :: setup_source, meshing, missing_rupture, cornr, cornr2uv
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 

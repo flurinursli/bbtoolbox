@@ -28,6 +28,7 @@ MODULE m_rik
   REAL(r32),    PARAMETER :: PI = 3.14159265358979323846_r64
   REAL(r32),    PARAMETER :: DEG_TO_RAD = PI / 180._r32
   REAL(r32),    PARAMETER :: TWOPI = 2._r64 * PI
+  REAL(r32),    PARAMETER :: BIG = HUGE(0._r32)
 
 #ifdef MPI
   INTEGER(i32), PARAMETER :: COMM = MPI_COMM_SELF
@@ -36,7 +37,7 @@ MODULE m_rik
 #endif
 
   INTEGER(i32)                            :: subtot
-  REAL(i32),    ALLOCATABLE, DIMENSION(:) :: su, sv, sradius
+  REAL(r32),    ALLOCATABLE, DIMENSION(:) :: su, sv, sradius
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -51,11 +52,12 @@ MODULE m_rik
       INTEGER(i32),                                     INTENT(OUT) :: ok
       INTEGER(i32),                                     INTENT(IN)  :: pl, vel, iter
       CHARACTER(:), ALLOCATABLE                                     :: fo
-      INTEGER(i32)                                                  :: nu, nv, submin, submax, i, j, slevel, n, lu, seed
+      INTEGER(i32)                                                  :: nu, nv, submin, submax, i, j, slevel, n, lu, seed, ref
+      INTEGER(i32)                                                  :: smax
       INTEGER(i32),              DIMENSION(2)                       :: pos
       INTEGER(i32), ALLOCATABLE, DIMENSION(:)                       :: nsubs
       LOGICAL                                                       :: is_estimated
-      REAL(r32)                                                     :: dh, umin, vmin, umax, vmax, du, dv, cross, lc
+      REAL(r32)                                                     :: dh, umin, vmin, umax, vmax, du, dv, cross
       REAL(r32),                 DIMENSION(1)                       :: x
       REAL(r32),                 DIMENSION(2)                       :: mu, std
       REAL(r32),                 DIMENSION(PDFNU)                   :: u
@@ -90,7 +92,7 @@ MODULE m_rik
 
       ! limit minimum subsource size to average triangular mesh step
       submin = 2
-      submax = NINT((vmax - vmin) / (MINVAL(dutr + dvtr)) / 2)
+      submax = NINT((vmax - vmin) / (MINVAL(dutr + dvtr) / 2)) / 4     !< correspond to min(radius) = half min. wavelength
 
       ALLOCATE(nsubs(submax))
 
@@ -141,7 +143,7 @@ MODULE m_rik
       CALL watch_start(tictoc(1), COMM)
 #endif
 
-      DO     !< cycle until RIK slip model correlates well with input slip model
+      DO     !< cycle until RIK slip model correlates well enough with input slip model
 
         n = 0
 
@@ -150,7 +152,7 @@ MODULE m_rik
 
             n = n + 1
 
-            sradius(n) = (vmax - vmin) / (2 * slevel)          !< subsource radius
+            sradius(n) = (vmax - vmin) / (2 * slevel)          !< subsource radius (slevel = submax -> smallest radius)
 
             DO
 
@@ -160,6 +162,23 @@ MODULE m_rik
 
               su(n) = (pos(1) - 1) * du + umin        !< subsource (center) position
               sv(n) = (pos(2) - 1) * dv + vmin
+
+              DO j = SIZE(vmingr), 1, -1
+                IF (sv(n) .ge. vmingr(j)) THEN
+                  ref = j                          !< mesh refinement index at subsource position
+                  EXIT
+                ENDIF
+              ENDDO
+
+              ! max level determined by mesh at location "su, sv"
+              smax = NINT((vmax - vmin) / ((dutr(ref) + dvtr(ref)) / 2)) / 4
+
+              ! move subsource far away from fault plane if not resolvable: it will not contribute to final slip
+              IF (slevel .gt. smax) THEN
+                su(n) = umax + sradius(1) * 2._r32
+                sv(n) = vmax + sradius(1) * 2._r32
+                EXIT
+              ENDIF
 
               ! accept subsource if located inside strong motion area. This check is necessary because "x" can be very close to 0
               IF ( (su(n) .gt. umin) .and. (su(n) .lt. umax) .and. (sv(n) .gt. vmin) .and. (sv(n) .lt. vmax) ) EXIT
@@ -485,7 +504,7 @@ MODULE m_rik
             ! define slip, rupture time and rise-time on current node
             DO i = 1, subtot
 
-              IF (sub2node(i) .eq. 0._r32) CYCLE       !< skip if current subsource is outside
+              IF (sub2node(i) .eq. 0._r32) CYCLE       !< skip if node is outside current subsource
 
               n = n + 1
 
@@ -502,7 +521,7 @@ MODULE m_rik
               ELSE
 
                 ! add rupture time from random point to current node
-                rupture = subrupt(i) + SQRT((u - pu(n))**2 + (v - pv(n))**2) / subvr
+                rupture = subrupt(i) + SQRT((u - pu(i))**2 + (v - pv(i))**2) / subvr
 
                 rise = input%source%aparam * 2 * sradius(i) / subvr
 
@@ -522,8 +541,8 @@ MODULE m_rik
 
       IF (input%advanced%verbose .eq. 2) THEN
 
-        lvec(:) = HUGE(0._r32)
-        hvec(:) = -lvec(:)
+        lvec(:) = BIG
+        hvec(:) = -BIG
 
         !$omp parallel do default(shared) private(iu, iv) reduction(min:lvec) reduction(max:hvec)
         DO iv = 1, SIZE(nodes, 2)
@@ -633,6 +652,10 @@ MODULE m_rik
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
 
 END MODULE m_rik
