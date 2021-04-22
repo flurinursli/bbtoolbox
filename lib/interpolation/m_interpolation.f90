@@ -38,7 +38,8 @@ MODULE m_interpolation_r32
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
   INTERFACE interpolate
-    MODULE PROCEDURE interp_1d_scalar, interp_2d_scalar, interp_3d_scalar, interp_1d_vector, interp_2d_vector, interp_3d_vector
+    MODULE PROCEDURE interp_1d_scalar, interp_2d_scalar, interp_3d_scalar, interp_1d_vector, interp_2d_vector,     &
+                     interp_2d_vector_plaid, interp_3d_vector_plaid
   END INTERFACE interpolate
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
@@ -410,7 +411,64 @@ MODULE m_interpolation_r32
     SUBROUTINE interp_2d_vector(x, y, f, xo, yo, fo)
 
       ! Purpose:
-      !   To interpolate a function of two variables at a set of points.
+      !   To interpolate a function of two variables at arbitrary points. This subroutine is faster than calling "interp_2d_scalar"
+      !   multiple times when query points "xo/yo" are not too scattered.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   02/09/20                  original version
+      !
+
+      REAL(r__),    DIMENSION(:),                 INTENT(IN)  :: x, y
+      REAL(r__),    DIMENSION(SIZE(x),SIZE(y)),   INTENT(IN)  :: f
+      REAL(r__),    DIMENSION(:),                 INTENT(IN)  :: xo
+      REAL(r__),    DIMENSION(SIZE(xo)),          INTENT(IN)  :: yo
+      REAL(r__),    DIMENSION(SIZE(xo)),          INTENT(OUT) :: fo
+      INTEGER(i32)                                            :: j, n
+      INTEGER(i32)                                            :: i0, j0, j1, tmp
+      REAL(r__),    DIMENSION(2)                              :: fy
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      n = SIZE(y)
+
+      j0 = 0
+
+      !$omp parallel do default(shared) firstprivate(j0) private(j, j1, i0, tmp, fy)
+      DO j = 1, SIZE(yo)
+
+        j0 = hunt(y, yo(j), j0)
+
+        IF (j0 .eq. 0) THEN
+          j0 = 1
+        ELSEIF (j0 .eq. n) THEN
+          j0 = n - 1
+        ENDIF
+
+        j1 = j0 + 1
+
+        i0  = 0
+        tmp = 0
+
+        CALL interp_core(x, f(:, j0), xo(j), fy(1), i0)
+        CALL interp_core(x, f(:, j1), xo(j), fy(2), i0)
+
+        CALL interp_core(y(j0:j1), fy, yo(j), fo(j), tmp)
+
+      ENDDO
+      !$omp end parallel do
+
+    END SUBROUTINE interp_2d_vector
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    SUBROUTINE interp_2d_vector_plaid(x, y, f, xo, yo, fo)
+
+      ! Purpose:
+      !   To interpolate a function of two variables at a regular set of points.
       !
       ! Revisions:
       !     Date                    Description of change
@@ -457,7 +515,7 @@ MODULE m_interpolation_r32
       ENDDO
       !$omp end parallel do
 
-    END SUBROUTINE interp_2d_vector
+    END SUBROUTINE interp_2d_vector_plaid
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
@@ -530,10 +588,10 @@ MODULE m_interpolation_r32
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE interp_3d_vector(x, y, z, f, xo, yo, zo, fo)
+    SUBROUTINE interp_3d_vector_plaid(x, y, z, f, xo, yo, zo, fo)
 
       ! Purpose:
-      !   To interpolate a function of three variables at a set of points.
+      !   To interpolate a function of three variables at a regular set of points.
       !
       ! Revisions:
       !     Date                    Description of change
@@ -608,7 +666,7 @@ MODULE m_interpolation_r32
       !$omp end parallel do
 
 
-    END SUBROUTINE interp_3d_vector
+    END SUBROUTINE interp_3d_vector_plaid
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================

@@ -31,7 +31,7 @@ CPP_OBJ = geo2utm.o
 $(CPP_OBJ) : %.o : %.cpp
 	$(C++) -O3 -c -o $@ $<
 
-OBJ = m_toolbox.o m_userdef.o m_timeseries.o m_roughness.o m_source.o m_noise.o m_rik.o main.o
+OBJ = m_toolbox.o m_userdef.o m_timeseries.o m_roughness.o m_source.o m_noise.o m_rik.o m_isochron.o main.o
 
 main : $(OBJ) $(CPP_OBJ)
 	$(FC) $(OPT) $(OMP) -o ../toolbox.exe $(CPP_OBJ) $(OBJ) -L../lib/common/lib -L../lib/llsq/lib -L../lib/fft/lib -L../lib/interpolation/lib -L../lib/filter/lib -L../lib/rtt/lib -L../lib/rng/lib -L../lib/geometry/lib -L../lib/eikonal/lib -L$(PROJ4_PATH) -L$(TRNG4_PATH)/lib -L$(FFTW_PATH)/lib -L$(LAPACK_PATH) -L$(GSL_PATH) -lcommon -lllsqf -lfilterf -lfft -linterplf -lllsq -lrtt -lrngf -lcompgeof -leikonalf $(LINK_FLAGS) -lgsl -lgslcblas -linterpl -ltrng4 -lstdc++ -lproj

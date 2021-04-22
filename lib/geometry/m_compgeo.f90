@@ -8,7 +8,7 @@ MODULE m_compgeo
 
   PRIVATE
 
-  PUBLIC :: is_triangle_intersection, rotate
+  PUBLIC :: is_triangle_intersection, rotate, trinterpolate
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -28,12 +28,12 @@ MODULE m_compgeo
     FUNCTION tritri(v0, v1, v2, u0, u1, u2) BIND(c, name="NoDivTriTriIsect")
       USE, INTRINSIC     :: iso_c_binding
       USE, NON_INTRINSIC :: m_precisions
-#ifdef DOUBLE_PREC
-      INTEGER, PARAMETER :: c_r__ = c_r64
-#else
-      INTEGER, PARAMETER :: c_r__ = c_r32
-#endif
-      REAL(c_r__),    DIMENSION(3), INTENT(IN) :: v0, v1, v2, u0, u1, u2
+! #ifdef DOUBLE_PREC
+!       INTEGER, PARAMETER :: c_r__ = c_r64
+! #else
+!       INTEGER, PARAMETER :: c_r__ = c_r32
+! #endif
+      REAL(c_r64),    DIMENSION(3), INTENT(IN) :: v0, v1, v2, u0, u1, u2
       LOGICAL(c_bool)                          :: tritri
     END FUNCTION tritri
 
@@ -51,12 +51,26 @@ MODULE m_compgeo
 
     LOGICAL FUNCTION is_triangle_intersection(v0, v1, v2, u0, u1, u2)
 
+      ! Purpose:
+      !   to test whether two triangles, defined by vertices "v0", "v1", "v2", "u0", "u1" and "u2", intersect each other.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
       REAL(r__), DIMENSION(3), INTENT(IN) :: v0, v1, v2
       REAL(r__), DIMENSION(3), INTENT(IN) :: u0, u1, u2
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
+      ! "tritri" works in always in double precision
+#ifdef DOUBLE_PREC
       is_triangle_intersection = tritri(v0, v1, v2, u0, u1, u2)
+#else
+      is_triangle_intersection = tritri(REAL(v0, r64), REAL(v1, r64), REAL(v2, r64), REAL(u0, r64), REAL(u1, r64), REAL(u2, r64))
+#endif
 
     END FUNCTION is_triangle_intersection
 
@@ -120,17 +134,17 @@ MODULE m_compgeo
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
-      mx(:,1) = [1._r32, 0._r32, 0._r32]
-      mx(:,2) = [0._r32, COS(ax), SIN(ax)]
-      mx(:,3) = [0._r32, -SIN(ax), COS(ax)]
+      mx(:,1) = [1._r__, 0._r__, 0._r__]
+      mx(:,2) = [0._r__, COS(ax), SIN(ax)]
+      mx(:,3) = [0._r__, -SIN(ax), COS(ax)]
 
-      my(:,1) = [COS(ay), 0._r32, -SIN(ay)]
-      my(:,2) = [0._r32, 1._r32, 0._r32]
-      my(:,3) = [SIN(ay), 0._r32, COS(ay)]
+      my(:,1) = [COS(ay), 0._r__, -SIN(ay)]
+      my(:,2) = [0._r__, 1._r__, 0._r__]
+      my(:,3) = [SIN(ay), 0._r__, COS(ay)]
 
-      mz(:,1) = [COS(az), SIN(az), 0._r32]
-      mz(:,2) = [-SIN(az), COS(az), 0._r32]
-      mz(:,3) = [0._r32, 0._r32, 1._r32]
+      mz(:,1) = [COS(az), SIN(az), 0._r__]
+      mz(:,2) = [-SIN(az), COS(az), 0._r__]
+      mz(:,3) = [0._r__, 0._r__, 1._r__]
 
       DO i = 1, SIZE(x)
 
@@ -152,13 +166,70 @@ MODULE m_compgeo
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
+    SUBROUTINE tribar(p, a, b, c, u, v, w)
 
+      ! Purpose:
+      !   to return the baricentric coordinates "u/v/w" of point "p" inside a triangle determined by vertices "a/b/c".
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      REAL(r__),   DIMENSION(3), INTENT(IN)  :: p, a, b, c
+      REAL(r__),                 INTENT(OUT) :: u, v, w
+      INTEGER(i32)                           :: i
+      REAL(r__)                              :: d00, d01, d11, d20, d21, den
+      REAL(r__),   DIMENSION(3)              :: v0, v1, v2
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      DO i = 1, 3
+        v0(i) = b(i) - a(i)
+        v1(i) = c(i) - a(i)
+        v2(i) = p(i) - a(i)
+      ENDDO
+
+      d00 = v0(1)*v0(1) + v0(2)*v0(2) + v0(3)*v0(3)
+      d01 = v0(1)*v1(1) + v0(2)*v1(2) + v0(3)*v1(3)
+      d11 = v1(1)*v1(1) + v1(2)*v1(2) + v1(3)*v1(3)
+      d20 = v2(1)*v0(1) + v2(2)*v0(2) + v2(3)*v0(3)
+      d21 = v2(1)*v1(1) + v2(2)*v1(2) + v2(3)*v1(3)
+
+      den = d00 * d11 - d01 * d01
+
+      v = (d11 * d20 - d01 * d21) / den
+      w = (d00 * d21 - d01 * d20) / den
+      u = 1._r__ - v - w
+
+    END SUBROUTINE tribar
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
+    REAL(r__) FUNCTION trinterpolate(p, a, b, c, f)
 
+      ! Purpose:
+      !   to interpolate a field "f" defined at the vertices "a/b/c" of a triangle at point "p" inside the triangle itself.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      REAL(r__), DIMENSION(3), INTENT(IN) :: p, a, b, c, f
+      REAL(r__)                           :: u, v, w
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      CALL tribar(p, a, b, c, u, v, w)
+
+      trinterpolate = u * f(1) + v * f(2) + w * f(3)
+
+    END FUNCTION trinterpolate
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================

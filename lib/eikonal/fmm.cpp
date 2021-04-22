@@ -10,13 +10,13 @@
 
 extern "C"
 {
-  void fmm_c(int gridsize[], real gridstep[], int src[], real* velocity, real* arrivals);
+  void fmm_c(int gridsize[], real gridstep[], int nsrc, int* src, real* values, real* velocity, real* arrivals);
 }
 
 //using namespace std;
 namespace fmm = thinks::fast_marching_method;
 
-void fmm_c(int gridsize[], real gridstep[], int src[], real* velocity, real* arrivals){
+void fmm_c(int gridsize[], real gridstep[], int nsrc, int* src, real* values, real* velocity, real* arrivals){
 
   /*
   std::cout << "gridsize: " << gridsize[0] << " " << gridsize[1] << " " <<
@@ -26,10 +26,18 @@ void fmm_c(int gridsize[], real gridstep[], int src[], real* velocity, real* arr
 
   auto npts = gridsize[0] * gridsize[1];
 
-  // subtract one to take into account that we call from Fortran
-  std::vector<std::array<int32_t, 2>> source_indices { {src[0]-1, src[1]-1} };
+  //std::vector<std::array<int32_t, 2>> source_indices { {src[0]-1, src[1]-1} };
+  //std::vector<real> source_times {0.f};
 
-  std::vector<real> source_times {0.f};
+  // allocate memory
+  std::vector<std::array<int32_t, 2>> source_indices (nsrc);
+  std::vector<real> source_times (nsrc);
+
+  // copy sources and companion initial times, subtract one to take into account that we are calling from Fortran
+  for (int i = 0; i < nsrc; i++){
+    source_indices[i] = {{src[2*i]-1, src[2*i+1]-1}};
+    source_times[i]   = values[i];
+  }
 
   std::array<size_t, 2> grid_size {static_cast<size_t>(gridsize[0]), static_cast<size_t>(gridsize[1])};
 

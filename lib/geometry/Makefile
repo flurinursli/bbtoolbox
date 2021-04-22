@@ -26,7 +26,7 @@ CPP_OBJS = opttritri.o
 
 # compile C++ objects
 $(CPP_OBJS) : %.o : %.cpp
-	$(CXX) -O2 -cpp $(PP_FLAGS) $(INCL) -c -o $@ $<
+	$(CXX) -O3 -cpp -DDOUBLE_PREC $(INCL) -c -o $@ $<
 
 # define list of Fortran + C objects
 OBJS = $(F90_OBJS)

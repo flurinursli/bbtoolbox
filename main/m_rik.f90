@@ -198,7 +198,7 @@ MODULE m_rik
           ENDDO
         ENDDO
 
-        !$omp parallel do default(shared) private(i, j)
+        !$omp parallel do default(shared) private(i, j) collapse(2)
         DO j = 1, PDFNV
           DO i = 1, PDFNU
             slip(i, j) = total_slip(u(i), v(j))
