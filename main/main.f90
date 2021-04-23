@@ -26,6 +26,7 @@ PROGRAM main
   USE, NON_INTRINSIC :: m_precisions
   USE, NON_INTRINSIC :: m_toolbox
   USE, NON_INTRINSIC :: m_source
+  USE, NON_INTRINSIC :: m_isochron
   USE, NON_INTRINSIC :: m_logfile
   USE, NON_INTRINSIC :: m_strings
   USE, NON_INTRINSIC :: m_noise
@@ -136,6 +137,10 @@ PROGRAM main
         !CALL roughness(pl, iter)
 
         CALL rik(ok, pl, vlc, iter)
+
+#ifdef DEBUG
+        CALL node2disk(ok, pl, vlc, iter)
+#endif
 
         !CALL solve_isochron_integral(ok, pl, vlc)
 

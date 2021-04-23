@@ -19,7 +19,7 @@ F90_OBJS = m_compgeo.o
 geometry: dirs $(LIB_NAME)
 
 $(F90_OBJS) : %.o : %.f90
-	$(FC) $(OPT) -cpp $(PP_FLAGS) -I../common/include -c -o $@ $<
+	$(FC) $(OPT) -fopenmp -cpp $(PP_FLAGS) -I../common/include -c -o $@ $<
 
 # list C++ objects
 CPP_OBJS = opttritri.o

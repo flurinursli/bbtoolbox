@@ -20,7 +20,13 @@ MODULE m_source
   PRIVATE
 
   PUBLIC :: hypocenter, plane, dutr, dvtr, nutr, nvtr, nugr, nvgr, umingr, vmingr, umaxgr, vmaxgr, nodes
-  PUBLIC :: setup_source, meshing, missing_rupture, dealloc_nodes, cornr, cornr2uv
+  PUBLIC :: setup_source, meshing, missing_rupture, dealloc_nodes, cornr, cornr2uv, uv2xyz, vinterp, ptrsrc_at_nodes
+
+  ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+
+  INTERFACE uv2xyz
+    MODULE PROCEDURE uv2xyz_scalar, uv2xyz_vector
+  END INTERFACE uv2xyz
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -1747,7 +1753,7 @@ MODULE m_source
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE uv2xyz(pl, u, v, x, y, z)
+    SUBROUTINE uv2xyz_scalar(pl, u, v, x, y, z)
 
       ! Purpose:
       !   to convert on-fault coordinates "u/v" for fault plane "pl" to cartesian ones "x/y/z".
@@ -1774,13 +1780,45 @@ MODULE m_source
       y = y + plane(pl)%y
       z = z + plane(pl)%z
 
-    END SUBROUTINE uv2xyz
+    END SUBROUTINE uv2xyz_scalar
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
+    SUBROUTINE uv2xyz_vector(pl, u, v, x, y, z)
 
+      ! Purpose:
+      !   to convert on-fault coordinates "u/v" for fault plane "pl" to cartesian ones "x/y/z".
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      INTEGER(i32),                     INTENT(IN)  :: pl
+      REAL(r32),    DIMENSION(:),       INTENT(IN)  :: u, v
+      REAL(r32),    DIMENSION(SIZE(u)), INTENT(OUT) :: x, y, z
+      INTEGER(i32)                                  :: i
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      DO i = 1, SIZE(x)
+        x(i) = u(i)
+        y(i) = v(i)
+        z(i) = 0._r32
+      ENDDO
+
+      CALL rotate(x, y, z, plane(pl)%dip, 0._r32, plane(pl)%strike)
+
+      DO i = 1, SIZE(x)
+        x(i) = x(i) + plane(pl)%x                !< translate according to absolute position of reference point
+        y(i) = y(i) + plane(pl)%y
+        z(i) = z(i) + plane(pl)%z
+      ENDDO
+
+    END SUBROUTINE uv2xyz_vector
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================

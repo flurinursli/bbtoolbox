@@ -264,25 +264,25 @@ MODULE m_rik
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! ------------------------------------------- generate rupture model on grid -------------------------------------------------
 
-      DO i = 1, SIZE(nugr)
-
-#ifdef PERF
-        CALL watch_start(tictoc(3), COMM)
-#endif
-
-        ALLOCATE(nodes(nugr(i), nvgr(i)))
-
-        CALL rik_at_nodes(i, pl, vel, seed)
-
-        CALL dealloc_nodes()
-
-#ifdef PERF
-        CALL watch_stop(tictoc(3), COMM)
-        CALL update_log(num2char('<<elapsed time>>', justify='c', width=30) + num2char(tictoc(3), width=15, notation='f',   &
-                        precision=3, justify='r') + '|', blankline=.false.)
-#endif
-
-      ENDDO
+!       DO i = 1, SIZE(nugr)
+!
+! #ifdef PERF
+!         CALL watch_start(tictoc(3), COMM)
+! #endif
+!
+!         ALLOCATE(nodes(nugr(i), nvgr(i)))
+!
+!         CALL rik_at_nodes(i, pl, vel, seed)
+!
+!         CALL dealloc_nodes()
+!
+! #ifdef PERF
+!         CALL watch_stop(tictoc(3), COMM)
+!         CALL update_log(num2char('<<elapsed time>>', justify='c', width=30) + num2char(tictoc(3), width=15, notation='f',   &
+!                         precision=3, justify='r') + '|', blankline=.false.)
+! #endif
+!
+!       ENDDO
 
     END SUBROUTINE rik
 
@@ -511,7 +511,7 @@ MODULE m_rik
 
             nodes(iu, iv)%slip = 0._r32
             nodes(iu, iv)%rupture = rupture
-            nodes(iu, iv)%rise = 1._r32
+            nodes(iu, iv)%rise = 0._r32
 
           !... otherwise evaluate and store the contribution of each subsource
           ELSE
@@ -637,35 +637,35 @@ MODULE m_rik
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    REAL(r32) FUNCTION vinterp(ztop, phys, gradient, z, layer)
-
-      ! Purpose:
-      !   to return a physical property (e.g. velocity, density, etc) at depth "z" given a model where property "phys", gradient
-      !   "gradient" and depth to layer "ztop" are defined for each layer. The layer number at depth "z" may be returned as well in
-      !   variable "layer".
-      !
-      ! Revisions:
-      !     Date                    Description of change
-      !     ====                    =====================
-      !   08/03/21                  original version
-      !
-
-      REAL(r32),    DIMENSION(:),           INTENT(IN)  :: ztop, phys, gradient
-      REAL(r32),                            INTENT(IN)  :: z
-      INTEGER(i32),               OPTIONAL, INTENT(OUT) :: layer
-      INTEGER(i32)                          :: i
-
-      !-----------------------------------------------------------------------------------------------------------------------------
-
-      DO i = SIZE(ztop), 1, -1
-        IF (z .ge. ztop(i)) THEN
-          vinterp = phys(i) + gradient(i)*(z - ztop(i))
-          IF (PRESENT(layer)) layer = i
-          EXIT
-        ENDIF
-      ENDDO
-
-    END FUNCTION vinterp
+    ! REAL(r32) FUNCTION vinterp(ztop, phys, gradient, z, layer)
+    !
+    !   ! Purpose:
+    !   !   to return a physical property (e.g. velocity, density, etc) at depth "z" given a model where property "phys", gradient
+    !   !   "gradient" and depth to layer "ztop" are defined for each layer. The layer number at depth "z" may be returned as well in
+    !   !   variable "layer".
+    !   !
+    !   ! Revisions:
+    !   !     Date                    Description of change
+    !   !     ====                    =====================
+    !   !   08/03/21                  original version
+    !   !
+    !
+    !   REAL(r32),    DIMENSION(:),           INTENT(IN)  :: ztop, phys, gradient
+    !   REAL(r32),                            INTENT(IN)  :: z
+    !   INTEGER(i32),               OPTIONAL, INTENT(OUT) :: layer
+    !   INTEGER(i32)                          :: i
+    !
+    !   !-----------------------------------------------------------------------------------------------------------------------------
+    !
+    !   DO i = SIZE(ztop), 1, -1
+    !     IF (z .ge. ztop(i)) THEN
+    !       vinterp = phys(i) + gradient(i)*(z - ztop(i))
+    !       IF (PRESENT(layer)) layer = i
+    !       EXIT
+    !     ENDIF
+    !   ENDDO
+    !
+    ! END FUNCTION vinterp
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================

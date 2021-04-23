@@ -37,7 +37,7 @@ MODULE m_toolbox
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
-  REAL(r32), PARAMETER :: DEFAULT_VPGRAD = 0.01_r32, DEFAULT_VSGRAD = 0.01_r32
+  REAL(r32), PARAMETER :: DEFAULT_VPGRAD = 0.01_r32, DEFAULT_VSGRAD = 0.01_r32, DEFAULT_RHOGRAD = 0._r32
 
   TYPE :: src
     CHARACTER(8)   :: type = "Brune"
@@ -60,7 +60,7 @@ MODULE m_toolbox
   END TYPE att
 
   TYPE :: mdl
-    REAL(r32), ALLOCATABLE, DIMENSION(:) :: vp, vs, rho, depth, vpgrad, vsgrad
+    REAL(r32), ALLOCATABLE, DIMENSION(:) :: vp, vs, rho, depth, vpgrad, vsgrad, rhograd
   END TYPE mdl
 
   TYPE :: io
@@ -164,7 +164,7 @@ MODULE m_toolbox
       CHARACTER(64)                                         :: fo
       CHARACTER(:), ALLOCATABLE                             :: str
       INTEGER(i32)                                          :: lu, n, i, p
-      REAL(r32)                                             :: z, lon, lat, vp, vs, rho, vpgrad, vsgrad, freq
+      REAL(r32)                                             :: z, lon, lat, vp, vs, rho, vpgrad, vsgrad, rhograd, freq
       REAL(r32),    ALLOCATABLE, DIMENSION(:,:)             :: fbands
 
       !-----------------------------------------------------------------------------------------------------------------------------
@@ -289,6 +289,13 @@ MODULE m_toolbox
 
         IF (is_empty(vsgrad)) vsgrad = DEFAULT_VSGRAD
 
+        CALL parse(ok, rhograd, lu, 'rhograd', ['=', ' '], 'layer', nkey = i, com = '#')
+        CALL missing_arg(ok, .false., '')
+
+        IF (ok .ne. 0) RETURN
+
+        IF (is_empty(rhograd)) rhograd = DEFAULT_RHOGRAD
+
         CALL parse(ok, vp, lu, 'vp', ['=', ' '], 'layer', nkey = i, com = '#')     !< vp
         CALL missing_arg(ok, is_empty(vp), 'Argument "vp" for layer keyword #' + num2char(i) + 'not found')
 
@@ -310,6 +317,7 @@ MODULE m_toolbox
           input%velocity(p)%rho = [rho]
           input%velocity(p)%vpgrad = [vpgrad]
           input%velocity(p)%vsgrad = [vsgrad]
+          input%velocity(p)%rhograd = [rhograd]
           ! IF (.not.is_empty(z)) input%velocity(p)%depth  = [z]
           input%velocity(p)%depth  = [z]
 
@@ -319,6 +327,7 @@ MODULE m_toolbox
           input%velocity(p)%rho = [input%velocity(p)%rho, rho]
           input%velocity(p)%vpgrad = [input%velocity(p)%vpgrad, vpgrad]
           input%velocity(p)%vsgrad = [input%velocity(p)%vsgrad, vsgrad]
+          input%velocity(p)%rhograd = [input%velocity(p)%rhograd, rhograd]
           ! IF (.not.is_empty(z)) input%velocity(p)%depth = [input%velocity(p)%depth, z]
           input%velocity(p)%depth = [input%velocity(p)%depth, z]
 

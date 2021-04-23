@@ -1,5 +1,6 @@
 MODULE m_compgeo
 
+  USE                :: omp_lib
   USE, NON_INTRINSIC :: m_precisions
 
   IMPLICIT none
@@ -23,7 +24,11 @@ MODULE m_compgeo
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
-  INTERFACE
+  INTERFACE rotate
+    MODULE PROCEDURE rotate_scalar, rotate_vector
+  END INTERFACE rotate
+
+  INTERFACE cplus
 
     FUNCTION tritri(v0, v1, v2, u0, u1, u2) BIND(c, name="NoDivTriTriIsect")
       USE, INTRINSIC     :: iso_c_binding
@@ -37,11 +42,7 @@ MODULE m_compgeo
       LOGICAL(c_bool)                          :: tritri
     END FUNCTION tritri
 
-  END INTERFACE
-
-  INTERFACE rotate
-    MODULE PROCEDURE rotate_scalar, rotate_vec
-  END INTERFACE rotate
+  END INTERFACE cplus
 
   CONTAINS
 
@@ -91,21 +92,34 @@ MODULE m_compgeo
       !   08/03/21                  original version
       !
 
-      REAL(r__),                INTENT(INOUT) :: x, y, z
-      REAL(r__),                INTENT(IN)    :: ax, ay, az
-      REAL(r__), DIMENSION(1)                 :: xv, yv, zv
+      REAL(r__),                  INTENT(INOUT) :: x, y, z
+      REAL(r__),                  INTENT(IN)    :: ax, ay, az
+      REAL(r__),   DIMENSION(3)                 :: v
+      REAL(r__),   DIMENSION(3,3)               :: mx, my, mz
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
-      xv = [x]
-      yv = [y]
-      zv = [z]
+      mx(:,1) = [1._r__, 0._r__, 0._r__]
+      mx(:,2) = [0._r__, COS(ax), SIN(ax)]
+      mx(:,3) = [0._r__, -SIN(ax), COS(ax)]
 
-      CALL rotate(xv, yv, zv, ax, ay, az)
+      my(:,1) = [COS(ay), 0._r__, -SIN(ay)]
+      my(:,2) = [0._r__, 1._r__, 0._r__]
+      my(:,3) = [SIN(ay), 0._r__, COS(ay)]
 
-      x = xv(1)
-      y = yv(1)
-      z = zv(1)
+      mz(:,1) = [COS(az), SIN(az), 0._r__]
+      mz(:,2) = [-SIN(az), COS(az), 0._r__]
+      mz(:,3) = [0._r__, 0._r__, 1._r__]
+
+      v = [x, y, z]
+
+      v = MATMUL(mx, v)
+      v = MATMUL(my, v)
+      v = MATMUL(mz, v)
+
+      x = v(1)
+      y = v(2)
+      z = v(3)
 
     END SUBROUTINE rotate_scalar
 
@@ -113,7 +127,7 @@ MODULE m_compgeo
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE rotate_vec(x, y, z, ax, ay, az)
+    SUBROUTINE rotate_vector(x, y, z, ax, ay, az)
 
       ! Purpose:
       !   to perform the 3-2-1 intrinsic rotation of a point whose initial position is given by "x", "y" and "z", according to angles
@@ -160,16 +174,16 @@ MODULE m_compgeo
 
       ENDDO
 
-    END SUBROUTINE rotate_vec
+    END SUBROUTINE rotate_vector
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE tribar(p, a, b, c, u, v, w)
+    SUBROUTINE tribar(p, a, b, c, bar)
 
       ! Purpose:
-      !   to return the baricentric coordinates "u/v/w" of point "p" inside a triangle determined by vertices "a/b/c".
+      !   to return the baricentric coordinates "bar" of point "p" inside a triangle determined by vertices "a/b/c".
       !
       ! Revisions:
       !     Date                    Description of change
@@ -178,9 +192,9 @@ MODULE m_compgeo
       !
 
       REAL(r__),   DIMENSION(3), INTENT(IN)  :: p, a, b, c
-      REAL(r__),                 INTENT(OUT) :: u, v, w
+      REAL(r__),   DIMENSION(3), INTENT(OUT) :: bar
       INTEGER(i32)                           :: i
-      REAL(r__)                              :: d00, d01, d11, d20, d21, den
+      REAL(r__)                              :: d00, d01, d11, d20, d21, den, u, v, w
       REAL(r__),   DIMENSION(3)              :: v0, v1, v2
 
       !-----------------------------------------------------------------------------------------------------------------------------
@@ -203,6 +217,8 @@ MODULE m_compgeo
       w = (d00 * d21 - d01 * d20) / den
       u = 1._r__ - v - w
 
+      bar = [u, v, w]
+
     END SUBROUTINE tribar
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
@@ -221,13 +237,13 @@ MODULE m_compgeo
       !
 
       REAL(r__), DIMENSION(3), INTENT(IN) :: p, a, b, c, f
-      REAL(r__)                           :: u, v, w
+      REAL(r__), DIMENSION(3)             :: u
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
-      CALL tribar(p, a, b, c, u, v, w)
+      CALL tribar(p, a, b, c, u)
 
-      trinterpolate = u * f(1) + v * f(2) + w * f(3)
+      trinterpolate = DOT_PRODUCT(u, f)
 
     END FUNCTION trinterpolate
 
