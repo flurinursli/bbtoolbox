@@ -122,14 +122,14 @@ MODULE m_isochron
 
       fo = 'node_' + num2char(pl) + '_' + num2char(vel) + '_' + num2char(iter) + '.bin'
 
-      OPEN(newunit = lu, file = fo, status = 'unknown', form = 'unformatted', access = 'stream', action = 'write', IOSTAT = ok)
+      OPEN(newunit = lu, file = fo, status = 'replace', form = 'unformatted', access = 'stream', action = 'write', IOSTAT = ok)
 
       IF (ok .ne. 0) THEN
         CALL report_error('Error while opening file' + TRIM(fo))
         RETURN
       ENDIF
 
-      WRITE(lu) SUM([nvtr * (2 * nutr - 1)])         !< total number of triangles (all refinements)
+      WRITE(lu, POS=1) SUM([nvtr * (2 * nutr - 1)])         !< total number of triangles (all refinements)
 
       moment = 0._r32
 
