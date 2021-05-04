@@ -92,11 +92,11 @@ MODULE m_rik
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! --------------------------------------------------- slip-based cpdf  -------------------------------------------------------
 
-      ! define strong motion area: in our case we consider the whole input fault plane excluding only edges where slip was set to 0
-      umin = plane(pl)%u(2)
-      vmin = plane(pl)%v(2)
-      umax = plane(pl)%u(nu - 1)
-      vmax = plane(pl)%v(nv - 1)
+      ! define strong motion area: in our case we consider the whole input fault plane
+      umin = plane(pl)%u(1)
+      vmin = plane(pl)%v(1)
+      umax = plane(pl)%u(nu)
+      vmax = plane(pl)%v(nv)
 
       CALL fillpdf(pl, umin, umax, vmin, vmax, cpdf)                  !< slip-based cpdf based on strong-motion area
 
@@ -190,7 +190,7 @@ MODULE m_rik
                 EXIT
               ENDIF
 
-              ! accept subsource if located inside strong motion area. This check is necessary because "x" can be very close to 0
+              ! accept subsource if located inside strong motion area
               IF ( (su(n) .gt. umin) .and. (su(n) .lt. umax) .and. (sv(n) .gt. vmin) .and. (sv(n) .lt. vmax) ) EXIT
 
             ENDDO
@@ -227,6 +227,7 @@ MODULE m_rik
                           num2char(cross, width=15, notation='f', precision=3, justify='r') + '|')
         ENDIF
 
+! exit
         IF (cross .ge. input%source%correlation) EXIT
 
       ENDDO
@@ -425,8 +426,8 @@ MODULE m_rik
 
       nrefs = SIZE(vmaxgr)          !< number of mesh refinements
 
-      umin = plane(pl)%u(2)
-      umax = plane(pl)%u(SIZE(plane(pl)%u)-1)
+      umin = plane(pl)%u(1)
+      umax = plane(pl)%u(SIZE(plane(pl)%u))
 
       lc = input%source%l0 * (umax - umin)          !< rescale "l0" after strong motion area
 

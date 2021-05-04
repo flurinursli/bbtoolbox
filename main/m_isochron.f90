@@ -150,7 +150,7 @@ MODULE m_isochron
 
         m0 = 0._r32
 
-        !$omp parallel do default(shared) private(i, j, iuc, ivc, slip, rise, rupture, icr, u, v, x, y, z, beta, rho, mu)   &
+        !$omp parallel do ordered default(shared) private(i, j, iuc, ivc, slip, rise, rupture, icr, u, v, x, y, z, beta, rho, mu)  &
         !$omp& reduction(+:m0) collapse(2)
         DO j = 1, nvtr(ref)
           DO i = 1, totnutr
@@ -175,9 +175,11 @@ MODULE m_isochron
 
             CALL uv2xyz(pl, u, v, x, y, z)            !< cartesian coordinates
 
-            !$omp critical
+            !!$omp critical
+            !$omp ordered
             WRITE(lu) x, y, z, slip, rise, rupture
-            !$omp end critical
+            !$omp end ordered
+            !!$omp end critical
 
             beta = 0._r32
             rho  = 0._r32
@@ -199,7 +201,7 @@ MODULE m_isochron
 
         CALL dealloc_nodes()
 
-        moment = moment + m0 * dutr(ref) * dvtr(ref)
+        moment = moment + m0 * dutr(ref) * dvtr(ref) * 0.5_r32
 
       ENDDO        !< end loop over mesh refinements
 

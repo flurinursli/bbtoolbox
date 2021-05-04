@@ -188,7 +188,8 @@ MODULE m_source
                           blankline=.false.)
         ELSE
           CALL update_log(num2char('Total moment (Nm)', width=30, fill='.') +   &
-                          num2char(plane(1)%targetm0, width=15, notation='s', precision=3, justify='r') + '|', blankline=.false.)
+                          num2char(SUM(plane(:)%targetm0), width=15, notation='s', precision=3, justify='r') + '|',   &
+                          blankline=.false.)
         ENDIF
 
         CALL update_log(num2char('Fault segment', width=30, fill='.') +   &
@@ -232,7 +233,7 @@ MODULE m_source
       CHARACTER(256)                                       :: buffer
       INTEGER(i32)                                         :: lu, i, j, k, n, nu, nv, ntw, nsbfs, ios, index, islip, irake, irupt
       INTEGER(i32)                                         :: irise, iplane, ilon, ilat, iz
-      REAL(r32)                                            :: strike, dip, rake, m0, du, dv, length, width, ew, ns
+      REAL(r32)                                            :: strike, dip, rake, m0, du, dv, length, width, ew, ns, cslip
       REAL(r32),     ALLOCATABLE, DIMENSION(:)             :: numeric
 
       !-----------------------------------------------------------------------------------------------------------------------------
@@ -384,7 +385,7 @@ MODULE m_source
                   plane(k)%dslip(i, j) = -numeric(islip) * SIN(rake)          !< in our system slip is positive down-dip
                   plane(k)%tslip(i, j) = numeric(islip)                       !< total slip
 
-                  plane(k)%rise(i, j)    = input%source%freq
+                  plane(k)%rise(i, j) = input%source%freq
 
                   plane(k)%is_rupture_missing = .true.
 
@@ -435,6 +436,17 @@ MODULE m_source
         CALL report_error('Error while closing file ' + TRIM(input%source%file))
         RETURN
       ENDIF
+
+      cslip = 0._r32
+
+      DO k = 1, SIZE(plane)
+        cslip = cslip + SUM(plane(k)%tslip)
+      ENDDO
+
+      ! rescale moment for each plane based on slip only
+      DO k = 1, SIZE(plane)
+        plane(k)%targetm0 = plane(k)%targetm0 * SUM(plane(k)%tslip) / cslip
+      ENDDO
 
     END SUBROUTINE read_fsp_file
 
@@ -1465,19 +1477,19 @@ MODULE m_source
           ENDDO
 
           IF (time .ge. 0._r32) THEN
-            IF (ALLOCATED(uc)) THEN
-              uc = [uc, i]
-              vc = [vc, j]
-              uo = [uo, uf]             !< needed only if DEBUG is on
-              vo = [vo, vf]
-              t0 = [t0, time]
-            ELSE
+            ! IF (ALLOCATED(uc)) THEN
+            !   uc = [uc, i]
+            !   vc = [vc, j]
+            !   uo = [uo, uf]             !< needed only if DEBUG is on
+            !   vo = [vo, vf]
+            !   t0 = [t0, time]
+            ! ELSE
               uc = [i]
               vc = [j]
               uo = [uf]             !< needed only if DEBUG is on
               vo = [vf]
               t0 = [time]
-            ENDIF
+            ! ENDIF
           ENDIF
 
         ENDDO
@@ -1767,6 +1779,7 @@ MODULE m_source
       INTEGER(i32), INTENT(IN)  :: pl
       REAL(r32),    INTENT(IN)  :: u, v
       REAL(r32),    INTENT(OUT) :: x, y, z
+      REAL(r32)                 :: dip, strike
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
@@ -1774,7 +1787,10 @@ MODULE m_source
       y = v
       z = 0._r32
 
-      CALL rotate(x, y, z, plane(pl)%dip, 0._r32, plane(pl)%strike)
+      dip    = plane(pl)%dip * DEG_TO_RAD
+      strike = plane(pl)%strike * DEG_TO_RAD
+
+      CALL rotate(x, y, z, dip, 0._r32, strike)
 
       x = x + plane(pl)%x                !< translate according to absolute position of reference point
       y = y + plane(pl)%y
@@ -1801,6 +1817,7 @@ MODULE m_source
       REAL(r32),    DIMENSION(:),       INTENT(IN)  :: u, v
       REAL(r32),    DIMENSION(SIZE(u)), INTENT(OUT) :: x, y, z
       INTEGER(i32)                                  :: i
+      REAL(r32)                                     :: strike, dip
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
@@ -1810,7 +1827,10 @@ MODULE m_source
         z(i) = 0._r32
       ENDDO
 
-      CALL rotate(x, y, z, plane(pl)%dip, 0._r32, plane(pl)%strike)
+      dip    = plane(pl)%dip * DEG_TO_RAD
+      strike = plane(pl)%strike * DEG_TO_RAD
+
+      CALL rotate(x, y, z, dip, 0._r32, strike)
 
       DO i = 1, SIZE(x)
         x(i) = x(i) + plane(pl)%x                !< translate according to absolute position of reference point
