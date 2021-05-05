@@ -1,5 +1,6 @@
 MODULE m_stat
 
+  USE                :: omp_lib
   USE, NON_INTRINSIC :: m_precisions
 
   IMPLICIT none

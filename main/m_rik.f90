@@ -24,6 +24,7 @@ MODULE m_rik
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
   INTEGER(i32), PARAMETER :: PDFNU = 200, PDFNV = 100
+  INTEGER(i32), PARAMETER :: MAXCOR = 100
   REAL(r32),    PARAMETER :: PI = 3.14159265358979323846_r64
   REAL(r32),    PARAMETER :: DEG_TO_RAD = PI / 180._r32
   REAL(r32),    PARAMETER :: TWOPI = 2._r64 * PI
@@ -60,7 +61,7 @@ MODULE m_rik
       INTEGER(i32),                                     INTENT(OUT) :: ok
       INTEGER(i32),                                     INTENT(IN)  :: pl, vel, iter
       CHARACTER(:), ALLOCATABLE                                     :: fo
-      INTEGER(i32)                                                  :: nu, nv, submin, submax, i, j, slevel, n, lu, seed, ref
+      INTEGER(i32)                                                  :: nu, nv, submin, submax, i, j, slevel, n, lu, seed, ref, k
       INTEGER(i32)                                                  :: smax
       INTEGER(i32),              DIMENSION(2)                       :: pos
       INTEGER(i32), ALLOCATABLE, DIMENSION(:)                       :: nsubs
@@ -79,8 +80,8 @@ MODULE m_rik
 
       IF (ALLOCATED(su)) DEALLOCATE(su, sv, sradius)      !< free resources from previous call to "rik"
 
-      ! set "seed" such that random numbers depend on fault plane number and iteration
-      seed = input%source%seed + (iter - 1) * SIZE(plane) + pl
+      ! set "seed" such that random numbers depend on iteration
+      seed = input%source%seed + iter
 
       ! average grid-step in input slip model
       dh = (plane(pl)%u(3) - plane(pl)%u(2)) + (plane(pl)%v(3) - plane(pl)%v(2))
@@ -92,7 +93,8 @@ MODULE m_rik
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! --------------------------------------------------- slip-based cpdf  -------------------------------------------------------
 
-      ! define strong motion area: in our case we consider the whole input fault plane
+      ! define strong motion area: in our case we consider the whole input fault plane. RIK subsources can be located anywhere on
+      ! the plane, guided only by the underlying slip distribution.
       umin = plane(pl)%u(1)
       vmin = plane(pl)%v(1)
       umax = plane(pl)%u(nu)
@@ -147,13 +149,25 @@ MODULE m_rik
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! ------------------------------------------------ generate slip model  ------------------------------------------------------
 
-      CALL setup_rng(ok, 'uniform', 0._r32, 1._r32, seed)         !< initialise random number generator
+      ! CALL setup_rng(ok, 'uniform', 0._r32, 1._r32, seed)         !< initialise random number generator
 
 #ifdef PERF
       CALL watch_start(tictoc(1), COMM)
 #endif
 
-      DO     !< cycle until RIK slip model correlates well enough with input slip model
+      ! try up to "MAXCOR" attempts in order to generate a slip model that correlates well with input one. In general, only planes
+      ! with somewhat flat slip distributions may require more than one iteration
+      DO k = 1, MAXCOR
+
+        ! make sure that sources distribution for a given plane is identical for same "slevel". This way changing velocity model (i.e.
+        ! mesh refinement) should play only a minor role.
+        CALL setup_rng(ok, 'uniform', 0._r32, 1._r32, seed, streams = MAXCOR, nostream = k - 1)
+
+      ! DO     !< cycle until RIK slip model correlates well enough with input slip model
+      !
+      !   seed = seed + 1
+      !
+      !   CALL setup_rng(ok, 'uniform', 0._r32, 1._r32, seed)         !< initialise random number generator
 
         n = 0
 
@@ -164,7 +178,7 @@ MODULE m_rik
 
             sradius(n) = (vmax - vmin) / (2 * slevel)          !< subsource radius (slevel = submax -> smallest radius)
 
-            DO
+            ! DO
 
               CALL rng(x, 1)
 
@@ -175,7 +189,7 @@ MODULE m_rik
 
               DO j = SIZE(vmingr), 1, -1
                 IF (sv(n) .ge. vmingr(j)) THEN
-                  ref = j                          !< mesh refinement index at subsource position
+                  ref = j                             !< find mesh refinement index at subsource position
                   EXIT
                 ENDIF
               ENDDO
@@ -187,13 +201,13 @@ MODULE m_rik
               IF (slevel .gt. smax) THEN
                 su(n) = umax + sradius(1) * 2._r32
                 sv(n) = vmax + sradius(1) * 2._r32
-                EXIT
+                ! EXIT
               ENDIF
 
               ! accept subsource if located inside strong motion area
-              IF ( (su(n) .gt. umin) .and. (su(n) .lt. umax) .and. (sv(n) .gt. vmin) .and. (sv(n) .lt. vmax) ) EXIT
+              ! IF ( (su(n) .gt. umin) .and. (su(n) .lt. umax) .and. (sv(n) .gt. vmin) .and. (sv(n) .lt. vmax) ) EXIT
 
-            ENDDO
+            ! ENDDO
 
           ENDDO
         ENDDO
@@ -222,15 +236,31 @@ MODULE m_rik
 
         cross = cross / PRODUCT(std) / (PDFNU * PDFNV)     !< zero-normalized cross-correlation
 
-        IF (input%advanced%verbose .eq. 2) THEN
-          CALL update_log(num2char('<slip correlation>', justify='c', width=30) +    &
-                          num2char(cross, width=15, notation='f', precision=3, justify='r') + '|')
-        ENDIF
+        ! IF (input%advanced%verbose .eq. 2) THEN
+        !   CALL update_log(num2char('<slip correlation>', justify='c', width=30) +    &
+        !                   num2char(cross, width=15, notation='f', precision=3, justify='r') + '|')
+        ! ENDIF
 
-! exit
         IF (cross .ge. input%source%correlation) EXIT
 
       ENDDO
+
+      IF (k .gt. MAXCOR) THEN
+        CALL report_error('rik - ERROR: maximum number of iterations reached')
+        ok = 1
+        RETURN
+      ENDIF
+
+      IF (input%advanced%verbose .eq. 2) THEN
+        CALL update_log(num2char('<correlation>', justify='c', width=30) +   &
+                        num2char('Value', width=15, justify='r') + '|' + &
+                        num2char('Iterations', width=15, justify='r') + '|')
+
+        CALL update_log(num2char('', width=30)  +  &
+                        num2char(cross, width=15, justify='r', notation='f', precision=3) + '|' + &
+                        num2char(k, width=15, justify='r') + '|', blankline=.false.)
+      ENDIF
+
 
 #ifdef PERF
       CALL watch_stop(tictoc(1), COMM)

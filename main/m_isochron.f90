@@ -4,6 +4,7 @@ MODULE m_isochron
   USE, NON_INTRINSIC :: m_precisions
   USE, NON_INTRINSIC :: m_interpolation_r32
   USE, NON_INTRINSIC :: m_compgeo
+  USE, NON_INTRINSIC :: m_stat
   USE, NON_INTRINSIC :: m_source
   USE, NON_INTRINSIC :: m_rik
   USE, NON_INTRINSIC :: m_toolbox
@@ -131,6 +132,8 @@ MODULE m_isochron
 
       WRITE(lu, POS=1) SUM([nvtr * (2 * nutr - 1)])         !< total number of triangles (all refinements)
 
+      WRITE(lu) SIZE(nvtr)
+
       moment = 0._r32
 
       nodefun => rik_at_nodes
@@ -144,11 +147,13 @@ MODULE m_isochron
 
         ALLOCATE(nodes(nugr(ref), nvgr(ref)))
 
-        CALL nodefun(ref, pl, vel, seed)               !< define slip, rupture time and rise time on mesh nodes
+        CALL nodefun(ref, pl, vel, seed)                !< define slip, rupture time and rise time on mesh nodes
 
         totnutr = 2 * nutr(ref) - 1                     !< total triangles in a row
 
         m0 = 0._r32
+
+        WRITE(lu) nvtr(ref), nutr(ref)
 
         !$omp parallel do ordered default(shared) private(i, j, iuc, ivc, slip, rise, rupture, icr, u, v, x, y, z, beta, rho, mu)  &
         !$omp& reduction(+:m0) collapse(2)
@@ -163,7 +168,7 @@ MODULE m_isochron
 
             DO icr = 1, 3
               slip    = slip + SUM(nodes(iuc(icr), ivc(icr))%slip)
-              rise    = rise + SUM(nodes(iuc(icr), ivc(icr))%rise)
+              rise    = rise + mean(nodes(iuc(icr), ivc(icr))%rise)
               rupture = rupture + MINVAL(nodes(iuc(icr), ivc(icr))%rupture)
             ENDDO
 
