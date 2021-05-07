@@ -23,6 +23,7 @@ output folder = '/home/walter/Software/bbtolbox/test/hf' variable = 'acceleratio
 # file format is determined from file extension
 # for FSP, required fields are "file", "type" (default "Brune") and "freq" (default=6.28)
 # for SRF, required fields are "file"
+# roughness is typically in the range [-3, -2]
 rupture file = '/home/walter/Software/bbtoolbox/test/s1999HECTOR01JONS.fsp' type='brune' freq=3.14 roughness=-2.0  +
 #rupture file = '/home/walter/Software/bbtoolbox/test/sample.srf' type='brune' freq=3.14 roughness=-2.0  +
 # rik
@@ -43,7 +44,7 @@ layer vp = 3800 vs = 2200 rho = 2700 depth = 2100
 #layer vp = 850  vs = 500 rho = 1800
 #layer vp = 2600 vs = 1500 rho = 2400 depth = 350
 #layer vp = 4650 vs = 2700 rho = 2800 depth = 1800
-layer vp=2600 vs=1500 rho=2400
+#layer vp=2600 vs=500 rho=2400
 
 # define attenuation model(s) (all fields are mandatory) (units: 1/km)
 # note: these properties are the same for the whole model

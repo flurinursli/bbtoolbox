@@ -2,6 +2,10 @@ MODULE m_roughness
 
   USE, NON_INTRINSIC :: m_precisions
   USE, NON_INTRINSIC :: m_logfile
+  USE, NON_INTRINSIC :: m_scarflib
+  USE, NON_INTRINSIC :: m_source
+  USE, NON_INTRINSIC :: m_stat
+  USE, NON_INTRINSIC :: m_strings
   USE, NON_INTRINSIC :: m_toolbox, ONLY: input
 
   IMPLICIT none
@@ -10,20 +14,129 @@ MODULE m_roughness
 
   PRIVATE
 
+  PUBLIC :: fault_roughness
   PUBLIC :: roughness
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
-  TYPE :: rough
-    REAL(r32) :: length                !< total fault length (from FSP file)
-  END TYPE rough
-
-
-  TYPE(rough) :: roughness
+  REAL(r32), ALLOCATABLE, DIMENSION(:,:), TARGET  :: roughness
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
   CONTAINS
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    SUBROUTINE fault_roughness(ok, ref, pl, iter)
+
+      INTEGER(i32),                              INTENT(OUT) :: ok
+      INTEGER(i32),                              INTENT(IN)  :: ref, pl, iter
+      CHARACTER(:), ALLOCATABLE                              :: fo
+      INTEGER(i32)                                           :: i, j, seed, lu, icr, totnutr
+      INTEGER(i32),              DIMENSION(3)                :: iuc, ivc
+      REAL(r32)                                              :: dh, du, rms
+      REAL(r32),                 DIMENSION(2)                :: nc, fc
+      REAL(r32),                 DIMENSION(3)                :: uc, vc
+      REAL(r32),                 DIMENSION(8)                :: stats
+      REAL(r32),                 DIMENSION(2),   PARAMETER   :: cl = [1._r32, 1._r32]
+      REAL(r32),                 DIMENSION(:),   POINTER     :: u1 => NULL(), v1 => NULL(), r1 => NULL()
+      REAL(r32),    ALLOCATABLE, DIMENSION(:,:), TARGET      :: u, v
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      ok = 0
+
+      IF (ALLOCATED(roughness)) DEALLOCATE(roughness)
+
+      ! set "seed" such that roughness depends on iteration and fault plane
+      seed = input%source%seed + (iter - 1) * SIZE(plane) + pl
+
+      ! random field must be always generated on a grid whose extension is given by fault plane and whose resolution equals the
+      ! minimum grid-step
+      nc = [umingr, vmingr(1)]
+      fc = [umaxgr, vmaxgr(SIZE(vmaxgr))]
+      dh = MIN(MINVAL(dutr), MINVAL(dvtr))
+
+      ALLOCATE(roughness(nugr(ref), nvgr(ref)), u(nugr(ref), nvgr(ref)), v(nugr(ref), nvgr(ref)))
+
+      ! define points where the random field will be computed
+      DO j = 1, nvgr(ref)
+        du = (1 - MOD(j, 2)) * dutr(ref) / 2._r32                !< "du" is 0 for odd "j", dutr/2 for even "j"
+        DO i = 1, nugr(ref) + MOD(j,2) - 1                       !< "i" tops at "nugr" for odd "j", at "nugr-1" for even "j"
+          u(i, j) = umingr + (i - 1) * dutr(ref) + du
+          v(i, j) = vmingr(ref) + (j - 1) * dvtr(ref)
+        ENDDO
+        IF (i .eq. nugr(ref)) THEN
+          u(nugr(ref), j) = u(i - 1, j)      !< last u-point for even "j" is simply a copy
+          v(nugr(ref), j) = v(i - 1, j)
+        ENDIF
+      ENDDO
+
+      u1(1:nugr(ref)*nvgr(ref)) => u
+      v1(1:nugr(ref)*nvgr(ref)) => v
+
+      r1(1:nugr(ref)*nvgr(ref)) => roughness
+
+      ! use user-defined PSD, unstructured grid, unitary sigma
+      CALL scarf_initialize(dh, 2, cl, 1._r32, u1, v1, nc = nc, fc = fc, ds = MIN(dutr(ref), dvtr(ref)))
+
+      CALL scarf_execute(seed, r1, stats)
+
+      CALL scarf_finalize()
+
+      NULLIFY(u1, v1, r1)
+
+      ! rescale roughness such that alpha = 10**input%source%roughness = RMS / LENGTH
+      ! rms = SQRT(mean(roughness)**2 + variance(roughness))
+      ! rms = SUM(plane(:)%length) * (10**input%source%roughness) / rms
+      !
+      ! roughness = roughness * rms
+
+if (pl == 2) stop
+
+
+#ifdef DEBUG
+
+      fo = 'roughness_' + num2char(ref) + '_' + num2char(pl) + '_' + num2char(iter) + '.bin'
+
+      OPEN(newunit = lu, file = fo, status = 'replace', form = 'unformatted', access = 'stream', action = 'write', IOSTAT = ok)
+
+      totnutr = 2 * nutr(ref) - 1
+
+      WRITE(lu, POS=1) totnutr * nvtr(ref)
+
+      DO j = 1, nvtr(ref)
+        DO i = 1, totnutr
+
+          CALL cornr(j, i, iuc, ivc)        !< corner indices for current triangle
+
+          CALL cornr2uv(iuc, ivc, ref, uc, vc)        !< on-fault coordinates
+
+          DO icr = 1, 3
+            WRITE(lu) uc(icr), vc(icr), roughness(iuc(icr), ivc(icr))
+          ENDDO
+
+        ENDDO
+      ENDDO
+
+      CLOSE(lu, iostat = ok)
+
+      IF (ok .ne. 0) THEN
+        CALL report_error('Error while closing file ' + fo)
+        RETURN
+      ENDIF
+
+#endif
+
+    END SUBROUTINE fault_roughness
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================

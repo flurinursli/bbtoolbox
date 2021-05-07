@@ -31,17 +31,17 @@ CPP_OBJ = geo2utm.o
 $(CPP_OBJ) : %.o : %.cpp
 	$(C++) -O3 -c -o $@ $<
 
-OBJ = m_toolbox.o m_userdef.o m_timeseries.o m_roughness.o m_source.o m_noise.o m_rik.o m_isochron.o main.o
+OBJ = m_toolbox.o m_userdef.o m_timeseries.o m_source.o m_noise.o m_rik.o m_roughness.o m_isochron.o main.o
 
 main : $(OBJ) $(CPP_OBJ)
-	$(FC) $(OPT) $(OMP) -o ../toolbox.exe $(CPP_OBJ) $(OBJ) -L../lib/common/lib -L../lib/llsq/lib -L../lib/fft/lib -L../lib/interpolation/lib -L../lib/filter/lib -L../lib/rtt/lib -L../lib/rng/lib -L../lib/geometry/lib -L../lib/eikonal/lib -L$(PROJ4_PATH) -L$(TRNG4_PATH)/lib -L$(FFTW_PATH)/lib -L$(LAPACK_PATH) -L$(GSL_PATH) -lcommon -lllsqf -lfilterf -lfft -linterplf -lllsq -lrtt -lrngf -lcompgeof -leikonalf $(LINK_FLAGS) -lgsl -lgslcblas -linterpl -ltrng4 -lstdc++ -lproj
+	$(FC) $(OPT) $(OMP) -o ../toolbox.exe $(CPP_OBJ) $(OBJ) -L../lib/common/lib -L../lib/llsq/lib -L../lib/fft/lib -L../lib/interpolation/lib -L../lib/filter/lib -L../lib/rtt/lib -L../lib/rng/lib -L../lib/geometry/lib -L../lib/eikonal/lib -L$(SCARF3D_PATH)/lib -L$(PROJ4_PATH) -L$(TRNG4_PATH)/lib -L$(FFTW_PATH)/lib -L$(LAPACK_PATH) -L$(GSL_PATH) -lcommon -lllsqf -lfilterf -lfft -linterplf -lllsq -lrtt -lrngf -lcompgeof -leikonalf -lscarf3df $(LINK_FLAGS) -lfftw3f -lgsl -lgslcblas -linterpl -ltrng4 -lstdc++ -lproj
 
 # dbg	: $(OBJ_DBG) $(CPP_OBJ)
 # 	$(FC) $(OPT) $(OMP) -o ../toolbox.exe $(CPP_OBJ) $(OBJ) -L../lib/common/lib -L../lib/llsq/lib -L../lib/fft/lib -L../lib/interpolation/lib -L../lib/filter/lib -L../lib/rtt/lib -L../lib/rng/lib -L$(PROJ4_PATH) -L$(TRNG4_PATH)/lib -L$(FFTW_PATH)/lib -L$(LAPACK_PATH) -L$(GSL_PATH) -lcommon -lllsqf -lfilterf -lfft -linterplf -lllsq -lrtt -lrngf $(LINK_FLAGS) -lgsl -lgslcblas -linterpl -ltrng4 -lstdc++ -lproj
 
 # how to get main.o
 $(OBJ) : %.o : %.f90
-	$(FC) $(OPT) $(OMP) -cpp $(PP_FLAGS) -I../lib/common/include -I../lib/llsq/include32 -I../lib/interpolation/include32 -I../lib/fft/include -I../lib/filter/include -I../lib/llsq/include32 -I../lib/rtt/include -I../lib/rng/include -I../lib/geometry/include -I../lib/eikonal/include -c -o $@ $<
+	$(FC) $(OPT) $(OMP) -cpp $(PP_FLAGS) -I../lib/common/include -I../lib/llsq/include32 -I../lib/interpolation/include32 -I../lib/fft/include -I../lib/filter/include -I../lib/llsq/include32 -I../lib/rtt/include -I../lib/rng/include -I../lib/geometry/include -I../lib/eikonal/include -I$(SCARF3D_PATH)/include -c -o $@ $<
 
 clean:
 	rm -rf *.mod

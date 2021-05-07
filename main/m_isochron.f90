@@ -7,6 +7,7 @@ MODULE m_isochron
   USE, NON_INTRINSIC :: m_stat
   USE, NON_INTRINSIC :: m_source
   USE, NON_INTRINSIC :: m_rik
+  USE, NON_INTRINSIC :: m_roughness
   USE, NON_INTRINSIC :: m_toolbox
   USE, NON_INTRINSIC :: m_strings
   USE, NON_INTRINSIC :: m_logfile
@@ -155,6 +156,8 @@ MODULE m_isochron
 
         WRITE(lu) nvtr(ref), nutr(ref)
 
+        CALL fault_roughness(ok, ref, pl, iter)
+
         !$omp parallel do ordered default(shared) private(i, j, iuc, ivc, slip, rise, rupture, icr, u, v, x, y, z, beta, rho, mu)  &
         !$omp& reduction(+:m0) collapse(2)
         DO j = 1, nvtr(ref)
@@ -177,6 +180,10 @@ MODULE m_isochron
             rupture = rupture / 3._r32
 
             CALL cornr2uv(iuc, ivc, ref, u, v)        !< on-fault coordinates
+
+            ! DO icr = 1, 3
+            !   z(icr) = roughness(iuc(icr), ivc(icr))
+            ! ENDDO
 
             CALL uv2xyz(pl, u, v, x, y, z)            !< cartesian coordinates
 
