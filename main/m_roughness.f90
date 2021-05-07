@@ -19,7 +19,10 @@ MODULE m_roughness
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
-  REAL(r32), ALLOCATABLE, DIMENSION(:,:), TARGET  :: roughness
+  INTEGER(i32), ALLOCATABLE, DIMENSION(:) :: npts
+  REAL(r32),    ALLOCATABLE, DIMENSION(:) :: avg, var
+
+  REAL(r32), ALLOCATABLE, DIMENSION(:,:), TARGET :: roughness
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -36,7 +39,7 @@ MODULE m_roughness
       CHARACTER(:), ALLOCATABLE                              :: fo
       INTEGER(i32)                                           :: i, j, seed, lu, icr, totnutr
       INTEGER(i32),              DIMENSION(3)                :: iuc, ivc
-      REAL(r32)                                              :: dh, du, rms
+      REAL(r32)                                              :: dh, du, rms, sigma, mu
       REAL(r32),                 DIMENSION(2)                :: nc, fc
       REAL(r32),                 DIMENSION(3)                :: uc, vc
       REAL(r32),                 DIMENSION(8)                :: stats
@@ -47,6 +50,8 @@ MODULE m_roughness
       !-----------------------------------------------------------------------------------------------------------------------------
 
       ok = 0
+
+      IF ( (input%advanced%verbose .eq. 2) .and. (ref .eq. 1) ) ALLOCATE(avg(SIZE(nugr)), var(SIZE(nugr)), npts(SIZE(nugr)))
 
       IF (ALLOCATED(roughness)) DEALLOCATE(roughness)
 
@@ -79,8 +84,10 @@ MODULE m_roughness
 
       r1(1:nugr(ref)*nvgr(ref)) => roughness
 
-      ! use user-defined PSD, unstructured grid, unitary sigma
-      CALL scarf_initialize(dh, 2, cl, 1._r32, u1, v1, nc = nc, fc = fc, ds = MIN(dutr(ref), dvtr(ref)))
+      sigma = SUM(plane(:)%length) * 10**input%source%roughness         !< assume zero-mean, such that rms = std.dev.
+
+      ! use user-defined PSD, unstructured grid
+      CALL scarf_initialize(dh, 2, cl, sigma, u1, v1, nc = nc, fc = fc, ds = MIN(dutr(ref), dvtr(ref)), rescale=1)
 
       CALL scarf_execute(seed, r1, stats)
 
@@ -94,8 +101,31 @@ MODULE m_roughness
       !
       ! roughness = roughness * rms
 
-if (pl == 2) stop
+      IF (input%advanced%verbose .eq. 2) THEN
 
+        var(ref) = variance(roughness)
+        avg(ref) = mean(roughness)
+        npts(ref) = nugr(ref) * nvgr(ref)
+
+        IF (ref .eq. SIZE(nugr)) THEN
+
+          !rms = SQRT(mean(roughness)**2 + variance(roughness))
+          CALL parallel_variance(var, avg, npts, rms, mu)
+
+          rms = SQRT(mu**2 + rms)
+
+          CALL update_log(num2char('<fault roughness>', justify='c', width=30) +    &
+                          num2char('Actual RMS', width=15, justify='r') + '|' +  &
+                          num2char('Expected RMS', width=15, justify='r') + '|')
+
+          CALL update_log(num2char('', width=30, justify='c')  +  &
+                          num2char(rms, width=15, notation='f', precision=2, justify='r') + '|' + &
+                          num2char(sigma, width=15, notation='f', precision=2, justify='r') + '|', blankline=.false.)
+
+          DEALLOCATE(var, avg, npts)
+
+        ENDIF
+      ENDIF
 
 #ifdef DEBUG
 
@@ -103,14 +133,15 @@ if (pl == 2) stop
 
       OPEN(newunit = lu, file = fo, status = 'replace', form = 'unformatted', access = 'stream', action = 'write', IOSTAT = ok)
 
-      totnutr = 2 * nutr(ref) - 1
+      WRITE(lu, POS=1) nutr(ref)
+      WRITE(lu)        nvtr(ref)
 
-      WRITE(lu, POS=1) totnutr * nvtr(ref)
+      totnutr = 2*nutr(ref) - 1
 
       DO j = 1, nvtr(ref)
         DO i = 1, totnutr
 
-          CALL cornr(j, i, iuc, ivc)        !< corner indices for current triangle
+          CALL cornr(j, i, iuc, ivc)                  !< corner indices for current triangle
 
           CALL cornr2uv(iuc, ivc, ref, uc, vc)        !< on-fault coordinates
 
