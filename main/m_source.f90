@@ -20,13 +20,14 @@ MODULE m_source
   PRIVATE
 
   PUBLIC :: hypocenter, plane, dutr, dvtr, nutr, nvtr, nugr, nvgr, umingr, vmingr, umaxgr, vmaxgr, nodes
-  PUBLIC :: setup_source, meshing, missing_rupture, dealloc_nodes, cornr, cornr2uv, uv2xyz, vinterp, ptrsrc_at_nodes
+  PUBLIC :: MIN_DEPTH
+  PUBLIC :: setup_source, meshing, missing_rupture, dealloc_nodes, cornr, cornr2uv, uvw2xyz, vinterp, ptrsrc_at_nodes
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
-  INTERFACE uv2xyz
-    MODULE PROCEDURE uv2xyz_scalar, uv2xyz_vector
-  END INTERFACE uv2xyz
+  INTERFACE uvw2xyz
+    MODULE PROCEDURE uvw2xyz_scalar, uvw2xyz_vector
+  END INTERFACE uvw2xyz
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -36,6 +37,7 @@ MODULE m_source
   REAL(r32),    PARAMETER :: PI = 3.14159265358979323846_r64
   REAL(r32),    PARAMETER :: DEG_TO_RAD = PI / 180._r32
   REAL(r32),    PARAMETER :: BIG = HUGE(0._r32)
+  REAL(r32),    PARAMETER :: MIN_DEPTH = 1._r32
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -424,9 +426,9 @@ MODULE m_source
         ENDDO
         plane(k)%v(nv) = plane(k)%v(nv - 1) + dv / 2._r32
 
-        ! make sure uppermost down-dip "edge" point is always slightly (1m) below free-surface
+        ! make sure uppermost down-dip "edge" point is always slightly below free-surface
         !plane(k)%z = MAX(1._r32, plane(k)%z + MAX(0._r32, SIN(plane(k)%dip * DEG_TO_RAD) * dv / 2._r32 - plane(k)%z))
-        plane(k)%z = MAX(1._r32, plane(k)%z * 1.E+03_r32)
+        plane(k)%z = MAX(MIN_DEPTH, plane(k)%z * 1.E+03_r32)
 
       ENDDO
 
@@ -600,9 +602,9 @@ MODULE m_source
 
         plane(pl)%targetm0 = MAX(plane(pl)%targetm0, -1._r32)
 
-        ! make sure uppermost down-dip "edge" point is always slightly (1m) below free-surface
+        ! make sure uppermost down-dip "edge" point is always slightly below free-surface
         !plane(k)%z = MAX(1._r32, plane(k)%z + MAX(0._r32, SIN(plane(k)%dip * DEG_TO_RAD) * dv / 2._r32 - plane(k)%z))
-        plane(pl)%z = MAX(1._r32, plane(pl)%z)
+        plane(pl)%z = MAX(MIN_DEPTH, plane(pl)%z)
 
       ENDDO
 
@@ -1441,7 +1443,7 @@ MODULE m_source
 
           CALL cell_to_triangle(i, j, dest, expand, a1, a2, b1, b2, c1, c2)
 
-          CALL uv2xyz(dest, plane(dest)%u(i), plane(dest)%v(j), xc, yc, zc)
+          CALL uvw2xyz(dest, plane(dest)%u(i), plane(dest)%v(j), 0._r32, xc, yc, zc)
 
           time = -BIG
           rmin = BIG
@@ -1459,7 +1461,7 @@ MODULE m_source
 
               IF (crossing .eqv. .true.) THEN              !< at least a couple of triangles cross each other
 
-                CALL uv2xyz(orig, plane(orig)%u(m), plane(orig)%v(l), xo, yo, zo)
+                CALL uvw2xyz(orig, plane(orig)%u(m), plane(orig)%v(l), 0._r32, xo, yo, zo)
 
                 ! subfault-to-subfault (center) distance
                 r = (xc - xo)**2 + (yc - yo)**2 + (zc - zo)**2
@@ -1765,7 +1767,7 @@ MODULE m_source
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE uv2xyz_scalar(pl, u, v, x, y, z)
+    SUBROUTINE uvw2xyz_scalar(pl, u, v, w, x, y, z)
 
       ! Purpose:
       !   to convert on-fault coordinates "u/v" for fault plane "pl" to cartesian ones "x/y/z".
@@ -1777,7 +1779,7 @@ MODULE m_source
       !
 
       INTEGER(i32), INTENT(IN)  :: pl
-      REAL(r32),    INTENT(IN)  :: u, v
+      REAL(r32),    INTENT(IN)  :: u, v, w
       REAL(r32),    INTENT(OUT) :: x, y, z
       REAL(r32)                 :: dip, strike
 
@@ -1785,7 +1787,7 @@ MODULE m_source
 
       x = u
       y = v
-      z = 0._r32
+      z = w
 
       dip    = plane(pl)%dip * DEG_TO_RAD
       strike = plane(pl)%strike * DEG_TO_RAD
@@ -1796,13 +1798,13 @@ MODULE m_source
       y = y + plane(pl)%y
       z = z + plane(pl)%z
 
-    END SUBROUTINE uv2xyz_scalar
+    END SUBROUTINE uvw2xyz_scalar
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE uv2xyz_vector(pl, u, v, x, y, z)
+    SUBROUTINE uvw2xyz_vector(pl, u, v, w, x, y, z)
 
       ! Purpose:
       !   to convert on-fault coordinates "u/v" for fault plane "pl" to cartesian ones "x/y/z".
@@ -1814,7 +1816,7 @@ MODULE m_source
       !
 
       INTEGER(i32),                     INTENT(IN)  :: pl
-      REAL(r32),    DIMENSION(:),       INTENT(IN)  :: u, v
+      REAL(r32),    DIMENSION(:),       INTENT(IN)  :: u, v, w
       REAL(r32),    DIMENSION(SIZE(u)), INTENT(OUT) :: x, y, z
       INTEGER(i32)                                  :: i
       REAL(r32)                                     :: strike, dip
@@ -1824,7 +1826,7 @@ MODULE m_source
       DO i = 1, SIZE(x)
         x(i) = u(i)
         y(i) = v(i)
-        z(i) = 0._r32
+        z(i) = w(i)
       ENDDO
 
       dip    = plane(pl)%dip * DEG_TO_RAD
@@ -1838,7 +1840,7 @@ MODULE m_source
         z(i) = z(i) + plane(pl)%z
       ENDDO
 
-    END SUBROUTINE uv2xyz_vector
+    END SUBROUTINE uvw2xyz_vector
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
