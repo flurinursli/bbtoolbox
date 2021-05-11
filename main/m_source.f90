@@ -63,7 +63,7 @@ MODULE m_source
     REAL(r32)                                :: targetm0                           !< total moment (sum over all segments)
     REAL(r32)                                :: x, y, z                            !< absolute position of u=v=0
     REAL(r32),   ALLOCATABLE, DIMENSION(:)   :: u, v                               !< on-fault coordinates
-    REAL(r32),   ALLOCATABLE, DIMENSION(:,:) :: rise, rupture, sslip, dslip, tslip
+    REAL(r32),   ALLOCATABLE, DIMENSION(:,:) :: rise, rupture, rake, slip
     TYPE(seg),   ALLOCATABLE, DIMENSION(:,:) :: src
   END TYPE src
 
@@ -113,16 +113,13 @@ MODULE m_source
         plane(1)%dip      = input%source%dip
 
         ALLOCATE(plane(1)%u(3), plane(1)%v(3))
-        ALLOCATE(plane(1)%rise(3,3), plane(1)%sslip(3,3), plane(1)%dslip(3,3), plane(1)%tslip(3,3), plane(1)%rupture(3,3))
-
-        plane(1)%sslip(:,:) = 0._r32
-        plane(1)%dslip(:,:) = 0._r32
-        plane(1)%tslip(:,:) = 0._r32
+        ALLOCATE(plane(1)%rise(3,3), plane(1)%slip(3,3), plane(1)%rake(3,3), plane(1)%rupture(3,3))
 
         ! slip in this context does not matter, as we will rescale output according to input "m0"
-        plane(1)%sslip(2, 2) = COS(input%source%rake * DEG_TO_RAD)
-        plane(1)%dslip(2, 2) = -SIN(input%source%rake * DEG_TO_RAD)          !< in our system slip is positive down-dip
-        plane(1)%tslip(2, 2) = 1._r32
+        plane(1)%slip(:,:) = 0._r32
+        plane(1)%slip(2, 2) = 1._r32
+
+        plane(1)%rake(:,:) = input%source%rake * DEG_TO_RAD
 
         plane(1)%rise(:,:) = input%source%freq
 
@@ -208,7 +205,7 @@ MODULE m_source
                           num2char(plane(i)%width, width=15, notation='f', precision=2, justify='r') + '|' + &
                           num2char(plane(i)%strike, width=15, notation='f', precision=2, justify='r') + '|' + &
                           num2char(plane(i)%dip, width=15, notation='f', precision=2, justify='r') + '|' +  &
-                          num2char(MAXVAL(euclid(plane(i)%sslip, plane(i)%dslip)), width=15, notation='f', precision=3,   &
+                          num2char(MAXVAL(plane(i)%slip), width=15, notation='f', precision=3,   &
                                    justify='r') + '|', blankline=.false.)
         ENDDO
 
@@ -332,13 +329,11 @@ MODULE m_source
         nv = nv + 2
 
         ALLOCATE(plane(k)%rise(nu, nv), plane(k)%rupture(nu, nv))
-        ALLOCATE(plane(k)%sslip(nu, nv), plane(k)%dslip(nu, nv), plane(k)%tslip(nu, nv))
+        ALLOCATE(plane(k)%slip(nu, nv), plane(k)%rake(nu, nv))
 
         DO j = 1, nv
           DO i = 1, nu
-            plane(k)%sslip(i, j) = 0._r32
-            plane(k)%dslip(i, j) = 0._r32
-            plane(k)%tslip(i, j) = 0._r32
+            plane(k)%slip(i, j) = 0._r32
           ENDDO
         ENDDO
 
@@ -382,11 +377,8 @@ MODULE m_source
 
                   IF (irake .gt. 0) rake = numeric(irake) * DEG_TO_RAD
 
-                  ! get along-strike and down-dip components of slip
-                  plane(k)%sslip(i, j) = numeric(islip) * COS(rake)
-                  plane(k)%dslip(i, j) = -numeric(islip) * SIN(rake)          !< in our system slip is positive down-dip
-                  plane(k)%tslip(i, j) = numeric(islip)                       !< total slip
-
+                  plane(k)%slip(i, j) = numeric(islip)
+                  plane(k)%rake(i, j) = rake
                   plane(k)%rise(i, j) = input%source%freq
 
                   plane(k)%is_rupture_missing = .true.
@@ -407,6 +399,12 @@ MODULE m_source
         ENDDO
 
         REWIND(lu)
+
+        ! copy rake at edges
+        plane(k)%rake(:, 1) = plane(k)%rake(:, 2)
+        plane(k)%rake(:, nv) = plane(k)%rake(:, nv-1)
+        plane(k)%rake(1, :) = plane(k)%rake(2, :)
+        plane(k)%rake(nu, :) = plane(k)%rake(nu-1, :)
 
         ALLOCATE(plane(k)%u(nu), plane(k)%v(nv))
 
@@ -442,12 +440,12 @@ MODULE m_source
       cslip = 0._r32
 
       DO k = 1, SIZE(plane)
-        cslip = cslip + SUM(plane(k)%tslip)
+        cslip = cslip + SUM(plane(k)%slip)
       ENDDO
 
       ! rescale moment for each plane based on slip only
       DO k = 1, SIZE(plane)
-        plane(k)%targetm0 = plane(k)%targetm0 * SUM(plane(k)%tslip) / cslip
+        plane(k)%targetm0 = plane(k)%targetm0 * SUM(plane(k)%slip) / cslip
       ENDDO
 
     END SUBROUTINE read_fsp_file
@@ -472,7 +470,7 @@ MODULE m_source
       CHARACTER(256)                                       :: buffer
       INTEGER(i32)                                         :: n, lu, pl, lino, nt1, nt2, nt3, i, j, nu, nv, points
       REAL(r32)                                            :: version, lon, lat, z, strike, dip, area, tinit, dt, vs, density
-      REAL(r32)                                            :: rake, slip1, slip2, slip3, shyp, dhyp
+      REAL(r32)                                            :: rake, slip1, slip2, slip3, shyp, dhyp, cslip
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
@@ -525,14 +523,12 @@ MODULE m_source
         nu = nu + 2          !< add edge points
         nv = nv + 2
 
-        ALLOCATE(plane(pl)%rupture(nu, nv), plane(pl)%sslip(nu, nv), plane(pl)%dslip(nu, nv), plane(pl)%src(nu, nv))
-        ALLOCATE(plane(pl)%rise(nu, nv), plane(pl)%u(nu), plane(pl)%v(nv), plane(pl)%tslip(nu, nv))
+        ALLOCATE(plane(pl)%rupture(nu, nv), plane(pl)%slip(nu, nv), plane(pl)%rake(nu, nv), plane(pl)%src(nu, nv))
+        ALLOCATE(plane(pl)%rise(nu, nv), plane(pl)%u(nu), plane(pl)%v(nv))
 
         DO j = 1, nv
           DO i = 1, nu
-            plane(pl)%sslip(i, j) = 0._r32
-            plane(pl)%dslip(i, j) = 0._r32
-            plane(pl)%tslip(i, j) = 0._r32
+            plane(pl)%slip(i, j) = 0._r32
           ENDDO
         ENDDO
 
@@ -571,11 +567,8 @@ MODULE m_source
             rake = rake * DEG_TO_RAD              !< convert deg to rad
             slip1 = slip1 * 1.0e-02_r32           !< convert cm to m
 
-            ! get along-strike and down-dip components of slip
-            plane(pl)%sslip(i, j) = slip1 * COS(rake)
-            plane(pl)%dslip(i, j) = -slip1 * SIN(rake)          !< in our system slip is positive down-dip
-            plane(pl)%tslip(i, j) = slip1                      !< total slip
-
+            plane(pl)%slip(i, j) = slip1
+            plane(pl)%rake(i, j) = rake
             plane(pl)%rupture(i, j) = tinit
 
             plane(pl)%is_rupture_missing = .false.
@@ -606,6 +599,12 @@ MODULE m_source
         !plane(k)%z = MAX(1._r32, plane(k)%z + MAX(0._r32, SIN(plane(k)%dip * DEG_TO_RAD) * dv / 2._r32 - plane(k)%z))
         plane(pl)%z = MAX(MIN_DEPTH, plane(pl)%z)
 
+        ! copy rake at edges
+        plane(pl)%rake(:, 1) = plane(pl)%rake(:, 2)
+        plane(pl)%rake(:, nv) = plane(pl)%rake(:, nv-1)
+        plane(pl)%rake(1, :) = plane(pl)%rake(2, :)
+        plane(pl)%rake(nu, :) = plane(pl)%rake(nu-1, :)
+
       ENDDO
 
       CLOSE(lu, IOSTAT = ok)
@@ -614,6 +613,17 @@ MODULE m_source
         CALL report_error('read_srf_file - ERROR: could not close file ' + TRIM(input%source%file))
         RETURN
       ENDIF
+
+      cslip = 0._r32
+
+      DO pl = 1, SIZE(plane)
+        cslip = cslip + SUM(plane(pl)%slip)
+      ENDDO
+
+      ! rescale moment for each plane based on slip only
+      DO pl = 1, SIZE(plane)
+        plane(pl)%targetm0 = plane(pl)%targetm0 * SUM(plane(pl)%slip) / cslip
+      ENDDO
 
     END SUBROUTINE read_srf_file
 
@@ -681,7 +691,7 @@ MODULE m_source
         CALL mpi_bcast(np, 2, mpi_int, 0, mpi_comm_world, ierr)
 
         IF (.not.ALLOCATED(plane(i)%u)) THEN
-          ALLOCATE(plane(i)%u(np(1)), plane(i)%v(np(2)), plane(i)%sslip(np(1),np(2)), plane(i)%dslip(np(1),np(2)))
+          ALLOCATE(plane(i)%u(np(1)), plane(i)%v(np(2)), plane(i)%slip(np(1),np(2)), plane(i)%rake(np(1),np(2)))
           ALLOCATE(plane(i)%rise(np(1),np(2)), plane(i)%rupture(np(1),np(2)))
         ENDIF
 
@@ -692,8 +702,8 @@ MODULE m_source
         plane(i)%u = float(1:np(1))
         plane(i)%v = float(np(1)+1:np(1)+np(2))
 
-        CALL mpi_bcast(plane(i)%sslip, PRODUCT(np), mpi_real, 0, mpi_comm_world, ierr)
-        CALL mpi_bcast(plane(i)%dslip, PRODUCT(np), mpi_real, 0, mpi_comm_world, ierr)
+        CALL mpi_bcast(plane(i)%slip, PRODUCT(np), mpi_real, 0, mpi_comm_world, ierr)
+        CALL mpi_bcast(plane(i)%rake, PRODUCT(np), mpi_real, 0, mpi_comm_world, ierr)
         CALL mpi_bcast(plane(i)%rise, PRODUCT(np), mpi_real, 0, mpi_comm_world, ierr)
         CALL mpi_bcast(plane(i)%rupture, PRODUCT(np), mpi_real, 0, mpi_comm_world, ierr)
 
@@ -707,24 +717,24 @@ MODULE m_source
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    REAL(r32) ELEMENTAL FUNCTION euclid(x, y)
-
-      ! Purpose:
-      !   to compute euclidean distance without under/overflow.
-      !
-      ! Revisions:
-      !     Date                    Description of change
-      !     ====                    =====================
-      !   08/03/21                  original version
-      !
-
-      REAL(r32), INTENT(IN) :: x, y
-
-      !-----------------------------------------------------------------------------------------------------------------------------
-
-      euclid = HYPOT(x, y)
-
-    END FUNCTION euclid
+    ! REAL(r32) ELEMENTAL FUNCTION euclid(x, y)
+    !
+    !   ! Purpose:
+    !   !   to compute euclidean distance without under/overflow.
+    !   !
+    !   ! Revisions:
+    !   !     Date                    Description of change
+    !   !     ====                    =====================
+    !   !   08/03/21                  original version
+    !   !
+    !
+    !   REAL(r32), INTENT(IN) :: x, y
+    !
+    !   !-----------------------------------------------------------------------------------------------------------------------------
+    !
+    !   euclid = HYPOT(x, y)
+    !
+    ! END FUNCTION euclid
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
@@ -1721,7 +1731,7 @@ MODULE m_source
 
           u = umingr + (i - 1) * dutr(ref) + du
 
-          CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%tslip, u, v, x)
+          CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%slip, u, v, x)
           nodes(i, j)%slip = [x]
           CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%rupture, u, v, x)
           nodes(i, j)%rupture = [x]

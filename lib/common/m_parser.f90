@@ -64,6 +64,15 @@ MODULE m_parser
 
   PUBLIC :: parse, parser_error, recurrences, is_empty, read_miniseed, parse_split, parse_split_index
 
+  ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+
+  ! set precisions of input/output arguments at compile-time
+#ifdef DOUBLE_PREC
+  INTEGER, PARAMETER :: r__ = r64
+#else
+  INTEGER, PARAMETER :: r__ = r32
+#endif
+
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * -
 
   INTERFACE parse
@@ -72,7 +81,7 @@ MODULE m_parser
   END INTERFACE parse
 
   INTERFACE parse_split
-    MODULE PROCEDURE parse_split_r32
+    MODULE PROCEDURE parse_split_r__
   END INTERFACE parse_split
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * -
@@ -84,7 +93,7 @@ MODULE m_parser
   INTEGER(i32), PARAMETER :: ch = 200                               !< max expected string length of a numeric field
   INTEGER(i32), PARAMETER :: tab = 9                                !< ASCII code for horizontal tab
   INTEGER(i32), PARAMETER :: int_empty = HUGE(0)                    !< constant for "no integer number found"
-  REAL(r32),    PARAMETER :: real_empty = HUGE(0._r32)              !< constant for "no real number found"
+  REAL(r__),    PARAMETER :: real_empty = HUGE(0._r__)              !< constant for "no real number found"
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
 
@@ -512,7 +521,7 @@ MODULE m_parser
       !
 
       INTEGER(i32),                                      INTENT(OUT) :: ok
-      REAL(r32),                                         INTENT(OUT) :: v
+      REAL(r__),                                         INTENT(OUT) :: v
       INTEGER(i32),                                      INTENT(IN)  :: fo
       CHARACTER(*),                                      INTENT(IN)  :: field
       CHARACTER(1),              DIMENSION(2),           INTENT(IN)  :: del
@@ -520,7 +529,7 @@ MODULE m_parser
       INTEGER(i32),                            OPTIONAL, INTENT(IN)  :: nkey, nfield
       CHARACTER(1),                            OPTIONAL, INTENT(IN)  :: com
       LOGICAL,                                 OPTIONAL, INTENT(IN)  :: rev
-      REAL(r32),    ALLOCATABLE, DIMENSION(:)                        :: x
+      REAL(r__),    ALLOCATABLE, DIMENSION(:)                        :: x
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
@@ -628,7 +637,7 @@ MODULE m_parser
       !
 
       INTEGER(i32),                                       INTENT(OUT) :: ok
-      REAL(r32),    ALLOCATABLE, DIMENSION(:),            INTENT(OUT) :: v
+      REAL(r__),    ALLOCATABLE, DIMENSION(:),            INTENT(OUT) :: v
       INTEGER(i32),                                       INTENT(IN)  :: fo
       CHARACTER(*),                                       INTENT(IN)  :: field
       CHARACTER(1),              DIMENSION(2),            INTENT(IN)  :: del
@@ -637,7 +646,7 @@ MODULE m_parser
       INTEGER(i32),                             OPTIONAL, INTENT(IN)  :: nkey, nfield
       CHARACTER(1),                             OPTIONAL, INTENT(IN)  :: com
       LOGICAL,                                  OPTIONAL, INTENT(IN)  :: rev
-      REAL(r32),    ALLOCATABLE, DIMENSION(:,:)                       :: x
+      REAL(r__),    ALLOCATABLE, DIMENSION(:,:)                       :: x
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
@@ -808,7 +817,7 @@ MODULE m_parser
       !
 
       INTEGER(i32),                                         INTENT(OUT) :: ok
-      REAL(r32),     ALLOCATABLE, DIMENSION(:,:),           INTENT(OUT) :: v
+      REAL(r__),     ALLOCATABLE, DIMENSION(:,:),           INTENT(OUT) :: v
       INTEGER(i32),                                         INTENT(IN)  :: fo
       CHARACTER(*),                                         INTENT(IN)  :: field
       CHARACTER(1),               DIMENSION(2),             INTENT(IN)  :: del
@@ -928,7 +937,7 @@ MODULE m_parser
     !       x = char_empty
     !     TYPE IS (INTEGER(i32))
     !       x = int_empty
-    !     TYPE IS (REAL(r32))
+    !     TYPE IS (REAL(r__))
     !       x = real_empty
     !     TYPE IS (REAL(r64))
     !       x = real_empty
@@ -988,9 +997,9 @@ MODULE m_parser
 
       INTEGER(i32),                                        INTENT(OUT) :: ok
       CHARACTER(*),                                        INTENT(IN)  :: fo
-      REAL(r32),                                           INTENT(OUT) :: dt
-      REAL(r32),    ALLOCATABLE, DIMENSION(:,:),           INTENT(OUT) :: timeseries
-      REAL(r32),                                 OPTIONAL, INTENT(IN)  :: tmax
+      REAL(r__),                                           INTENT(OUT) :: dt
+      REAL(r__),    ALLOCATABLE, DIMENSION(:,:),           INTENT(OUT) :: timeseries
+      REAL(r__),                                 OPTIONAL, INTENT(IN)  :: tmax
       CHARACTER(:), ALLOCATABLE                                        :: buffer
       INTEGER(i32)                                                     :: i, j, k, ierr
       INTEGER(i32)                                                     :: npts, ncomp, lu
@@ -1043,11 +1052,11 @@ MODULE m_parser
           RETURN
         ENDIF
 
-        dt = 1._r32 / dt
+        dt = 1._r__ / dt
 
         ! determine number of points to be read
         IF (PRESENT(tmax)) THEN
-          IF (tmax .gt. 0._r32) npts = MIN(npts, NINT(tmax / dt))
+          IF (tmax .gt. 0._r__) npts = MIN(npts, NINT(tmax / dt))
         ENDIF
 
         ! read only multiple of 6 lines
@@ -1089,7 +1098,7 @@ MODULE m_parser
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE parse_split_r32(line, numeric)
+    SUBROUTINE parse_split_r__(line, numeric)
 
       ! Purpose:
       !   to read a line containing an arbitrary number of numeric values and returning each entry separately.
@@ -1101,9 +1110,9 @@ MODULE m_parser
       !
 
       CHARACTER(*),                                        INTENT(IN)  :: line
-      REAL(r32),    ALLOCATABLE, DIMENSION(:),             INTENT(OUT) :: numeric
+      REAL(r__),    ALLOCATABLE, DIMENSION(:),             INTENT(OUT) :: numeric
       INTEGER(i32)                                                     :: n
-      REAL(r32),                 DIMENSION(LEN_TRIM(line))             :: x
+      REAL(r__),                 DIMENSION(LEN_TRIM(line))             :: x
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
@@ -1120,7 +1129,7 @@ MODULE m_parser
 
       numeric = x(1:n)
 
-    END SUBROUTINE parse_split_r32
+    END SUBROUTINE parse_split_r__
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================

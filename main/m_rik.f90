@@ -144,7 +144,7 @@ MODULE m_rik
 
       CALL setup_interpolation('linear', 'zero', ok)
 
-      CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%tslip, u, v, tslip)
+      CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%slip, u, v, tslip)
 
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! ------------------------------------------------ generate slip model  ------------------------------------------------------
@@ -359,7 +359,7 @@ MODULE m_rik
 
       CALL setup_interpolation('linear', 'zero', ok)
 
-      CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%tslip, u, v, pdf)
+      CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%slip, u, v, pdf)
 
       cumul = 0._r32
 

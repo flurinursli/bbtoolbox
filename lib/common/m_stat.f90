@@ -13,6 +13,15 @@ MODULE m_stat
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
+  ! set precisions of input/output arguments at compile-time
+#ifdef DOUBLE_PREC
+  INTEGER, PARAMETER :: r__ = r64
+#else
+  INTEGER, PARAMETER :: r__ = r32
+#endif
+
+  ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+
   INTERFACE variance
     MODULE PROCEDURE variance_1d, variance_2d, variance_3d
   END INTERFACE
@@ -29,7 +38,7 @@ MODULE m_stat
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    REAL(r32) FUNCTION variance_1d(r)
+    REAL(r__) FUNCTION variance_1d(r)
 
       ! Purpose:
       !   To compute variance according to the compensated-summation version of the two-pass algorithm. Calculations in double-precision.
@@ -40,7 +49,7 @@ MODULE m_stat
       !   04/05/20                  original version
       !
 
-      REAL(r32),   DIMENSION(:), INTENT(IN) :: r                      !< vector of data
+      REAL(r__),   DIMENSION(:), INTENT(IN) :: r                      !< vector of data
       INTEGER(i32)                          :: i, n
       REAL(r64)                             :: mu, s1, s2, x, v
 
@@ -63,7 +72,7 @@ MODULE m_stat
 
       v = (s2 - s1) / REAL(n - 1, r64)
 
-      variance_1d = REAL(v, r32)
+      variance_1d = REAL(v, r__)
 
     END FUNCTION variance_1d
 
@@ -71,7 +80,7 @@ MODULE m_stat
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    REAL(r32) FUNCTION variance_2d(r)
+    REAL(r__) FUNCTION variance_2d(r)
 
       ! Purpose:
       !   To compute variance according to the compensated-summation version of the two-pass algorithm. Calculations in double-precision.
@@ -82,7 +91,7 @@ MODULE m_stat
       !   04/05/20                  original version
       !
 
-      REAL(r32),   DIMENSION(:,:), INTENT(IN) :: r                    !< array of data
+      REAL(r__),   DIMENSION(:,:), INTENT(IN) :: r                    !< array of data
       INTEGER(i32)                            :: i, j
       INTEGER(i32)                            :: nx, ny
       REAL(r64)                               :: mu, s1, s2, x, v
@@ -109,7 +118,7 @@ MODULE m_stat
 
       v = (s2 - s1) / REAL(SIZE(r) - 1, r64)
 
-      variance_2d = REAL(v, r32)
+      variance_2d = REAL(v, r__)
 
     END FUNCTION variance_2d
 
@@ -117,7 +126,7 @@ MODULE m_stat
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    REAL(r32) FUNCTION variance_3d(r)
+    REAL(r__) FUNCTION variance_3d(r)
 
       ! Purpose:
       !   To compute variance according to the compensated-summation version of the two-pass algorithm. Calculations in double-precision.
@@ -128,7 +137,7 @@ MODULE m_stat
       !   04/05/20                  original version
       !
 
-      REAL(r32),   DIMENSION(:,:,:), INTENT(IN) :: r                    !< array of data
+      REAL(r__),   DIMENSION(:,:,:), INTENT(IN) :: r                    !< array of data
       INTEGER(i32)                              :: i, j, k
       INTEGER(i32)                              :: nx, ny, nz
       REAL(r64)                                 :: mu, s1, s2, x, v
@@ -158,7 +167,7 @@ MODULE m_stat
 
       v = (s2 - s1) / REAL(SIZE(r) - 1, r64)
 
-      variance_3d = REAL(v, r32)
+      variance_3d = REAL(v, r__)
 
     END FUNCTION variance_3d
 
@@ -166,7 +175,7 @@ MODULE m_stat
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    REAL(r32) FUNCTION mean_1d(r)
+    REAL(r__) FUNCTION mean_1d(r)
 
       ! Purpose:
       !   To compute average. Calculations in double-precision to reduce risk of cancellation.
@@ -177,7 +186,7 @@ MODULE m_stat
       !   04/05/20                  original version
       !
 
-      REAL(r32),  DIMENSION(:), INTENT(IN) :: r               !< vector of data
+      REAL(r__),  DIMENSION(:), INTENT(IN) :: r               !< vector of data
       INTEGER(i32)                          :: i
       INTEGER(i32)                          :: n
       REAL(r64)                            :: v, c
@@ -195,7 +204,7 @@ MODULE m_stat
       ENDDO
 
       ! return mean at desired precision
-      mean_1d = REAL(v, r32)
+      mean_1d = REAL(v, r__)
 
     END FUNCTION mean_1d
 
@@ -203,7 +212,7 @@ MODULE m_stat
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    REAL(r32) FUNCTION mean_2d(r)
+    REAL(r__) FUNCTION mean_2d(r)
 
       ! Purpose:
       !   To compute average. Calculations in double-precision to reduce risk of cancellation.
@@ -214,7 +223,7 @@ MODULE m_stat
       !   04/05/20                  original version
       !
 
-      REAL(r32),    DIMENSION(:,:), INTENT(IN) :: r                       !< array of data
+      REAL(r__),    DIMENSION(:,:), INTENT(IN) :: r                       !< array of data
       INTEGER(i32)                             :: i, j
       INTEGER(i32)                             :: nx, ny
       REAL(r64)                                :: v, c
@@ -235,7 +244,7 @@ MODULE m_stat
       ENDDO
 
       ! return mean with desired precision
-      mean_2d = REAL(v, r32)
+      mean_2d = REAL(v, r__)
 
     END FUNCTION mean_2d
 
@@ -243,7 +252,7 @@ MODULE m_stat
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    REAL(r32) FUNCTION mean_3d(r)
+    REAL(r__) FUNCTION mean_3d(r)
 
       ! Purpose:
       !   To compute average. Calculations in double-precision to reduce risk of cancellation.
@@ -254,7 +263,7 @@ MODULE m_stat
       !   04/05/20                  original version
       !
 
-      REAL(r32),  DIMENSION(:,:,:), INTENT(IN) :: r                       !< array of data
+      REAL(r__),  DIMENSION(:,:,:), INTENT(IN) :: r                       !< array of data
       INTEGER(i32)                              :: i, j, k
       INTEGER(i32)                              :: nx, ny, nz
       REAL(r64)                                :: v, c
@@ -278,7 +287,7 @@ MODULE m_stat
       ENDDO
 
       ! return mean with desired precision
-      mean_3d = REAL(v, r32)
+      mean_3d = REAL(v, r__)
 
     END FUNCTION mean_3d
 
@@ -298,11 +307,11 @@ MODULE m_stat
       !   04/05/20                  original version
       !
 
-      REAL(r32),   DIMENSION(:), INTENT(IN)  :: varset                             !< set of variance values
-      REAL(r32),   DIMENSION(:), INTENT(IN)  :: avgset                             !< set of mean values
+      REAL(r__),   DIMENSION(:), INTENT(IN)  :: varset                             !< set of variance values
+      REAL(r__),   DIMENSION(:), INTENT(IN)  :: avgset                             !< set of mean values
       INTEGER(i32), DIMENSION(:), INTENT(IN)  :: nset                               !< number of points for each set
-      REAL(r32),                 INTENT(OUT) :: var                                !< resulting variance
-      REAL(r32),                 INTENT(OUT) :: avg                                !< resulting average
+      REAL(r__),                 INTENT(OUT) :: var                                !< resulting variance
+      REAL(r__),                 INTENT(OUT) :: avg                                !< resulting average
       INTEGER(i32)                            :: i
       REAL(r64)                              :: sig, mu, n, delta, m1, m2, m
 
@@ -335,8 +344,8 @@ MODULE m_stat
       ENDDO
 
       ! return with desired precision
-      var = REAL(sig, r32)
-      avg = REAL(mu, r32)
+      var = REAL(sig, r__)
+      avg = REAL(mu, r__)
 
     END SUBROUTINE parallel_variance
 

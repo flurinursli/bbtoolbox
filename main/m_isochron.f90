@@ -81,12 +81,12 @@ MODULE m_isochron
 
             CALL cornr2uv(iuc, ivc, ref, u, v)        !< on-fault corners coordinates
 
-            CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%sslip, u, v, sslip)
-            CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%dslip, u, v, dslip)
-
-            rake(1) = ATAN2(-dslip(1), sslip(1))      !< rake in radians
-            rake(2) = ATAN2(-dslip(2), sslip(2))
-            rake(3) = ATAN2(-dslip(3), sslip(3))
+            ! CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%sslip, u, v, sslip)
+            ! CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%dslip, u, v, dslip)
+            !
+            ! rake(1) = ATAN2(-dslip(1), sslip(1))      !< rake in radians
+            ! rake(2) = ATAN2(-dslip(2), sslip(2))
+            ! rake(3) = ATAN2(-dslip(3), sslip(3))
 
           ENDDO
         ENDDO
@@ -119,10 +119,12 @@ MODULE m_isochron
       CHARACTER(:), ALLOCATABLE                          :: fo
       INTEGER(i32)                                       :: i, j, ref, lu, icr, totnutr, seed
       INTEGER(i32),             DIMENSION(3)             :: iuc, ivc
-      REAL(r32)                                          :: slip, rise, rupture, rho, beta, mu, m0, moment, strike, dip
-      REAL(r32),                DIMENSION(3)             :: u, v, w, x, y, z, dslip, sslip, rake, nrl
+      REAL(r32)                                          :: rho, beta, mu, m0, moment, strike, dip
+      REAL(r32),                DIMENSION(3)             :: u, v, w, x, y, z, slip, rise, rupture, rake, nrl
 
       !-----------------------------------------------------------------------------------------------------------------------------
+
+      CALL setup_interpolation('linear', 'zero', ok)
 
       fo = 'node_' + num2char(pl) + '_' + num2char(vel) + '_' + num2char(iter) + '.bin'
 
@@ -160,40 +162,55 @@ MODULE m_isochron
 
         CALL fault_roughness(ok, ref, pl, iter)
 
-        !$omp parallel do ordered default(shared) private(i, j, iuc, ivc, slip, rise, rupture, icr, u, v, w, x, y, z)  &
+        !$omp parallel do ordered default(shared) private(i, j, iuc, ivc, slip, rise, rake, nrl, rupture, icr, u, v, w, x, y, z)  &
         !$omp& private(beta, rho, mu) reduction(+:m0) collapse(2)
         DO j = 1, nvtr(ref)
           DO i = 1, totnutr
 
             CALL cornr(j, i, iuc, ivc)        !< corner indices for current triangle
 
-            slip    = 0._r32
-            rise    = 0._r32
-            rupture = 0._r32
-
             DO icr = 1, 3
-              slip    = slip + SUM(nodes(iuc(icr), ivc(icr))%slip)
-              rise    = rise + mean(nodes(iuc(icr), ivc(icr))%rise)
-              rupture = rupture + MINVAL(nodes(iuc(icr), ivc(icr))%rupture)
+              slip(icr) = SUM(nodes(iuc(icr), ivc(icr))%slip)
+              rise(icr) = mean(nodes(iuc(icr), ivc(icr))%rise)
+              rupture(icr) = MINVAL(nodes(iuc(icr), ivc(icr))%rupture)
             ENDDO
 
-            ! values at centroid
-            slip    = slip / 3._r32
-            rise    = rise / 3._r32
-            rupture = rupture / 3._r32
-
             CALL cornr2uv(iuc, ivc, ref, u, v)        !< on-fault coordinates
-
-            CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%sslip, u, v, sslip)
-            CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%dslip, u, v, dslip)
-
-            rake(1) = ATAN2(-dslip(1), sslip(1))      !< rake in radians
-            rake(2) = ATAN2(-dslip(2), sslip(2))
-            rake(3) = ATAN2(-dslip(3), sslip(3))
 
             DO icr = 1, 3
               w(icr) = roughness(iuc(icr), ivc(icr))
             ENDDO
+
+
+
+
+
+            ! CALL normal2tri(u, v, w, nrl)
+            !
+            ! ! always have normal pointing upward (i.e. negative)
+            ! IF (MOD(i + (j-1)*totnutr, 2) == 0) nrl(:) = -nrl(:)
+            !
+            ! if (nrl(3) .gt. 0._r32) then
+            !   print*, nrl, ' - ', i, j
+            !   print*, u
+            !   print*, v
+            !   print*, w
+            !   stop
+            ! endif
+            !
+            ! strike = plane(pl)%strike * DEG_TO_RAD
+            ! dip    = plane(pl)%dip    * DEG_TO_RAD
+            !
+            ! CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%rake, u, v, rake)
+            !
+            ! CALL perturbed_mechanism(strike, dip, rake, nrl)            !< all values in radians
+
+
+
+
+
+
+
 
             CALL uvw2xyz(pl, u, v, w, x, y, z)            !< get cartesian coordinates
 
@@ -201,17 +218,24 @@ MODULE m_isochron
               z(icr) = MAX(MIN_DEPTH, z(icr))            !< make sure we never breach the free-surface (clip roughness)
             ENDDO
 
+            !$omp ordered
+            WRITE(lu) x, y, z, slip, rise, rupture         !< values at each corner
+            !$omp end ordered
+
             CALL normal2tri(x, y, z, nrl)
 
-            IF (nrl(3) .gt. 0._r32) nrl(:) = -nrl(:)          !< always take normal pointing upward
+            ! always have normal pointing upward (i.e. negative)
+            IF (MOD(i + (j-1)*totnutr, 2) == 0) nrl(:) = -nrl(:)
 
             strike = plane(pl)%strike * DEG_TO_RAD
             dip    = plane(pl)%dip    * DEG_TO_RAD
 
-            CALL perturbed_mechanism(strike, dip, rake, nrl)  !< all values in radians
+            CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%rake, u, v, rake)
+
+            CALL perturbed_mechanism(strike, dip, rake, nrl)            !< all values in radians
 
             !$omp ordered
-            WRITE(lu) x, y, z, slip, rise, rupture, strike, dip, mean(rake), nrl
+            WRITE(lu) strike, dip, rake, w     !< strike and dip are scalar
             !$omp end ordered
 
             beta = 0._r32
@@ -226,7 +250,7 @@ MODULE m_isochron
             beta = beta / 3._r32
 
             mu = rho * beta**2
-            m0 = m0 + mu * slip
+            m0 = m0 + mu * mean(slip)
 
           ENDDO
         ENDDO
@@ -257,12 +281,13 @@ MODULE m_isochron
 
       ! Purpose:
       !   to return strike dip and rake of a triangle (described by its normal "nrl") whose initial orientation has been changed and
-      !   now described by its normal "nrl". In input, "strike", "dip" and "rake" represent the initial values at each corner, while
-      !   in output they refer to the new orientation.
+      !   now described by its normal "nrl". In input, "strike" and "dip" are two scalars and "rake" a vector representing the
+      !   initial values at each corner, while in output they refer to the new orientation.
       !   The algorithm first computes the normal and slip vectors for the unperturbed case (as given by strike, dip and rake). These
       !   are used to define the pressure axis P and then (by plugging in the new normal) the new rake angle.
       !   WARNING: input values are expected to follow the N, E, D coordinates system, with dip <= 90. Internally the E, N, U system
       !            is assumed. "nrl" must be normalized to 1.
+      !   Output values are in the range [0, pi] or [-pi, 0] (slip and rake) or [0, pi] dip.
       !
       ! Revisions:
       !     Date                    Description of change
@@ -274,15 +299,17 @@ MODULE m_isochron
       REAL(r32),   DIMENSION(3), INTENT(INOUT) :: rake
       REAL(r32),   DIMENSION(3), INTENT(IN)    :: nrl
       INTEGER(i32)                             :: i
-      REAL(r32)                                :: p, cs, ss, cd, sd, cr, sr
+      REAL(r32)                                :: p, cs, ss, cd, sd, cr, sr, arg, hn2
       REAL(r32),   DIMENSION(3)                :: unrl, ul, l, h
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
       ! strike vector (perturbed case)
-      h(1) = nrl(2)   !< east
-      h(2) = -nrl(1)  !< north
+      h(1) = -nrl(1)   !< east
+      h(2) = nrl(2)    !< north
       h(3) = 0._r32
+
+      hn2 = NORM2(h)
 
       cs = COS(strike)
       ss = SIN(strike)
@@ -307,22 +334,31 @@ MODULE m_isochron
         ! slip vector for triangle with normal "nrl", where P axis is based on unperturbed geometry
         ! sqrt(2)*P = unrl - ul
         ! l = nrl - sqrt(2)*P = nrl - (unrl - ul)
-        ! note that we reverted 1,2 indices for input normal as it assumes N-E-D reference system
+        ! note that we reverted (1,2) indices for input normal as it assumes N-E-D reference system
         l(1) = nrl(2) - (unrl(1) - ul(1))
         l(2) = nrl(1) - (unrl(2) - ul(2))
-        l(3) = nrl(3) - (unrl(3) - ul(3))
+        l(3) = -nrl(3) - (unrl(3) - ul(3))
 
-        p = NORM2(l)
+        p = NORM2(l) * hn2
 
-        rake(i) = (h(1)*l(1) + h(2)*l(2) + h(3)*l(3)) / p
+        arg = (h(1)*l(1) + h(2)*l(2)) / p
+
+        arg = SIGN(MIN(1._r32, ABS(arg)), arg)          !< prevent roundoff errors, enforcing |arg| <= 1
+
+        ! sign of rake angle depends on vertical component of slip vector
+        rake(i) = SIGN(ACOS(arg), l(3))       !< values in range [0 pi] or [-pi 0]
 
       ENDDO
 
-      strike = -ATAN2(nrl(1), nrl(2))
-      dip    = ATAN(HYPOT(nrl(1), nrl(2)) / nrl(3))
+      ! remember that ATAN2(y,x) is in the interval [0,pi] when y>=0, in the interval (-pi, 0) otherwise
 
-      ! IF (strike .lt. 0._r32) strike = strike + PI * 2._r32
-      ! IF (dip .lt. 0._r32) dip = dip + PI
+      ! perturbed strike in the range [0 pi] or [-pi 0]
+      strike = ATAN2(-dble(nrl(1)), dble(nrl(2)))
+
+      ! IF (strike .lt. 0._r32) strike = 2._r32 * PI + strike
+
+      ! perturbed dip in the range [0 pi]
+      dip = ATAN2(HYPOT(dble(nrl(1)), dble(nrl(2))), -dble(nrl(3)))    !< revert sign vertical because input reference system is N-E-D
 
     END SUBROUTINE perturbed_mechanism
 

@@ -86,8 +86,8 @@ MODULE m_roughness
 
       sigma = SUM(plane(:)%length) * 10**input%source%roughness         !< assume zero-mean, such that rms = std.dev.
 
-      ! use user-defined PSD, unstructured grid
-      CALL scarf_initialize(dh, 2, cl, sigma, u1, v1, nc = nc, fc = fc, ds = MIN(dutr(ref), dvtr(ref)), rescale=1)
+      ! use user-defined PSD, unstructured grid, set "ds" always larger than "dh" to avoid aliasing
+      CALL scarf_initialize(dh, 2, cl, sigma, u1, v1, nc = nc, fc = fc, ds = 2*MIN(dutr(ref), dvtr(ref)), rescale=1)
 
       CALL scarf_execute(seed, r1, stats)
 
