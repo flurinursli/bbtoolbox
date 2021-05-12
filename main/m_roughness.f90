@@ -59,8 +59,10 @@ MODULE m_roughness
       seed = input%source%seed + (iter - 1) * SIZE(plane) + pl
 
       ! random field must be always generated on a grid whose extension is given by fault plane and whose resolution equals the
-      ! minimum grid-step
+      ! minimum grid-step amongst all refinements
+      ! nc = [MIN(umingr, vmingr(1)), MIN(umingr, vmingr(1))]
       nc = [umingr, vmingr(1)]
+      ! fc = [MAX(umaxgr, vmaxgr(SIZE(vmaxgr))), MAX(umaxgr, vmaxgr(SIZE(vmaxgr)))]
       fc = [umaxgr, vmaxgr(SIZE(vmaxgr))]
       dh = MIN(MINVAL(dutr), MINVAL(dvtr))
 
@@ -87,7 +89,7 @@ MODULE m_roughness
       sigma = SUM(plane(:)%length) * 10**input%source%roughness         !< assume zero-mean, such that rms = std.dev.
 
       ! use user-defined PSD, unstructured grid, set "ds" always larger than "dh" to avoid aliasing
-      CALL scarf_initialize(dh, 2, cl, sigma, u1, v1, nc = nc, fc = fc, ds = 2*MIN(dutr(ref), dvtr(ref)), rescale=1)
+      CALL scarf_initialize(dh, 2, cl, sigma, u1, v1, nc = nc, fc = fc, ds = 2*MAX(dutr(ref), dvtr(ref)), rescale=1)
 
       CALL scarf_execute(seed, r1, stats)
 
@@ -151,6 +153,8 @@ MODULE m_roughness
 
         ENDDO
       ENDDO
+
+      WRITE(lu) sigma
 
       CLOSE(lu, iostat = ok)
 

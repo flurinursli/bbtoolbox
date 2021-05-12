@@ -31,7 +31,7 @@ MODULE m_source
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
-  INTEGER(i32), PARAMETER :: REFINE = 4                     !< grid refinement factor for fast-marching
+  INTEGER(i32), PARAMETER :: REFINE = 10                     !< grid refinement factor for fast-marching
   INTEGER(i32), PARAMETER :: MAX_EXPAND = 20
   REAL(r32),    PARAMETER :: PTSRC_FACTOR = 1._r32 / 10._r32
   REAL(r32),    PARAMETER :: PI = 3.14159265358979323846_r64
@@ -1489,19 +1489,19 @@ MODULE m_source
           ENDDO
 
           IF (time .ge. 0._r32) THEN
-            ! IF (ALLOCATED(uc)) THEN
-            !   uc = [uc, i]
-            !   vc = [vc, j]
-            !   uo = [uo, uf]             !< needed only if DEBUG is on
-            !   vo = [vo, vf]
-            !   t0 = [t0, time]
-            ! ELSE
+            IF (ALLOCATED(uc)) THEN
+              uc = [uc, i]
+              vc = [vc, j]
+              uo = [uo, uf]             !< needed only if DEBUG is on
+              vo = [vo, vf]
+              t0 = [t0, time]
+            ELSE
               uc = [i]
               vc = [j]
               uo = [uf]             !< needed only if DEBUG is on
               vo = [vf]
               t0 = [time]
-            ! ENDIF
+            ENDIF
           ENDIF
 
         ENDDO

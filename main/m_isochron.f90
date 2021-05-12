@@ -181,37 +181,6 @@ MODULE m_isochron
               w(icr) = roughness(iuc(icr), ivc(icr))
             ENDDO
 
-
-
-
-
-            ! CALL normal2tri(u, v, w, nrl)
-            !
-            ! ! always have normal pointing upward (i.e. negative)
-            ! IF (MOD(i + (j-1)*totnutr, 2) == 0) nrl(:) = -nrl(:)
-            !
-            ! if (nrl(3) .gt. 0._r32) then
-            !   print*, nrl, ' - ', i, j
-            !   print*, u
-            !   print*, v
-            !   print*, w
-            !   stop
-            ! endif
-            !
-            ! strike = plane(pl)%strike * DEG_TO_RAD
-            ! dip    = plane(pl)%dip    * DEG_TO_RAD
-            !
-            ! CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%rake, u, v, rake)
-            !
-            ! CALL perturbed_mechanism(strike, dip, rake, nrl)            !< all values in radians
-
-
-
-
-
-
-
-
             CALL uvw2xyz(pl, u, v, w, x, y, z)            !< get cartesian coordinates
 
             DO icr = 1, 3
