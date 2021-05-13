@@ -26,7 +26,7 @@ CPP_OBJS = fmm.o
 
 # compile C++ objects
 $(CPP_OBJS) : %.o : %.cpp
-	$(CXX) -O2 -cpp -DNDEBUG $(PP_FLAGS) -c -o $@ $<
+	$(CXX) -O3 -cpp -DNDEBUG $(PP_FLAGS) -c -o $@ $<
 
 # define list of Fortran + C objects
 OBJS = $(F90_OBJS)

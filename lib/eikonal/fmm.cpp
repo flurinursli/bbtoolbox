@@ -52,7 +52,8 @@ void fmm_c(int gridsize[], real gridstep[], int nsrc, int* src, real* values, re
     velocity++;
   }
 
-  auto solver = fmm::HighAccuracyVaryingSpeedEikonalSolver<real, 2>(grid_spacing, grid_size, speed_buffer);
+  // auto solver = fmm::HighAccuracyVaryingSpeedEikonalSolver<real, 2>(grid_spacing, grid_size, speed_buffer);
+  auto solver = fmm::VaryingSpeedEikonalSolver<real, 2>(grid_spacing, grid_size, speed_buffer);
 
   auto arrival_times = fmm::SignedArrivalTime(grid_size, source_indices, source_times, solver);
 

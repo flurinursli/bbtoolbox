@@ -31,7 +31,7 @@ MODULE m_source
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
-  INTEGER(i32), PARAMETER :: REFINE = 10                     !< grid refinement factor for fast-marching
+  INTEGER(i32), PARAMETER :: REFINE = 4                     !< grid refinement factor for fast-marching
   INTEGER(i32), PARAMETER :: MAX_EXPAND = 20
   REAL(r32),    PARAMETER :: PTSRC_FACTOR = 1._r32 / 10._r32
   REAL(r32),    PARAMETER :: PI = 3.14159265358979323846_r64

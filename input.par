@@ -36,8 +36,8 @@ origin lon=-116.32645 lat=34.68132      # that's station BM52
 # fields are "vp", "vs", "rho", "depth" (default=0), "vpgrad" (default=0), "vsgrad" (default=0)
 # first model
 layer vp = 1400 vs = 800  rho = 2000
-#layer vp = 2400 vs = 1400 rho = 2400 #depth = 500
-#layer vp = 3800 vs = 2200 rho = 2700 #depth = 2100
+layer vp = 2400 vs = 1400 rho = 2400 depth = 500
+layer vp = 3800 vs = 2200 rho = 2700 depth = 2100
 #layer vp=4000 vs=3500 rho=2800
 
 # second model
