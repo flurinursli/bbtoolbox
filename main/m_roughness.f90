@@ -19,10 +19,9 @@ MODULE m_roughness
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
-  INTEGER(i32), ALLOCATABLE, DIMENSION(:) :: npts
-  REAL(r32),    ALLOCATABLE, DIMENSION(:) :: avg, var
-
-  REAL(r32), ALLOCATABLE, DIMENSION(:,:), TARGET :: roughness
+  INTEGER(i32), ALLOCATABLE, DIMENSION(:)           :: npts
+  REAL(r32),    ALLOCATABLE, DIMENSION(:)           :: avg, var
+  REAL(r32),    ALLOCATABLE, DIMENSION(:,:), TARGET :: roughness        !< "target" attribute used only inside this module
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -67,6 +66,8 @@ MODULE m_roughness
       dh = MIN(MINVAL(dutr), MINVAL(dvtr))
 
       ALLOCATE(roughness(nugr(ref), nvgr(ref)), u(nugr(ref), nvgr(ref)), v(nugr(ref), nvgr(ref)))
+
+      roughness(:,:) = 0._r32
 
       ! define points where the random field will be computed
       DO j = 1, nvgr(ref)

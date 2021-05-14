@@ -28,6 +28,10 @@ MODULE m_isochron
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
+  REAL(r32), ALLOCATABLE, DIMENSION(:) :: shooting            !< depth of shooting points
+
+  ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+
   PROCEDURE(rik_at_nodes), POINTER :: nodefun
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
@@ -40,21 +44,31 @@ MODULE m_isochron
 
     SUBROUTINE solve_isochron_integral(ok, pl, vel, iter)
 
+      ! Purpose:
+      !   to evaluate the isochron integral for plane "pl" embedded in velocity model "vel" and iteration "iter". Integration occurs
+      !   on a plane whose initial geometry and mechanism are randomized based on fractal roughness. Contributions of direct P- and
+      !   S-waves are calculated for each triangle making up the composite (refined) mesh.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
       INTEGER(i32),                           INTENT(OUT) :: ok
       INTEGER(i32),                           INTENT(IN)  :: pl, vel, iter
-      INTEGER(i32)                                        :: ref, totnutr, i, j, icr, seed
+      INTEGER(i32)                                        :: i, j, ref, icr, totnutr, seed
       INTEGER(i32),              DIMENSION(3)             :: iuc, ivc
-      REAL(r32),                 DIMENSION(3)             :: slip, dslip, sslip, u, v, rake
-      REAL(r32),    ALLOCATABLE, DIMENSION(:)             :: depth, rho, vs, vp, vsgrad, vpgrad
+      REAL(r32)                                           :: rho, beta, mu, m0, moment, strike, dip
+      REAL(r32),                 DIMENSION(3)             :: u, v, w, x, y, z, slip, rise, rupture, rake, nrl
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
-      depth  = input%velocity(vel)%depth
-      rho    = input%velocity(vel)%rho
-      vs     = input%velocity(vel)%vs
-      vp     = input%velocity(vel)%vp
-      vsgrad = input%velocity(vel)%vsgrad
-      vpgrad = input%velocity(vel)%vpgrad
+      moment = 0._r32
+
+      nodefun => rik_at_nodes
+
+      IF (input%source%is_point) nodefun => ptrsrc_at_nodes
 
       ! set "seed" such that random numbers depend on fault plane number and iteration
       seed = input%source%seed + (iter - 1) * SIZE(plane) + pl
@@ -63,9 +77,17 @@ MODULE m_isochron
 
         ALLOCATE(nodes(nugr(ref), nvgr(ref)))
 
-        !CALL nodefun(ref, pl, vel, seed)               !< define slip, rupture time and rise time on mesh nodes
+        CALL nodefun(ref, pl, vel, seed)                !< define slip, rupture time and rise time on mesh nodes
 
-        totnutr = nvtr(ref) * (2 * nutr(ref) - 1)  !< total triangles in a row
+        totnutr = 2 * nutr(ref) - 1                     !< total triangles in a row
+
+        m0 = 0._r32
+
+        ! generate fault plane roughness
+        CALL fault_roughness(ok, ref, pl, iter)
+
+        ! shoot rays between receivers and a set of sources spanning (vertically) current mesh
+        CALL rayshooting(ref, pl, vel)
 
         !$omp parallel do default(shared) private(i, j, iuc, ivc, slip)
         DO j = 1, nvtr(ref)
@@ -73,20 +95,54 @@ MODULE m_isochron
 
             CALL cornr(j, i, iuc, ivc)        !< corner indices for current triangle
 
-            slip(1) = SUM(nodes(iuc(1), ivc(1))%slip)
-            slip(2) = SUM(nodes(iuc(2), ivc(2))%slip)
-            slip(3) = SUM(nodes(iuc(3), ivc(3))%slip)
+            DO icr = 1, 3
+              slip(icr) = SUM(nodes(iuc(icr), ivc(icr))%slip)
+            ENDDO
 
             IF (ALL(slip .eq. 0._r32)) CYCLE          !< jump to next triangle if current has zero slip
 
-            CALL cornr2uv(iuc, ivc, ref, u, v)        !< on-fault corners coordinates
+            DO icr = 1, 3
+              rise(icr) = mean(nodes(iuc(icr), ivc(icr))%rise)
+              rupture(icr) = MINVAL(nodes(iuc(icr), ivc(icr))%rupture)
+            ENDDO
 
-            ! CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%sslip, u, v, sslip)
-            ! CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%dslip, u, v, dslip)
-            !
-            ! rake(1) = ATAN2(-dslip(1), sslip(1))      !< rake in radians
-            ! rake(2) = ATAN2(-dslip(2), sslip(2))
-            ! rake(3) = ATAN2(-dslip(3), sslip(3))
+            CALL cornr2uv(iuc, ivc, ref, u, v)        !< on-fault coordinates
+
+            DO icr = 1, 3
+              w(icr) = roughness(iuc(icr), ivc(icr))
+            ENDDO
+
+            CALL uvw2xyz(pl, u, v, w, x, y, z)            !< get cartesian coordinates
+
+            DO icr = 1, 3
+              z(icr) = MAX(MIN_DEPTH, z(icr))             !< make sure we never breach the free-surface (clip roughness)
+            ENDDO
+
+            CALL normal2tri(x, y, z, nrl)
+
+            ! always have normal pointing upward (i.e. negative)
+            IF (MOD(i + (j-1)*totnutr, 2) == 0) nrl(:) = -nrl(:)
+
+            strike = plane(pl)%strike * DEG_TO_RAD
+            dip    = plane(pl)%dip    * DEG_TO_RAD
+
+            CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%rake, u, v, rake)
+
+            CALL perturbed_mechanism(strike, dip, rake, nrl)            !< all values in radians
+
+            beta = 0._r32
+            rho  = 0._r32
+
+            DO icr = 1, 3
+              beta = beta + vinterp(input%velocity(vel)%depth, input%velocity(vel)%vs, input%velocity(vel)%vsgrad, z(icr))
+              rho  = rho  + vinterp(input%velocity(vel)%depth, input%velocity(vel)%rho, input%velocity(vel)%rhograd, z(icr))
+            ENDDO
+
+            rho = rho / 3._r32
+            beta = beta / 3._r32
+
+            mu = rho * beta**2
+            m0 = m0 + mu * mean(slip)
 
           ENDDO
         ENDDO
@@ -106,7 +162,7 @@ MODULE m_isochron
     SUBROUTINE node2disk(ok, pl, vel, iter)
 
       ! Purpose:
-      !   to write to disk the rupture parameters defined in a mesh array.
+      !   to write to disk the rupture parameters defined for plane "pl" embedded in velocity model "vel" and iteration "iter".
       !
       ! Revisions:
       !     Date                    Description of change
@@ -162,6 +218,8 @@ MODULE m_isochron
 
         CALL fault_roughness(ok, ref, pl, iter)
 
+  CALL rayshooting(ref, pl, vel)
+
         !$omp parallel do ordered default(shared) private(i, j, iuc, ivc, slip, rise, rake, nrl, rupture, icr, u, v, w, x, y, z)  &
         !$omp& private(beta, rho, mu) reduction(+:m0) collapse(2)
         DO j = 1, nvtr(ref)
@@ -184,7 +242,7 @@ MODULE m_isochron
             CALL uvw2xyz(pl, u, v, w, x, y, z)            !< get cartesian coordinates
 
             DO icr = 1, 3
-              z(icr) = MAX(MIN_DEPTH, z(icr))            !< make sure we never breach the free-surface (clip roughness)
+              z(icr) = MAX(MIN_DEPTH, z(icr))             !< make sure we never breach the free-surface (clip roughness)
             ENDDO
 
             !$omp ordered
@@ -335,12 +393,132 @@ MODULE m_isochron
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
+    SUBROUTINE rayshooting(ref, pl, vel)
+
+      ! Purpose:
+      !   to compute a set of ray-related quantities (ray parameter, horizontal distance, traveltime, ray amplitude) for a set of
+      !   point-like sources covering fault plane "pl" embedded in velocity model "vel". These quantities refer to direct P- and S-
+      !   waves.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      INTEGER(i32),                           INTENT(IN) :: ref, pl, vel
+      INTEGER(i32)                                       :: iface, i
+      INTEGER(i32),              DIMENSION(3)            :: iuc, ivc
+      REAL(r32)                                          :: zmin, zmax, delta, vtop, vbottom, vs, dz, zo
+      REAL(r32),                              PARAMETER  :: GAP = 10._r32
+      REAL(r32),                 DIMENSION(3)            :: u, v, w, x, y, z
+      REAL(r32),    ALLOCATABLE, DIMENSION(:)            :: distance
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      IF (ALLOCATED(shooting)) DEALLOCATE(shooting)
+
+      delta = MAXVAL(ABS(roughness)) * COS(plane(pl)%dip * DEG_TO_RAD)
+
+      w = [0._r32, 0._r32, 0._r32]
+
+      CALL cornr(1, 1, iuc, ivc)                !< corner indices for first triangle first row
+      CALL cornr2uv(iuc, ivc, ref, u, v)        !< on-fault coordinates
+      CALL uvw2xyz(pl, u, v, w, x, y, z)        !< get cartesian coordinates
+
+      zmin = MINVAL(z)
+
+      CALL cornr(nvtr(ref), 1, iuc, ivc)        !< corner indices for first triangle last row
+      CALL cornr2uv(iuc, ivc, ref, u, v)        !< on-fault coordinates
+      CALL uvw2xyz(pl, u, v, w, x, y, z)        !< get cartesian coordinates
+
+      zmax = MAXVAL(z)
+
+      ASSOCIATE(model => input%velocity(vel))
+
+        vtop    = vinterp(model%depth, model%vs, model%vsgrad, zmin)        !< vs at upper edge
+        vbottom = vinterp(model%depth, model%vs, model%vsgrad, zmax)        !< vs at lower edge
+
+        vs = MIN(vtop, vbottom)     !< min shear wave speed over current mesh
+
+        dz = vs / input%coda%fmax / input%advanced%pmw        !< desired spacing between shooting points
+
+        ! add max deviation from planarity
+        zmin = MAX(MIN_DEPTH, zmin - delta)                   !< don't go too close free-surface (i.e. above MIN_DEPTH)
+        zmax = zmax + delta
+
+        ALLOCATE(distance(SIZE(model%depth)))
+
+        ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+        ! ---------------------------------------------- define shooting points ----------------------------------------------------
+
+        ! handle shallowest shooting point
+        distance = ABS(zmin - model%depth)
+        iface    = MINLOC(distance, DIM=1)
+
+        ! shooting points cannot coincide with velocity discontinuities
+        IF (distance(iface) .lt. GAP) zmin = MAX(MIN_DEPTH, model%depth(iface) - GAP)   !< move it just above interface if too close
+
+        shooting = [zmin]
+
+        zo = MIN(zmin + dz, zmax)            !< move to following source depth (can be directly "zmax" if very close to "zmin")
+
+        DO
+
+          distance = ABS(zo - model%depth)
+          iface    = MINLOC(distance, DIM=1)
+
+          IF (distance(iface) .lt. GAP) zo = model%depth(iface) + GAP        !< move source just below interface
+
+          shooting = [shooting, zo]        !< append shooting point
+
+          IF (zo .ge. zmax) EXIT           !< we have covered depth interval as needed
+
+          zo = zo + dz
+
+        ENDDO
+
+      END ASSOCIATE
+
+      IF (input%advanced%verbose .eq. 2) THEN
+
+        zmin = BIG
+        zmax = -BIG
+
+        DO i = 2, SIZE(shooting)
+          zo   = shooting(i) - shooting(i - 1)
+          zmin = MIN(zmin, zo)
+          zmax = MAX(zmax, zo)
+        ENDDO
+
+        CALL update_log(num2char('<ray shooting>', justify='c', width=30) + num2char('Points', width=15, justify='r') + '|' +  &
+                        num2char('Zmin', width=15, justify='r') + '|' + num2char('Zmax', width=15, justify='r') + '|' +  &
+                        num2char('Separation', width=15, justify='r') + '|')
+
+        CALL update_log(num2char('', width=30, justify='c')  +  &
+                        num2char(SIZE(shooting), width=15, justify='r') + '|' + &
+                        num2char(MINVAL(shooting), width=15, notation='f', precision=2, justify='r') + '|' + &
+                        num2char(MAXVAL(shooting), width=15, notation='f', precision=2, justify='r') + '|' +  &
+                        num2char(num2char(zmin, notation='f', width=6, precision=2) + ', ' +   &
+                                 num2char(zmax, notation='f', width=6, precision=2), width=15, justify='r') + '|',blankline=.false.)
+
+      ENDIF
+
+    END SUBROUTINE rayshooting
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
 
 END MODULE m_isochron
