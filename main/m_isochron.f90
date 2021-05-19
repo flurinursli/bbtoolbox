@@ -11,6 +11,7 @@ MODULE m_isochron
   USE, NON_INTRINSIC :: m_toolbox
   USE, NON_INTRINSIC :: m_strings
   USE, NON_INTRINSIC :: m_logfile
+  USE, NON_INTRINSIC :: m_wkbj
 
   IMPLICIT none
 
@@ -28,7 +29,8 @@ MODULE m_isochron
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
-  REAL(r32), ALLOCATABLE, DIMENSION(:) :: shooting            !< depth of shooting points
+  INTEGER(i32),              DIMENSION(2) :: maxsheets
+  REAL(r32),    ALLOCATABLE, DIMENSION(:) :: shooting            !< depth of shooting points
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -87,7 +89,7 @@ MODULE m_isochron
         CALL fault_roughness(ok, ref, pl, iter)
 
         ! shoot rays between receivers and a set of sources spanning (vertically) current mesh
-        CALL rayshooting(ref, pl, vel)
+        CALL rayshooting(ok, ref, pl, vel)
 
         !$omp parallel do default(shared) private(i, j, iuc, ivc, slip)
         DO j = 1, nvtr(ref)
@@ -218,7 +220,8 @@ MODULE m_isochron
 
         CALL fault_roughness(ok, ref, pl, iter)
 
-  CALL rayshooting(ref, pl, vel)
+  CALL rayshooting(ok, ref, pl, vel)
+stop
 
         !$omp parallel do ordered default(shared) private(i, j, iuc, ivc, slip, rise, rake, nrl, rupture, icr, u, v, w, x, y, z)  &
         !$omp& private(beta, rho, mu) reduction(+:m0) collapse(2)
@@ -393,7 +396,7 @@ MODULE m_isochron
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE rayshooting(ref, pl, vel)
+    SUBROUTINE rayshooting(ok, ref, pl, vel)
 
       ! Purpose:
       !   to compute a set of ray-related quantities (ray parameter, horizontal distance, traveltime, ray amplitude) for a set of
@@ -406,15 +409,20 @@ MODULE m_isochron
       !   08/03/21                  original version
       !
 
+      INTEGER(i32),                           INTENT(OUT) :: ok
       INTEGER(i32),                           INTENT(IN) :: ref, pl, vel
-      INTEGER(i32)                                       :: iface, i
+      CHARACTER(:), ALLOCATABLE                          :: fo
+      INTEGER(i32)                                       :: iface, i, j, wavetype, rec, sheets, totnutr, icr, layers, lu
       INTEGER(i32),              DIMENSION(3)            :: iuc, ivc
-      REAL(r32)                                          :: zmin, zmax, delta, vtop, vbottom, vs, dz, zo
+      REAL(r32)                                          :: zmin, zmax, delta, vtop, vbottom, vs, dz, zo, alpha, beta, rho, rmax
       REAL(r32),                              PARAMETER  :: GAP = 10._r32
       REAL(r32),                 DIMENSION(3)            :: u, v, w, x, y, z
       REAL(r32),    ALLOCATABLE, DIMENSION(:)            :: distance
+      REAL(r32),    ALLOCATABLE, DIMENSION(:,:)          :: velocity
 
       !-----------------------------------------------------------------------------------------------------------------------------
+
+      ok = 0
 
       IF (ALLOCATED(shooting)) DEALLOCATE(shooting)
 
@@ -503,6 +511,133 @@ MODULE m_isochron
                                  num2char(zmax, notation='f', width=6, precision=2), width=15, justify='r') + '|',blankline=.false.)
 
       ENDIF
+
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+      ! -------------------------------------------------- max s/r distance --------------------------------------------------------
+
+      totnutr = 2 * nutr(ref) - 1                     !< total triangles in a row
+
+      rmax = 0._r32
+
+      !$omp parallel do default(shared) private(i, j, iuc, ivc, u, v, w, x, y, z, rec) reduction(max: rmax)
+      DO j = 1, nvtr(ref)
+        DO i = 1, totnutr
+
+          CALL cornr(j, i, iuc, ivc)                 !< corner indices for current triangle
+          CALL cornr2uv(iuc, ivc, ref, u, v)        !< on-fault coordinates
+
+          DO icr = 1, 3
+            w(icr) = roughness(iuc(icr), ivc(icr))
+          ENDDO
+
+          CALL uvw2xyz(pl, u, v, w, x, y, z)            !< get cartesian coordinates
+
+          ! compute max source-receiver distance
+          DO icr = 1, 3
+            DO rec = 1, SIZE(input%receiver)
+              rmax = MAX(rmax, HYPOT(x(icr) - input%receiver(rec)%x, y(icr) - input%receiver(rec)%y) / 1000._r32)
+            ENDDO
+          ENDDO
+
+        ENDDO
+      ENDDO
+      !$omp end parallel do
+
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+      ! --------------------------------------------- prepare velocity model -------------------------------------------------------
+
+      ASSOCIATE(model => input%velocity(vel))
+
+        layers = SIZE(model%depth)
+
+        ALLOCATE(velocity(4, 2*layers))
+
+        DO i = 1, layers
+
+          IF (i .gt. 1) THEN
+
+            zo = model%depth(i) - GAP
+
+            alpha = vinterp(model%depth, model%vp, model%vpgrad, zo)
+            beta  = vinterp(model%depth, model%vs, model%vsgrad, zo)
+            rho   = vinterp(model%depth, model%rho, model%rhograd, zo)
+
+            velocity(:, (i - 1)*2) = [zo, alpha, beta, rho] / 1000._r32         !< slightly above interface
+
+          ENDIF
+
+          zo = model%depth(i) + GAP
+
+          IF (i .eq. 1) zo = 0._r32
+
+          alpha = vinterp(model%depth, model%vp, model%vpgrad, zo)
+          beta  = vinterp(model%depth, model%vs, model%vsgrad, zo)
+          rho   = vinterp(model%depth, model%rho, model%rhograd, zo)
+
+          velocity(:, (i - 1)*2 + 1) = [zo, alpha, beta, rho]  / 1000._r32      !< slightly below interface
+
+        ENDDO
+
+        zo = 100000._r32
+
+        alpha = vinterp(model%depth, model%vp, model%vpgrad, zo)
+        beta  = vinterp(model%depth, model%vs, model%vsgrad, zo)
+        rho   = vinterp(model%depth, model%rho, model%rhograd, zo)
+
+        velocity(:, 2*layers) = [zo, alpha, beta, rho] / 1000._r32
+
+      END ASSOCIATE
+
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+      ! ----------------------------------------------------- shoot rays -----------------------------------------------------------
+
+#ifdef DEBUG
+      fo = 'spred_' + num2char(ref) + '_' + num2char(pl) + '_' + num2char(vel) + '.txt'
+
+      OPEN(newunit = lu, file = TRIM(fo), status = 'unknown', form = 'formatted', access = 'sequential', action = 'write',  &
+           iostat = ok)
+
+      IF (ok .ne. 0) THEN
+        CALL report_error('Error while opening file' + TRIM(fo))
+        RETURN
+      ENDIF
+#endif
+
+      ALLOCATE(wkbj(SIZE(shooting), 2))
+
+      DO i = 1, SIZE(shooting)
+        shooting(i) = shooting(i) / 1000._r32
+      ENDDO
+
+      DO wavetype = 1, 2
+
+        maxsheets(wavetype) = 0
+
+        DO i = 1, SIZE(shooting)
+
+          CALL spred(ok, velocity, rmax, shooting(i), i, wavetype, lu, sheets)
+
+          maxsheets(wavetype) = MAX(maxsheets(wavetype), sheets)     !< max number of sheets for each wave type
+
+        ENDDO
+
+      ENDDO
+
+
+#ifdef DEBUG
+      CLOSE(lu, iostat = ok)
+
+      IF (ok .ne. 0) THEN
+        CALL report_error('Error while closing file ' + fo)
+        RETURN
+      ENDIF
+#endif
+
+      IF (input%advanced%verbose .eq. 2) THEN
+
+
+      ENDIF
+
 
     END SUBROUTINE rayshooting
 
