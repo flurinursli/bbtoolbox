@@ -12,6 +12,9 @@ MODULE m_isochron
   USE, NON_INTRINSIC :: m_strings
   USE, NON_INTRINSIC :: m_logfile
   USE, NON_INTRINSIC :: m_wkbj
+#ifdef MPI
+  USE :: mpi
+#endif
 
   IMPLICIT none
 
@@ -22,6 +25,12 @@ MODULE m_isochron
   PUBLIC :: solve_isochron_integral, node2disk
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+
+#ifdef MPI
+  INTEGER(i32), PARAMETER :: COMM = MPI_COMM_SELF
+#else
+  INTEGER(i32), PARAMETER :: COMM = 0
+#endif
 
   REAL(r32), PARAMETER :: PI = 3.14159265358979323846_r64
   REAL(r32), PARAMETER :: DEG_TO_RAD = PI / 180._r32
@@ -383,12 +392,12 @@ stop
       ! remember that ATAN2(y,x) is in the interval [0,pi] when y>=0, in the interval (-pi, 0) otherwise
 
       ! perturbed strike in the range [0 pi] or [-pi 0]
-      strike = ATAN2(-dble(nrl(1)), dble(nrl(2)))
+      strike = ATAN2(-REAL(nrl(1), r64), REAL(nrl(2), r64))
 
       ! IF (strike .lt. 0._r32) strike = 2._r32 * PI + strike
 
       ! perturbed dip in the range [0 pi]
-      dip = ATAN2(HYPOT(dble(nrl(1)), dble(nrl(2))), -dble(nrl(3)))    !< revert sign vertical because input reference system is N-E-D
+      dip = ATAN2(HYPOT(REAL(nrl(1), r64), REAL(nrl(2), r64)), -REAL(nrl(3), r64))    !< revert sign vertical because input reference system is N-E-D
 
     END SUBROUTINE perturbed_mechanism
 
@@ -419,6 +428,8 @@ stop
       REAL(r32),                 DIMENSION(3)            :: u, v, w, x, y, z
       REAL(r32),    ALLOCATABLE, DIMENSION(:)            :: distance
       REAL(r32),    ALLOCATABLE, DIMENSION(:,:)          :: velocity
+      REAL(r64),                 DIMENSION(1)            :: tictoc
+
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
@@ -465,7 +476,7 @@ stop
         iface    = MINLOC(distance, DIM=1)
 
         ! shooting points cannot coincide with velocity discontinuities
-        IF (distance(iface) .lt. GAP) zmin = MAX(MIN_DEPTH, model%depth(iface) - GAP)   !< move it just above interface if too close
+        IF (distance(iface) .lt. GAP) zmin = MAX(MIN_DEPTH, model%depth(iface) - GAP*2)   !< move it just above interface if too close
 
         shooting = [zmin]
 
@@ -476,7 +487,7 @@ stop
           distance = ABS(zo - model%depth)
           iface    = MINLOC(distance, DIM=1)
 
-          IF (distance(iface) .lt. GAP) zo = model%depth(iface) + GAP        !< move source just below interface
+          IF (distance(iface) .lt. GAP) zo = model%depth(iface) + GAP*2        !< move source just below interface
 
           shooting = [shooting, zo]        !< append shooting point
 
@@ -542,6 +553,8 @@ stop
         ENDDO
       ENDDO
       !$omp end parallel do
+
+      rmax = 1.2 * rmax            !< slightly increase maximum distance
 
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! --------------------------------------------- prepare velocity model -------------------------------------------------------
@@ -609,6 +622,10 @@ stop
         shooting(i) = shooting(i) / 1000._r32
       ENDDO
 
+#ifdef PERF
+      CALL watch_start(tictoc(1), COMM)
+#endif
+
       DO wavetype = 1, 2
 
         maxsheets(wavetype) = 0
@@ -623,6 +640,13 @@ stop
 
       ENDDO
 
+#ifdef PERF
+      CALL watch_stop(tictoc(1), COMM)
+      IF (input%advanced%verbose .eq. 2) THEN
+        CALL update_log(num2char('<<elapsed time>>', justify='c', width=30) + num2char(tictoc(1), width=15, notation='f',   &
+                        precision=3, justify='r') + '|', blankline=.false.)
+      ENDIF
+#endif
 
 #ifdef DEBUG
       CLOSE(lu, iostat = ok)
@@ -634,6 +658,26 @@ stop
 #endif
 
       IF (input%advanced%verbose .eq. 2) THEN
+
+        ! zmin = BIG
+        ! zmax = -BIG
+        !
+        ! DO i = 2, SIZE(shooting)
+        !   zo   = shooting(i) - shooting(i - 1)
+        !   zmin = MIN(zmin, zo)
+        !   zmax = MAX(zmax, zo)
+        ! ENDDO
+        !
+        ! CALL update_log(num2char('<ray shooting>', justify='c', width=30) + num2char('Points', width=15, justify='r') + '|' +  &
+        !                 num2char('Zmin', width=15, justify='r') + '|' + num2char('Zmax', width=15, justify='r') + '|' +  &
+        !                 num2char('Separation', width=15, justify='r') + '|')
+        !
+        ! CALL update_log(num2char('', width=30, justify='c')  +  &
+        !                 num2char(SIZE(shooting), width=15, justify='r') + '|' + &
+        !                 num2char(MINVAL(shooting), width=15, notation='f', precision=2, justify='r') + '|' + &
+        !                 num2char(MAXVAL(shooting), width=15, notation='f', precision=2, justify='r') + '|' +  &
+        !                 num2char(num2char(zmin, notation='f', width=6, precision=2) + ', ' +   &
+        !                 num2char(zmax, notation='f', width=6, precision=2), width=15, justify='r') + '|',blankline=.false.)
 
 
       ENDIF

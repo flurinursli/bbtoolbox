@@ -51,6 +51,7 @@ MODULE m_wkbj
       INTEGER(i32),              DIMENSION(20,2)                         :: nps
       INTEGER(i32),              DIMENSION(2)                            :: jmin, jmax
       INTEGER(i32), ALLOCATABLE, DIMENSION(:)                            :: itmp
+      LOGICAL                                                            :: upgoin, spconv
       REAL(r64)                                                          :: rsur, dum, sygn, z, za, zb, dz, x, xx, xi, zr, zs, r
       REAL(r64)                                                          :: dpinit, ulast, dudp, dumin, sdudp, du, pmax, pmin, domda
       REAL(r64)                                                          :: dadzs, dbdzs, dadzr, dbdzr, drhdzs, drhdzr, sdomda
@@ -58,18 +59,12 @@ MODULE m_wkbj
       REAL(r64)                                                          :: alff, alfo, betf, beto, rhof, rhoo, pta, ptb, cmin, cmax
       REAL(r64)                                                          :: velo, velf, tho, thf, qp, travtm, cvel, pn, vp, vs, tau
       REAL(r64),                                             PARAMETER   :: one = 1.000000000001_r64
-      REAL(r64),                 DIMENSION(1000)                         :: vpn, vxx, vtt, vqp, vr, vsheet, vtypef, vtypeo
+      REAL(r64),                 DIMENSION(10000)                        :: vpn, vxx, vtt, vqp, vr, vsheet, vtypef, vtypeo
       REAL(r64),                 DIMENSION(SIZE(phys,2)+2)               :: rho
       REAL(r64),                 DIMENSION(6,SIZE(phys,2)+2)             :: vel
       REAL(r64),    ALLOCATABLE, DIMENSION(:)                            :: tmp
 
-
-      LOGICAL           :: UPGOIN, SPCONV
-
-
       !-----------------------------------------------------------------------------------------------------------------------------
-
-print*, xmax
 
       ok = 0
 
@@ -229,7 +224,6 @@ print*, xmax
          ENDIF
 
       ENDIF
-
 
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! ---------------------------------------- define velocities at source and receiver ------------------------------------------
@@ -446,7 +440,7 @@ print*, xmax
         ! ---------------------------------------------- loop over ray parameter ---------------------------------------------------
 
         ! here we explore all rays from "pmin" to "pmax"
-        raypar: DO i = 1, 1000     !< hardwired... make it 10*MAX_P_RAYS???
+        raypar: DO i = 1, 10000
 
           pplast = pp
           pp = pp + dp
@@ -494,7 +488,7 @@ print*, xmax
           27 itry = itry + 1
 
           ! too many iterations, give up
-          IF (itry .ge. 10) THEN
+          IF (itry .ge. 100) THEN
             IF (upgoin .and. ((pplast + dp) .gt. pmax))  CYCLE ray
             dp = dpinit
             GO TO 21
@@ -592,7 +586,7 @@ print*, xmax
         ENDDO raypar
         ! ----------------end of ray parameter loop------------------------
 
-        sheets = MAX(sheets, isheet)       !< store highest number of sheets for current wtp and source
+        sheets = MAX(sheets, isheet)       !< store highest number of sheets amongst wavetype
 
       ENDDO ray
       ! ----------------------end of loop over rays------------------------
@@ -623,11 +617,16 @@ print*, xmax
 
     SUBROUTINE inser2d(nmod, z, ir, vel, rho, dadz, dbdz, drdz)
 
-      !  INSER2 INSERTS AN INTERFACE AT DEPTH Z IN THE VELOCITY MODEL. THE VELOCITIES ARE
-      !  CONTINUOUS ACROSS THE INTERFACE AND THE VELOCITIES ARE DETERMINED BY LINEAR
-      !  INTERPOLATION
-
-      ! AUTHOR:  PAUL SPUDICH
+      ! Purpose:
+      !   to insert an interface at depth "z" in the velocity model "vel". Velocities are continuous across the interface and the
+      !   velocities are determined by linear interpolation. This subroutine was originally written by P.Spudich and modified by
+      !   W.Imperatori.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
 
       INTEGER(i32),                      INTENT(INOUT) :: nmod
       REAL(r64),                         INTENT(IN)    :: z
@@ -669,48 +668,42 @@ print*, xmax
 
     SUBROUTINE pxint2d(nmod, p, tau, x, r, domda, vel, icn, lln, nps, itypes, ityper, icns, icnr, ierr)
 
-    ! PXINT2 IS A SUBROUTINE TO CALCULATE DELAY TIME, DISTANCE, AND SPREADING FACTOR FOR A
-    ! GEOMETRIC RAY. THIS SUBROUTINE WAS ORIGINALLY PART OF THE PROGRAM WKBJ3 WRITTEN BY
-    ! S.K. DEY-SARKAR AND C.H.CHAPMAN, AS DESCRIBED IN DEY-SARKAR AND CHAPMAN, "A SIMPLE
-    ! METHOD FOR THE COMPUTATION OF BODY-WAVE SEISMOGRAMS," BULL. SEISMOL. SOC. AM., V68,
-    ! P. 1577-1593, 1978. THIS SUBROUTINE WAS MODIFIED BY P. SPUDICH
-
-    ! INPUTS.....
-    !   P    -  RAY PARAMETER
-    !  VEL   -  ARRAY CONTAINING VELOCITY STRUCTURE
-    !            VEL(1,J) = DEPTH OF JTH MODEL POINT
-    !             " (2,J) = 1./VP "    "    "     "
-    !             " (3,J) = 1./VS "    "    "     "
-    !             " (4,J) = DENSITY OF "    "     "
-    !             " (5,J) = (VP(J+1) - VP(J)) / (Z(J+1) - Z(J)) - P VEL GRAD
-    !             " (6,J) = (VS(J+1) - VS(J)) / (Z(J+1) - Z(J)) - S VEL GRAD
-    ! NMOD   -  NUMBER OF POINTS IN VEL, I.E. VEL(I,J) FOR
-    !            1 .LE. J .LE. NMOD DEFINED
-    !  ICN   -  INTEGER ARRAY CONTAINING INDICES OF MODEL POINTS AT TOP OF
-    !            LAYERS. E.G. VEL(1,ICN(2)) IS THE DEPTH TO THE TOP OF
-    !            LAYER 2
-    !  LLN   -  LARGEST LAYER # IN RAY DESCRIPTION
-    !  NPS   -  ARRAY DESCRIBING NUMBER OF P AND S RAY SEGMENTS IN LAYER.
-    !            NPS(I,J) , I=LAYER #, J=1 IS P SEGS, J=2 IS S SEGS.
-    ! ITYPES -  =1 IF WAVE IS IN P MODE AT THE SOURCE
-    !           =2 IF WAVE IS IN S MODE AT THE SOURCE
-    ! ITYPER -  =1 IF WAVE IS IN P MODE AT THE RECEIVER
-    !           =2 IF WAVE IS IN S MODE AT THE RECEIVER
-    !  ICNS  -  INDEX OF MODEL POINT OF TOP OF THE LAYER BOUNDED ABOVE BY
-    !            THE SOURCE (E.G. DEPTH OF SOURCE =VEL(1,ICNS-1)=VEL(1,ICNS)
-    !  ICNR  -  INDEX OF MODEL POINT OF TOP OF THE LAYER BOUNDED ABOVE BY
-    !            THE RECEIVER.
-
-    ! OUTPUTS.....
-    !  TAU -  DELAY TIME
-    !   X  -  DISTANCE
-    ! DOMDA-  D (OMEGA) / D (AREA)  -- GEOMETRIC SPREADING FACTOR
-    ! IERR -  = 0   IF NO ERRORS
-    !         = 2   P LARGER THAN LOCAL SLOWNESS
-    !         = 3   SPREADING REQUESTED FOR HORIZONTAL RAY IN UNIFORM MEDIUM
-    !         = 4   P GREATER THAN SLOWNESS AT SOURCE
-    !         = 5   DADOM = 0 FOR SOME REASON
-    !         = 6   VEL(IS,IZ+1) .LE. ZERO
+      ! Purpose:
+      !   to compute delay time "tau", distance "x" and spreading factor "domda" (D(omega)/D(area)) for a geometric ray. This
+      !   subroutine was originally  part of the program WKBJ3 written by S.K. Dey-Sarkar and C.H. Chapman as described in the paper
+      !   "A simple method for the computation of body-wave seismograms", BSSA, Vol. 68, pp. 1577-1593, 1978. This subroutine was
+      !   modified by P. Spudich and W. Imperatori.
+      !
+      !   p    -  ray parameter
+      !  vel   -  array containing velocity structure
+      !            vel(1,j) = depth of jth model point
+      !             " (2,j) = 1./vp "    "    "     "
+      !             " (3,j) = 1./vs "    "    "     "
+      !             " (4,j) = density of "    "     "
+      !             " (5,j) = (vp(j+1) - vp(j)) / (z(j+1) - z(j)) - p vel grad
+      !             " (6,j) = (vs(j+1) - vs(j)) / (z(j+1) - z(j)) - s vel grad
+      ! nmod   -  number of points in vel, i.e. vel(i,j) for
+      !            1 .le. j .le. nmod defined
+      !  icn   -  integer array containing indices of model points at top of
+      !            layers. e.g. vel(1,icn(2)) is the depth to the top of
+      !            layer 2
+      !  lln   -  largest layer # in ray description
+      !  nps   -  array describing number of p and s ray segments in layer.
+      !            nps(i,j), i=layer #, j=1 is p segs, j=2 is s segs.
+      ! itypes -  =1 if wave is in p mode at the source
+      !           =2 if wave is in s mode at the source
+      ! ityper -  =1 if wave is in p mode at the receiver
+      !           =2 if wave is in s mode at the receiver
+      !  icns  -  index of model point of top of the layer bounded above by
+      !            the source (e.g. depth of source =vel(1,icns-1)=vel(1,icns)
+      !  icnr  -  index of model point of top of the layer bounded above by
+      !            the receiver.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
 
       INTEGER(i32),                    INTENT(IN)  :: nmod
       REAL(r64),                       INTENT(IN)  :: p
@@ -720,11 +713,10 @@ print*, xmax
       INTEGER(i32),                    INTENT(OUT) :: ierr
       INTEGER(i32), DIMENSION(20,2),   INTENT(IN)  :: nps
       INTEGER(i32), DIMENSION(lln),    INTENT(IN)  :: icn
-
-      INTEGER(i32)                                 :: is,ig,ips,nsegs,iz,layer
+      INTEGER(i32)                                 :: is, ig, ips, nsegs, iz, layer
       LOGICAL                                      :: tp
-      REAL(r64)                                    :: sum,dx,dtau,dsum,factor,cs,dz,fact,dadom,dl,dr
-      REAL(r64)                                    :: sths,cths,cthr,cthl,cthg,slowg,sthl
+      REAL(r64)                                    :: sum, dx, dtau, dsum, factor, cs, dz, fact, dadom, dl, dr, rad
+      REAL(r64)                                    :: sths, cths, cthr, cthl, cthg, slowg, sthl
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
@@ -734,7 +726,6 @@ print*, xmax
       factor = 0._r64
       dl = 0._r64
 
-      !wi
       r = 0._r64
       dr = 0._r64
 
@@ -743,13 +734,13 @@ print*, xmax
 
       IF (p*cs .gt. 1._r64) THEN
         ierr = 4
+        CALL report_error('pxint2d - ERROR: p greater than slowness at source')
         RETURN
       ENDIF
 
       sths = p * cs
       cths = SQRT(1._r64 - sths**2)
       cthr = SQRT(1._r64 - (p / vel(ityper + 1, icnr))**2 )
-
 
       !...  note, we use abs below because we don't want sign of domda to change from downgoing
       !     to upgoing rays
@@ -777,7 +768,7 @@ print*, xmax
             CYCLE mpt
           ENDIF
 
-          nsegs = nps (layer,ips)
+          nsegs = nps(layer,ips)
           fact = factor
 
           !...  DO the following for waves IF they exist between model points iz and iz+1
@@ -825,8 +816,11 @@ print*, xmax
                 dx = cthl / p / vel(ig,iz)
                 dtau = (-LOG(p) - (cthl - LOG(vel(is, iz) + vel(is, iz) * cthl))) / vel(ig, iz)
 
-                dr = (1._r64 / p - 1._r64 / vel(is,iz)) / vel(ig,iz)
-                dr = nsegs * SQRT(dr**2 + dx**2)
+                ! dr = (1._r64 / p - 1._r64 / vel(is,iz)) / vel(ig,iz)
+                ! dr = nsegs * SQRT(dr**2 + dx**2)
+
+                rad = 1._r64 / (p * vel(ig, iz))
+                dr = ACOS(1._r64 - 2._r64 * dx**2 / rad**2) * rad / 2._r64
 
                 !...           calculate spreading factor stuff.
                 IF (cths .ne. 0.) THEN
@@ -850,13 +844,19 @@ print*, xmax
                 !...           add lower limit of integral
                 IF (p .eq. 0._r64) THEN
                   dx = 0._r64
+                  dr = dz
                 ELSE
                   dx = dx + cthl / p / vel(ig,iz)
+
+                  rad = 1._r64 / (p * vel(ig, iz))
+                  dr  = SQRT(dz**2 + dx**2)
+                  dr  = ACOS(1._r64 - 0.5_r64 * dr**2 / rad**2) * rad
+
                 ENDIF
                 dtau = dtau - (cthl - LOG(vel(is, iz) + vel(is, iz)*cthl)) / vel(ig, iz)
                 dsum = fact * dx / cthl / cthg
 
-                dr = SQRT(dz**2 + dx**2)
+                ! dr = SQRT(dz**2 + dx**2)
 
               ENDIF
 
@@ -867,7 +867,8 @@ print*, xmax
             tau = tau + nsegs * dtau
             sum = sum + nsegs * dsum
 
-            r = r + dr
+            ! r = r + dr
+            r = r + dr * nsegs
 
           ENDIF
 
@@ -885,6 +886,20 @@ print*, xmax
       ELSE
         domda = 1._r64 / dadom
       ENDIF
+
+
+      SELECT CASE (ierr)
+        CASE(2)
+          CALL report_error('pxint2d - ERROR: p larger than local slowness')
+        CASE(3)
+          CALL report_error('pxint2d - ERROR: spreading requested for horizontal ray in uniform medium')
+        CASE(4)
+          CALL report_error('pxint2d - ERROR: p greater than slowness at source')
+        CASE(5)
+          CALL report_error('pxint2d - ERROR: dadom=0 for some reason')
+        CASE(6)
+          CALL report_error('pxint2d - ERROR: vel(is, iz+1) .le. 0')
+      END SELECT
 
     END SUBROUTINE pxint2d
 
@@ -948,7 +963,6 @@ print*, xmax
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-
     SUBROUTINE interpray(src, wtp, sheet, sr, pl, ql, tl, rl)
     !
     ! DESCRIPTION:
@@ -962,13 +976,12 @@ print*, xmax
     ! HISTORY: CREATED ON MAY 2017 (V1.0)
 
       ! INDEX FOR SOURCE, WAVE TYPE AND SHEET
-      INTEGER(i32),INTENT(IN) 	   :: src, wtp, sheet
+      INTEGER(i32),INTENT(IN) :: src, wtp, sheet
       ! HORIZONTAL SOURCE-RECEIVER DISTANCE
-      REAL(r32),INTENT(IN)	       :: sr
-      ! OUTPUT PARAMETERS
-      REAL(r32),INTENT(OUT)   	   :: pl, ql, tl, rl
-      INTEGER(i32)            	   :: nf, k
-      REAL(r32)               	   :: delta, dp
+      REAL(r32),INTENT(IN)    :: sr
+      REAL(r32),INTENT(OUT)   :: pl, ql, tl, rl
+      INTEGER(i32)            :: nf, k
+      REAL(r32)               :: delta, dp
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
