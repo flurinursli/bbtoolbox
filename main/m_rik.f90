@@ -668,35 +668,6 @@ MODULE m_rik
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    ! REAL(r32) FUNCTION vinterp(ztop, phys, gradient, z, layer)
-    !
-    !   ! Purpose:
-    !   !   to return a physical property (e.g. velocity, density, etc) at depth "z" given a model where property "phys", gradient
-    !   !   "gradient" and depth to layer "ztop" are defined for each layer. The layer number at depth "z" may be returned as well in
-    !   !   variable "layer".
-    !   !
-    !   ! Revisions:
-    !   !     Date                    Description of change
-    !   !     ====                    =====================
-    !   !   08/03/21                  original version
-    !   !
-    !
-    !   REAL(r32),    DIMENSION(:),           INTENT(IN)  :: ztop, phys, gradient
-    !   REAL(r32),                            INTENT(IN)  :: z
-    !   INTEGER(i32),               OPTIONAL, INTENT(OUT) :: layer
-    !   INTEGER(i32)                          :: i
-    !
-    !   !-----------------------------------------------------------------------------------------------------------------------------
-    !
-    !   DO i = SIZE(ztop), 1, -1
-    !     IF (z .ge. ztop(i)) THEN
-    !       vinterp = phys(i) + gradient(i)*(z - ztop(i))
-    !       IF (PRESENT(layer)) layer = i
-    !       EXIT
-    !     ENDIF
-    !   ENDDO
-    !
-    ! END FUNCTION vinterp
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================

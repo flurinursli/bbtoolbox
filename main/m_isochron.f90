@@ -38,7 +38,7 @@ MODULE m_isochron
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
-  INTEGER(i32),              DIMENSION(2) :: maxsheets
+  INTEGER(i32),              DIMENSION(2) :: minsheets, maxsheets
   REAL(r32),    ALLOCATABLE, DIMENSION(:) :: shooting            !< depth of shooting points
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
@@ -68,12 +68,16 @@ MODULE m_isochron
 
       INTEGER(i32),                           INTENT(OUT) :: ok
       INTEGER(i32),                           INTENT(IN)  :: pl, vel, iter
-      INTEGER(i32)                                        :: i, j, ref, icr, totnutr, seed
-      INTEGER(i32),              DIMENSION(3)             :: iuc, ivc
-      REAL(r32)                                           :: rho, beta, mu, m0, moment, strike, dip
-      REAL(r32),                 DIMENSION(3)             :: u, v, w, x, y, z, slip, rise, rupture, rake, nrl
+      INTEGER(i32)                                        :: i, j, ref, icr, totnutr, seed, src, rec, sheet, wtp
+      INTEGER(i32),              DIMENSION(3)             :: iuc, ivc, iab, ibl, shot
+      REAL(r32)                                           :: m0, moment, strike, dip, urec, vrec, wrec
+      REAL(r32),                 DIMENSION(2)             :: po, ro, xo, to, qo, zshots
+      REAL(r32),                 DIMENSION(3)             :: u, v, w, x, y, z, slip, rise, rupture, rake, nrl, rho, alpha, beta, mu
+      REAL(r32),                 DIMENSION(3)             :: p, q, r, trvt, path, sr
 
       !-----------------------------------------------------------------------------------------------------------------------------
+
+      CALL setup_interpolation('linear', 'zero', ok)
 
       moment = 0._r32
 
@@ -100,9 +104,14 @@ MODULE m_isochron
         ! shoot rays between receivers and a set of sources spanning (vertically) current mesh
         CALL rayshooting(ok, ref, pl, vel)
 
-        !$omp parallel do default(shared) private(i, j, iuc, ivc, slip)
+        !$omp parallel do default(shared) private(i, j, iuc, ivc, icr, slip, rise, rupture, u, v, w, x, y, z, nrl, strike, dip)  &
+        !$omp private(rake, alpha, beta, rho, mu, wtp, sheet, rec, urec, vrec, wrec, src, shot, iab, ibl, zshots, po, xo, ro, to) &
+        !$omp private(qo, p, q, r, path, trvt, sr) reduction(+: m0)
         DO j = 1, nvtr(ref)
           DO i = 1, totnutr
+
+            ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+            ! ---------------------------------------- check corners have non-zero slip --------------------------------------------
 
             CALL cornr(j, i, iuc, ivc)        !< corner indices for current triangle
 
@@ -112,15 +121,13 @@ MODULE m_isochron
 
             IF (ALL(slip .eq. 0._r32)) CYCLE          !< jump to next triangle if current has zero slip
 
-            DO icr = 1, 3
-              rise(icr) = mean(nodes(iuc(icr), ivc(icr))%rise)
-              rupture(icr) = MINVAL(nodes(iuc(icr), ivc(icr))%rupture)
-            ENDDO
+            ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+            ! --------------------------------------------- get perturbed mechanism ------------------------------------------------
 
             CALL cornr2uv(iuc, ivc, ref, u, v)        !< on-fault coordinates
 
             DO icr = 1, 3
-              w(icr) = roughness(iuc(icr), ivc(icr))
+              w(icr) = roughness(iuc(icr), ivc(icr))      !< add roughness
             ENDDO
 
             CALL uvw2xyz(pl, u, v, w, x, y, z)            !< get cartesian coordinates
@@ -139,21 +146,102 @@ MODULE m_isochron
 
             CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%rake, u, v, rake)
 
-            CALL perturbed_mechanism(strike, dip, rake, nrl)            !< all values in radians
+            CALL perturbed_mechanism(strike, dip, rake, nrl)            !< new strike, dip, rake (all values in radians)
 
-            beta = 0._r32
-            rho  = 0._r32
+            ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+            ! ----------------------------------------------- corner parameters ----------------------------------------------------
 
             DO icr = 1, 3
-              beta = beta + vinterp(input%velocity(vel)%depth, input%velocity(vel)%vs, input%velocity(vel)%vsgrad, z(icr))
-              rho  = rho  + vinterp(input%velocity(vel)%depth, input%velocity(vel)%rho, input%velocity(vel)%rhograd, z(icr))
+              rise(icr)    = mean(nodes(iuc(icr), ivc(icr))%rise)
+              rupture(icr) = MINVAL(nodes(iuc(icr), ivc(icr))%rupture)
+              alpha(icr)   = vinterp(input%velocity(vel)%depth, input%velocity(vel)%vp, input%velocity(vel)%vpgrad, z(icr))
+              beta(icr)    = vinterp(input%velocity(vel)%depth, input%velocity(vel)%vs, input%velocity(vel)%vsgrad, z(icr))
+              rho(icr)     = vinterp(input%velocity(vel)%depth, input%velocity(vel)%rho, input%velocity(vel)%rhograd, z(icr))
+              mu(icr)      = rho(icr) * beta(icr)**2         !< rigidity
             ENDDO
 
-            rho = rho / 3._r32
-            beta = beta / 3._r32
+            ! move from "x-y" to "u-t" coordinates for corners
+            u = x
+            v = y
+            w = 0._r32
+            CALL rotate(u, v, w, 0._r32, 0._r32, -strike)
 
-            mu = rho * beta**2
-            m0 = m0 + mu * mean(slip)
+            ! find shooting points above/below
+            DO icr = 1, 3
+              DO src = 1, SIZE(shooting) - 1
+                IF ( (z(icr) .ge. shooting(src)) .and. (z(icr) .lt. shooting(src + 1)) ) shot(icr) = src
+              ENDDO
+            ENDDO
+
+            ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+            ! -------------------------------------- triangle contribution to ground motion ----------------------------------------
+
+            ! loop over receivers
+            DO rec = 1, SIZE(input%receiver)
+
+              urec = input%receiver(rec)%x
+              vrec = input%receiver(rec)%y
+              wrec = 0._r32
+
+              CALL rotate(urec, vrec, wrec, 0._r32, 0._r32, -strike)       !< move to "u-t" coordinates for receiver
+
+              DO icr = 1, 3
+                sr(icr) = HYPOT(urec - u(icr), vrec - v(icr))        !< epicentral distance (corner-receiver)
+              ENDDO
+
+              ! loop over wave types (i.e. 1=P, 2=S)
+              DO wtp = 1, 2
+
+                iab(:) = 1      !< reset sheet-related index
+                ibl(:) = 1
+
+                ! loop over sheets
+                DO sheet = 1, maxsheets(wtp)    !< loop over sheets for each wave type
+
+                  ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+                  ! ----------------------------------------- ray parameters at corners --------------------------------------------
+
+                  DO icr = 1, 3
+
+                    CALL interpray(iab(icr), sr(icr), shot(icr), wtp, po(1), xo(1), ro(1), to(1), qo(1))        !< shot-point above
+                    CALL interpray(ibl(icr), sr(icr), shot(icr) + 1, wtp, po(1), xo(2), ro(2), to(2), qo(2))    !< shot-point below
+
+                    trvt(icr) = 0._r32
+
+                    ! interpolate values at depth "z(icr)" only if corner is inside sheet
+                    IF (ALL(to .ne. 0._r32)) THEN
+                      zshots = [shooting(shot(icr)), shooting(shot(icr) + 1)]      !< shooting points depth vector
+                      CALL interpolate(zshots, po, z(icr), p(icr))
+                      CALL interpolate(zshots, xo, z(icr), r(icr))
+                      CALL interpolate(zshots, ro, z(icr), path(icr))
+                      CALL interpolate(zshots, to, z(icr), trvt(icr))
+                      CALL interpolate(zshots, qo, z(icr), q(icr))
+                    ENDIF
+
+                  ENDDO
+
+                  ! all corners do not belong to current sheet, jump to next sheet
+                  IF (ANY(trvt .eq. 0._r32)) CYCLE
+
+                  ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+                  ! ---------------------------------------------- integral kernel -------------------------------------------------
+
+                  DO icr = 1, 3
+
+                  ENDDO
+
+                ENDDO     !< end loop over sheets
+
+              ENDDO    !< end loop over wave types
+
+
+              ! add coda here
+
+            ENDDO   !< end loop over receivers
+
+            ! convolve with mrf here
+
+            m0 = m0 + mean(mu * slip)
 
           ENDDO
         ENDDO
@@ -186,8 +274,8 @@ MODULE m_isochron
       CHARACTER(:), ALLOCATABLE                          :: fo
       INTEGER(i32)                                       :: i, j, ref, lu, icr, totnutr, seed
       INTEGER(i32),             DIMENSION(3)             :: iuc, ivc
-      REAL(r32)                                          :: rho, beta, mu, m0, moment, strike, dip
-      REAL(r32),                DIMENSION(3)             :: u, v, w, x, y, z, slip, rise, rupture, rake, nrl
+      REAL(r32)                                          :: m0, moment, strike, dip, rho, beta
+      REAL(r32),                DIMENSION(3)             :: u, v, w, x, y, z, slip, rise, rupture, rake, nrl, mu
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
@@ -229,8 +317,8 @@ MODULE m_isochron
 
         CALL fault_roughness(ok, ref, pl, iter)
 
-  CALL rayshooting(ok, ref, pl, vel)
-stop
+        !CALL rayshooting(ok, ref, pl, vel)
+        !stop
 
         !$omp parallel do ordered default(shared) private(i, j, iuc, ivc, slip, rise, rake, nrl, rupture, icr, u, v, w, x, y, z)  &
         !$omp& private(beta, rho, mu) reduction(+:m0) collapse(2)
@@ -277,19 +365,13 @@ stop
             WRITE(lu) strike, dip, rake, w     !< strike and dip are scalar
             !$omp end ordered
 
-            beta = 0._r32
-            rho  = 0._r32
-
             DO icr = 1, 3
-              beta = beta + vinterp(input%velocity(vel)%depth, input%velocity(vel)%vs, input%velocity(vel)%vsgrad, z(icr))
-              rho  = rho  + vinterp(input%velocity(vel)%depth, input%velocity(vel)%rho, input%velocity(vel)%rhograd, z(icr))
+              beta    = vinterp(input%velocity(vel)%depth, input%velocity(vel)%vs, input%velocity(vel)%vsgrad, z(icr))
+              rho     = vinterp(input%velocity(vel)%depth, input%velocity(vel)%rho, input%velocity(vel)%rhograd, z(icr))
+              mu(icr) = rho * beta**2
             ENDDO
 
-            rho = rho / 3._r32
-            beta = beta / 3._r32
-
-            mu = rho * beta**2
-            m0 = m0 + mu * mean(slip)
+            m0 = m0 + mean(mu * slip)
 
           ENDDO
         ENDDO
@@ -499,30 +581,6 @@ stop
 
       END ASSOCIATE
 
-      IF (input%advanced%verbose .eq. 2) THEN
-
-        zmin = BIG
-        zmax = -BIG
-
-        DO i = 2, SIZE(shooting)
-          zo   = shooting(i) - shooting(i - 1)
-          zmin = MIN(zmin, zo)
-          zmax = MAX(zmax, zo)
-        ENDDO
-
-        CALL update_log(num2char('<ray shooting>', justify='c', width=30) + num2char('Points', width=15, justify='r') + '|' +  &
-                        num2char('Zmin', width=15, justify='r') + '|' + num2char('Zmax', width=15, justify='r') + '|' +  &
-                        num2char('Separation', width=15, justify='r') + '|')
-
-        CALL update_log(num2char('', width=30, justify='c')  +  &
-                        num2char(SIZE(shooting), width=15, justify='r') + '|' + &
-                        num2char(MINVAL(shooting), width=15, notation='f', precision=2, justify='r') + '|' + &
-                        num2char(MAXVAL(shooting), width=15, notation='f', precision=2, justify='r') + '|' +  &
-                        num2char(num2char(zmin, notation='f', width=6, precision=2) + ', ' +   &
-                                 num2char(zmax, notation='f', width=6, precision=2), width=15, justify='r') + '|',blankline=.false.)
-
-      ENDIF
-
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! -------------------------------------------------- max s/r distance --------------------------------------------------------
 
@@ -553,6 +611,32 @@ stop
         ENDDO
       ENDDO
       !$omp end parallel do
+
+      IF (input%advanced%verbose .eq. 2) THEN
+
+        zmin = BIG
+        zmax = -BIG
+
+        DO i = 2, SIZE(shooting)
+          zo   = shooting(i) - shooting(i - 1)
+          zmin = MIN(zmin, zo)
+          zmax = MAX(zmax, zo)
+        ENDDO
+
+        CALL update_log(num2char('<ray shooting>', justify='c', width=30) + num2char('Points', width=15, justify='r') + '|' +  &
+                        num2char('Rmax', width=15, justify='r') + '|' +  &
+                        num2char('Zmin', width=15, justify='r') + '|' + num2char('Zmax', width=15, justify='r') + '|' +  &
+                        num2char('Separation', width=15, justify='r') + '|')
+
+        CALL update_log(num2char('', width=30, justify='c')  +  &
+                        num2char(SIZE(shooting), width=15, justify='r') + '|' + &
+                        num2char(rmax, width=15, notation='f', precision=1, justify='r') + '|' + &
+                        num2char(MINVAL(shooting), width=15, notation='f', precision=2, justify='r') + '|' + &
+                        num2char(MAXVAL(shooting), width=15, notation='f', precision=2, justify='r') + '|' +  &
+                        num2char(num2char(zmin, notation='f', width=6, precision=2) + ', ' +   &
+                                 num2char(zmax, notation='f', width=6, precision=2), width=15, justify='r') + '|',blankline=.false.)
+
+      ENDIF
 
       rmax = 1.2 * rmax            !< slightly increase maximum distance
 
@@ -618,10 +702,6 @@ stop
 
       ALLOCATE(wkbj(SIZE(shooting), 2))
 
-      DO i = 1, SIZE(shooting)
-        shooting(i) = shooting(i) / 1000._r32
-      ENDDO
-
 #ifdef PERF
       CALL watch_start(tictoc(1), COMM)
 #endif
@@ -629,12 +709,14 @@ stop
       DO wavetype = 1, 2
 
         maxsheets(wavetype) = 0
+        minsheets(wavetype) = HUGE(0)
 
         DO i = 1, SIZE(shooting)
 
-          CALL spred(ok, velocity, rmax, shooting(i), i, wavetype, lu, sheets)
+          CALL spred(ok, velocity, rmax, shooting(i) / 1000._r32, i, wavetype, lu, sheets)
 
           maxsheets(wavetype) = MAX(maxsheets(wavetype), sheets)     !< max number of sheets for each wave type
+          minsheets(wavetype) = MIN(minsheets(wavetype), sheets)
 
         ENDDO
 
@@ -642,10 +724,6 @@ stop
 
 #ifdef PERF
       CALL watch_stop(tictoc(1), COMM)
-      IF (input%advanced%verbose .eq. 2) THEN
-        CALL update_log(num2char('<<elapsed time>>', justify='c', width=30) + num2char(tictoc(1), width=15, notation='f',   &
-                        precision=3, justify='r') + '|', blankline=.false.)
-      ENDIF
 #endif
 
 #ifdef DEBUG
@@ -659,29 +737,23 @@ stop
 
       IF (input%advanced%verbose .eq. 2) THEN
 
-        ! zmin = BIG
-        ! zmax = -BIG
-        !
-        ! DO i = 2, SIZE(shooting)
-        !   zo   = shooting(i) - shooting(i - 1)
-        !   zmin = MIN(zmin, zo)
-        !   zmax = MAX(zmax, zo)
-        ! ENDDO
-        !
-        ! CALL update_log(num2char('<ray shooting>', justify='c', width=30) + num2char('Points', width=15, justify='r') + '|' +  &
-        !                 num2char('Zmin', width=15, justify='r') + '|' + num2char('Zmax', width=15, justify='r') + '|' +  &
-        !                 num2char('Separation', width=15, justify='r') + '|')
-        !
-        ! CALL update_log(num2char('', width=30, justify='c')  +  &
-        !                 num2char(SIZE(shooting), width=15, justify='r') + '|' + &
-        !                 num2char(MINVAL(shooting), width=15, notation='f', precision=2, justify='r') + '|' + &
-        !                 num2char(MAXVAL(shooting), width=15, notation='f', precision=2, justify='r') + '|' +  &
-        !                 num2char(num2char(zmin, notation='f', width=6, precision=2) + ', ' +   &
-        !                 num2char(zmax, notation='f', width=6, precision=2), width=15, justify='r') + '|',blankline=.false.)
+        CALL update_log(num2char('<sheets>', justify='c', width=30) + num2char('P-wave', width=15, justify='r') + '|' +  &
+                        num2char('S-wave', width=15, justify='r') + '|')
 
+        CALL update_log(num2char('', width=30, justify='c')  +  &
+                        num2char(num2char(minsheets(1), width=2) + ', ' +   &
+                                 num2char(maxsheets(1), width=2), width=15, justify='r') + '|' + &
+                        num2char(num2char(minsheets(2), width=2) + ', ' +   &
+                                 num2char(maxsheets(2), width=2), width=15, justify='r') + '|',  blankline=.false.)
 
       ENDIF
 
+#ifdef PERF
+      IF (input%advanced%verbose .eq. 2) THEN
+        CALL update_log(num2char('<<elapsed time>>', justify='c', width=30) + num2char(tictoc(1), width=15, notation='f',   &
+                        precision=3, justify='r') + '|', blankline=.false.)
+      ENDIF
+#endif
 
     END SUBROUTINE rayshooting
 

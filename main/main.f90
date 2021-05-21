@@ -142,7 +142,7 @@ PROGRAM main
         CALL node2disk(ok, pl, vlc, iter)
 #endif
 
-        !CALL solve_isochron_integral(ok, pl, vlc)
+        CALL solve_isochron_integral(ok, pl, vlc, iter)
 
         ! DO irec = 1, SIZE(input%receiver)
         !   !IF (input%receiver(irec)%velocity .eq. vlc) CALL quake(irec, pl)

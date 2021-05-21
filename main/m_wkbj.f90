@@ -578,6 +578,8 @@ MODULE m_wkbj
           105      FORMAT (5G15.8, I5, 1X, I1, 1X, I1, 1X, 4E15.8)
 #endif
 
+          sheets = MAX(sheets, isheet)       !< store highest number of sheets amongst wavetype
+
           IF (itypef .ne. itypeo) THEN
             CALL report_error('spred - ERROR: wave conversion detected')
             ok = 1
@@ -585,8 +587,6 @@ MODULE m_wkbj
 
         ENDDO raypar
         ! ----------------end of ray parameter loop------------------------
-
-        sheets = MAX(sheets, isheet)       !< store highest number of sheets amongst wavetype
 
       ENDDO ray
       ! ----------------------end of loop over rays------------------------
@@ -963,106 +963,152 @@ MODULE m_wkbj
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE interpray(src, wtp, sheet, sr, pl, ql, tl, rl)
-    !
-    ! DESCRIPTION:
-    !
-    !   INTERPOLATE RAY-RELATED QUANTITIES (P,Q,T,R) AT SPECIFIC SOURCE-RECEIVER HORIZONTAL
-    !   DISTANCE SR FOR GIVEN SOURCE (SRC), WAVE TYPE (WTP) AND SHEET (SHEET). VALUES ARE
-    !   RETURNED IN PL, QL, TL, RL
-    !
-    ! AUTHOR: W.IMPERATORI (SED@ETH)
-    !
-    ! HISTORY: CREATED ON MAY 2017 (V1.0)
+    SUBROUTINE interpray(is, sr, src, wtp, po, xo, ro, to, qo)
 
-      ! INDEX FOR SOURCE, WAVE TYPE AND SHEET
-      INTEGER(i32),INTENT(IN) :: src, wtp, sheet
-      ! HORIZONTAL SOURCE-RECEIVER DISTANCE
-      REAL(r32),INTENT(IN)    :: sr
-      REAL(r32),INTENT(OUT)   :: pl, ql, tl, rl
-      INTEGER(i32)            :: nf, k
-      REAL(r32)               :: delta, dp
+      INTEGER(i32),  INTENT(INOUT) :: is
+      REAL(r32),     INTENT(IN)    :: sr
+      INTEGER(i32),  INTENT(IN)    :: src, wtp
+      REAL(r32),     INTENT(OUT)   :: po, xo, ro, to, qo
+      INTEGER(i32)                 :: i
+      REAL(r64)                    :: delta
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
       ASSOCIATE(p => wkbj(src, wtp)%pn, q => wkbj(src, wtp)%q, t => wkbj(src, wtp)%t, x => wkbj(src, wtp)%x, r => wkbj(src, wtp)%r)
 
-        nf = 0
+        po = 0._r32; xo = 0._r32; ro = 0._r32; to = 0._r32; qo = 0._r32
 
-        pl = 0._r32
-        ql = 0._r32
-        tl = 0._r32
-        rl = 0._r32
+        DO i = is, SIZE(p) - 1
 
-        IF (sr .gt. maxval(x)) THEN
-          print*,'sr > x ',sr,maxval(x), src, wtp, sheet
-          stop
-        ENDIF
+          IF ( ((sr .ge. x(i)) .and. (sr .lt. x(i + 1))) .or. ((sr .le. x(i)) .and. (sr .gt. x(i + 1))) ) THEN
 
-        ! cycle over rays
-        DO k = 1, SIZE(p) - 1
+            delta = (sr - x(i)) / (x(i + 1) - x(i))
 
-          IF (x(k) .eq. x(k+1)) CYCLE
+            po = p(i) + (p(i + 1) - p(i)) * delta
+            xo = x(i) + (x(i + 1) - x(i)) * delta
+            ro = r(i) + (r(i + 1) - r(i)) * delta
+            to = t(i) + (t(i + 1) - t(i)) * delta
+            qo = q(i) + (q(i + 1) - q(i)) * delta
 
-          IF ( ((sr .ge. x(k)) .and. (sr .lt. x(k+1))) .or. ((sr .ge. x(k+1)) .and. (sr .lt. x(k))) ) THEN
+            is = i + 1       !< update index for next call in order to skip current branch
 
-            ! update sheet number
-            nf = nf + 1
-
-            ! are we in the right sheet?
-            IF (nf .ne. sheet) CYCLE
-
-            delta = (sr - x(k)) / (x(k + 1) - x(k))
-
-            ! interpolate values at current sr distance
-            pl = p(k) + (p(k + 1) - p(k)) * delta
-            ql = q(k) + (q(k + 1) - q(k)) * delta
-            rl = r(k) + (r(k + 1) - r(k)) * delta
-            tl = t(k) + (t(k + 1) - t(k)) * delta
-
-            ! check if there is a problem with ray param. to be remove once
-            ! triplicatins are tested
-            dp = p(k + 1) - p(k)
-
-            IF (dp .eq. 0.) THEN
-              print*,'inside process ray: ',p(k+1),p(k),x(k+1),x(k)
-              !call exe_stop('iso.f90','ghost_fault',4)
-            ENDIF
+            EXIT
 
           ENDIF
 
-        ENDDO ! end loop over rays
+        ENDDO
 
-        ! handle case where rays do not span distance range (i.e. r .gt. max(x)). this should not
-        ! happen once the code is ready
-        IF (nf .eq. 0) THEN
-
-          nf = 1
-          k = SIZE(p) - 1
-
-          delta = (sr - x(k)) / (x(k + 1) - x(k))
-
-          pl = p(k) + (p(k + 1) - p(k)) * delta
-          ql = q(k) + (q(k + 1) - q(k)) * delta
-          rl = r(k) + (r(k + 1) - r(k)) * delta
-          tl = t(k) + (t(k + 1) - t(k)) * delta
-
-          dp = p(k + 1) - p(k)
-
-          ! check if there is a problem with ray param. to be remove once
-          ! triplicatins are tested
-          dp = p(k + 1) - p(k)
-
-          IF (dp .eq. 0.) THEN
-            print*,'inside process ray: ',p(k+1),p(k),x(k+1),x(k)
-            !call exe_stop('iso.f90','ghost_fault',4)
-          ENDIF
-
-        ENDIF
+        is = MIN(is, SIZE(p))
 
       END ASSOCIATE
 
     END SUBROUTINE interpray
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+
+    ! SUBROUTINE interpray(src, wtp, sheet, sr, pl, ql, tl, rl)
+    ! !
+    ! ! DESCRIPTION:
+    ! !
+    ! !   INTERPOLATE RAY-RELATED QUANTITIES (P,Q,T,R) AT SPECIFIC SOURCE-RECEIVER HORIZONTAL
+    ! !   DISTANCE SR FOR GIVEN SOURCE (SRC), WAVE TYPE (WTP) AND SHEET (SHEET). VALUES ARE
+    ! !   RETURNED IN PL, QL, TL, RL
+    ! !
+    ! ! AUTHOR: W.IMPERATORI (SED@ETH)
+    ! !
+    ! ! HISTORY: CREATED ON MAY 2017 (V1.0)
+    !
+    !   ! INDEX FOR SOURCE, WAVE TYPE AND SHEET
+    !   INTEGER(i32),INTENT(IN) :: src, wtp, sheet
+    !   ! HORIZONTAL SOURCE-RECEIVER DISTANCE
+    !   REAL(r32),INTENT(IN)    :: sr
+    !   REAL(r32),INTENT(OUT)   :: pl, ql, tl, rl
+    !   INTEGER(i32)            :: nf, k
+    !   REAL(r32)               :: delta, dp
+    !
+    !   !-----------------------------------------------------------------------------------------------------------------------------
+    !
+    !   ASSOCIATE(p => wkbj(src, wtp)%pn, q => wkbj(src, wtp)%q, t => wkbj(src, wtp)%t, x => wkbj(src, wtp)%x, r => wkbj(src, wtp)%r)
+    !
+    !     nf = 0
+    !
+    !     pl = 0._r32
+    !     ql = 0._r32
+    !     tl = 0._r32
+    !     rl = 0._r32
+    !
+    !     IF (sr .gt. maxval(x)) THEN
+    !       print*,'sr > x ',sr,maxval(x), src, wtp, sheet
+    !       stop
+    !     ENDIF
+    !
+    !     ! cycle over rays
+    !     DO k = 1, SIZE(p) - 1
+    !
+    !       IF (x(k) .eq. x(k+1)) CYCLE
+    !
+    !       IF ( ((sr .ge. x(k)) .and. (sr .lt. x(k+1))) .or. ((sr .ge. x(k+1)) .and. (sr .lt. x(k))) ) THEN
+    !
+    !         ! update sheet number
+    !         nf = nf + 1
+    !
+    !         ! are we in the right sheet?
+    !         IF (nf .ne. sheet) CYCLE
+    !
+    !         delta = (sr - x(k)) / (x(k + 1) - x(k))
+    !
+    !         ! interpolate values at current sr distance
+    !         pl = p(k) + (p(k + 1) - p(k)) * delta
+    !         ql = q(k) + (q(k + 1) - q(k)) * delta
+    !         rl = r(k) + (r(k + 1) - r(k)) * delta
+    !         tl = t(k) + (t(k + 1) - t(k)) * delta
+    !
+    !         ! check if there is a problem with ray param. to be remove once
+    !         ! triplicatins are tested
+    !         dp = p(k + 1) - p(k)
+    !
+    !         IF (dp .eq. 0.) THEN
+    !           print*,'inside process ray: ',p(k+1),p(k),x(k+1),x(k)
+    !           !call exe_stop('iso.f90','ghost_fault',4)
+    !         ENDIF
+    !
+    !       ENDIF
+    !
+    !     ENDDO ! end loop over rays
+    !
+    !     ! handle case where rays do not span distance range (i.e. r .gt. max(x)). this should not
+    !     ! happen once the code is ready
+    !     IF (nf .eq. 0) THEN
+    !
+    !       nf = 1
+    !       k = SIZE(p) - 1
+    !
+    !       delta = (sr - x(k)) / (x(k + 1) - x(k))
+    !
+    !       pl = p(k) + (p(k + 1) - p(k)) * delta
+    !       ql = q(k) + (q(k + 1) - q(k)) * delta
+    !       rl = r(k) + (r(k + 1) - r(k)) * delta
+    !       tl = t(k) + (t(k + 1) - t(k)) * delta
+    !
+    !       dp = p(k + 1) - p(k)
+    !
+    !       ! check if there is a problem with ray param. to be remove once
+    !       ! triplicatins are tested
+    !       dp = p(k + 1) - p(k)
+    !
+    !       IF (dp .eq. 0.) THEN
+    !         print*,'inside process ray: ',p(k+1),p(k),x(k+1),x(k)
+    !         !call exe_stop('iso.f90','ghost_fault',4)
+    !       ENDIF
+    !
+    !     ENDIF
+    !
+    !   END ASSOCIATE
+    ! 
+    ! END SUBROUTINE interpray
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
