@@ -10,6 +10,7 @@ MODULE m_isochron
   USE, NON_INTRINSIC :: m_roughness
   USE, NON_INTRINSIC :: m_toolbox
   USE, NON_INTRINSIC :: m_strings
+  USE, NON_INTRINSIC :: m_timeseries
   USE, NON_INTRINSIC :: m_logfile
   USE, NON_INTRINSIC :: m_wkbj
 #ifdef MPI
@@ -68,12 +69,13 @@ MODULE m_isochron
 
       INTEGER(i32),                           INTENT(OUT) :: ok
       INTEGER(i32),                           INTENT(IN)  :: pl, vel, iter
-      INTEGER(i32)                                        :: i, j, ref, icr, totnutr, seed, src, rec, sheet, wtp
+      INTEGER(i32)                                        :: i, j, ref, icr, totnutr, seed, src, rec, sheet, wtp, it1, it2
       INTEGER(i32),              DIMENSION(3)             :: iuc, ivc, iab, ibl, shot
-      REAL(r32)                                           :: m0, moment, strike, dip, urec, vrec, wrec
+      REAL(r32)                                           :: m0, moment, strike, dip, urec, vrec, wrec, taumin, taumax, sd, cd
+      REAL(r32)                                           :: srfvel
       REAL(r32),                 DIMENSION(2)             :: po, ro, xo, to, qo, zshots
       REAL(r32),                 DIMENSION(3)             :: u, v, w, x, y, z, slip, rise, rupture, rake, nrl, rho, alpha, beta, mu
-      REAL(r32),                 DIMENSION(3)             :: p, q, r, trvt, path, sr
+      REAL(r32),                 DIMENSION(3)             :: p, q, r, trvt, path, repi, tau, sr, cr
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
@@ -106,7 +108,7 @@ MODULE m_isochron
 
         !$omp parallel do default(shared) private(i, j, iuc, ivc, icr, slip, rise, rupture, u, v, w, x, y, z, nrl, strike, dip)  &
         !$omp private(rake, alpha, beta, rho, mu, wtp, sheet, rec, urec, vrec, wrec, src, shot, iab, ibl, zshots, po, xo, ro, to) &
-        !$omp private(qo, p, q, r, path, trvt, sr) reduction(+: m0)
+        !$omp private(qo, p, q, r, path, trvt, repi, it1, it2, taumin, taumax, tau, cd, sd, sr, cr) reduction(+: m0)
         DO j = 1, nvtr(ref)
           DO i = 1, totnutr
 
@@ -148,6 +150,14 @@ MODULE m_isochron
 
             CALL perturbed_mechanism(strike, dip, rake, nrl)            !< new strike, dip, rake (all values in radians)
 
+            sd = SIN(dip)
+            cd = COS(dip)
+
+            DO icr = 1, 3
+              sr(icr) = SIN(rake(icr))
+              cr(icr) = COS(rake(icr))
+            ENDDO
+
             ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
             ! ----------------------------------------------- corner parameters ----------------------------------------------------
 
@@ -186,7 +196,7 @@ MODULE m_isochron
               CALL rotate(urec, vrec, wrec, 0._r32, 0._r32, -strike)       !< move to "u-t" coordinates for receiver
 
               DO icr = 1, 3
-                sr(icr) = HYPOT(urec - u(icr), vrec - v(icr))        !< epicentral distance (corner-receiver)
+                repi(icr) = HYPOT(urec - u(icr), vrec - v(icr))        !< epicentral distance (corner-receiver)
               ENDDO
 
               ! loop over wave types (i.e. 1=P, 2=S)
@@ -194,6 +204,13 @@ MODULE m_isochron
 
                 iab(:) = 1      !< reset sheet-related index
                 ibl(:) = 1
+
+                ! velocity at receiver
+                IF (wtp .eq. 1) THEN
+                  srfvel = input%velocity(input%receiver%velocity)%vp(1)
+                ELSE
+                  srfvel = input%velocity(input%receiver%velocity)%vs(1)
+                ENDIF
 
                 ! loop over sheets
                 DO sheet = 1, maxsheets(wtp)    !< loop over sheets for each wave type
@@ -203,12 +220,12 @@ MODULE m_isochron
 
                   DO icr = 1, 3
 
-                    CALL interpray(iab(icr), sr(icr), shot(icr), wtp, po(1), xo(1), ro(1), to(1), qo(1))        !< shot-point above
-                    CALL interpray(ibl(icr), sr(icr), shot(icr) + 1, wtp, po(1), xo(2), ro(2), to(2), qo(2))    !< shot-point below
+                    CALL interpray(iab(icr), repi(icr), shot(icr), wtp, po(1), xo(1), ro(1), to(1), qo(1))        !< shot-point above
+                    CALL interpray(ibl(icr), repi(icr), shot(icr) + 1, wtp, po(1), xo(2), ro(2), to(2), qo(2))    !< shot-point below
 
                     trvt(icr) = 0._r32
 
-                    ! interpolate values at depth "z(icr)" only if corner is inside sheet
+                    ! interpolate values at depth "z(icr)" only if corner is fully inside sheet
                     IF (ALL(to .ne. 0._r32)) THEN
                       zshots = [shooting(shot(icr)), shooting(shot(icr) + 1)]      !< shooting points depth vector
                       CALL interpolate(zshots, po, z(icr), p(icr))
@@ -218,15 +235,162 @@ MODULE m_isochron
                       CALL interpolate(zshots, qo, z(icr), q(icr))
                     ENDIF
 
+                    ! sum travel-time and rupture time
+                    tau(icr) = trvt(icr) + ruptime(icr)
+
                   ENDDO
 
-                  ! all corners do not belong to current sheet, jump to next sheet
+                  ! make sure all corners belong to current sheet, otherwise jump to next sheet
                   IF (ANY(trvt .eq. 0._r32)) CYCLE
+
+                  ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+                  ! ------------------------------------------ limits time integration ---------------------------------------------
+
+                  taumax = maxval(tau)
+                  taumin = minval(tau)
+
+                  it1 = NINT(taumin / dt) + 1
+
+                  it2 = it1 + (taumax - taumin) / dt - 1         !< when (taumax-taumin) < dt, it2 < it1
+                  it2 = MIN(npts, it2)                           !< limit to max number of time points
+
+                  ! jump to next sheet if no isochron is spanned
+                  IF (it2 .lt. it1) CYCLE
 
                   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
                   ! ---------------------------------------------- integral kernel -------------------------------------------------
 
                   DO icr = 1, 3
+
+                    dx = urec - u(icr)
+                    dy = vrec - v(icr)
+
+                    dr = HYPOT(dx, dy)
+
+                    ! cos and sin of angle psi
+                    cpsi = dx / dr
+                    spsi = dy / dr
+
+                    IF (wtp .eq. 1) THEN
+                      velloc = alpha(icr)
+                    ELSE
+                      velloc = beta(icr)
+                    ENDIF
+
+                    sloloc = 1._r32 / velloc        !< slowness at corner
+
+                    ! "p" is "-p" for downgoing rays
+                    IF (p(icr) .gt . sloloc) p(icr) = -(2._r32 * sloloc - p(icr))
+
+                    ! get sign of ray (+ if upgoing, - if downgoing)
+                    signp = SIGN(1._r32, p(icr))
+
+                    ! sine of angle eta at source
+                    sthf = velloc * ABS(p(icr))
+
+#ifdef ERROR_TRAP
+                    CALL report_error('solve_isochron_integral - ERROR: sin(eta) sensibly larger than 1')
+#endif
+
+                    sthf = MIN(sthf, 1._r32)     !< handle roundoff errors
+
+                    ! cosine of angle eta at source
+                    cthf = signp * SQRT(1._r32 - sthf**2)
+
+                    ! dot products
+                    ! the fault normal points in the -y. direction for a 90 degree dip, and a positive u component of slip
+                    ! correspond to a left lateral strike slip motion
+                    rn = sthf * spsi * sd + cthf * cd          !< r.n (direction r and normal to plane)
+                    rv = cthf * sd - sthf * spsi * cd          !< r.v (directions r and dip-slip)
+                    ru = - sthf * cpsi                         !< r.u (directions r and along-strike)
+
+                    ! radiation pattern-dependent kernel stuff
+                    IF (wtp .eq. 1) THEN
+                      ir(icr) = 2._r32 * mu(icr) * q(icr) * rn * (ru * cr(icr)) - rv * sr(icr))) * slip(icr)
+                    ELSE
+                      ! dot products
+                      bn = (cthf * spsi * sd - sthf * cd)
+                      cn = (cpsi * sd)
+                      bu = -cthf * cpsi
+                      cu = spsi
+                      bv = -cthf * spsi * cd - sthf * sd
+                      cv = -cpsi * cd
+
+                      rnbu = (rn * bu + bn*ru)
+                      rnbv = (rn * bv + bn*rv)
+                      rncu = (rn * cu + cn*ru)
+                      rncv = (rn * cv + cn*rv)
+
+                      guk = mu(icr) * q(icr)
+
+                      itheta(icr) = slip(icr) * guk * (rnbu * cr(icr)) - rnbv * sr(icr)))
+                      iphi(icr)   = slip(icr) * guk * (rncu * cr(icr)) - rncv * sr(icr)))
+                    ENDIF
+
+
+                    p(icr) = ABS(p(icr))         !< IS THIS NEEDED?
+                    stho = p(icr) * sfrvel
+
+#ifdef ERROR_TRAP
+                    CALL report_error('solve_isochron_integral - ERROR: sin(eta) sensibly larger than 1')
+#endif
+
+                    stho = MIN(stho, 1._r32)     !< handle roundoff errors
+                    ctho = SQRT(1._r32 - stho**2)
+
+                    ! determine stuff that depends on the component of motion. rvec, thvec, and phvec are the components of the r,
+                    ! theta, and phi (unit vectors at the observer)
+                    rvec(1, icr)  = -stho * cpsi
+                    rvec(2, icr)  = -stho * spsi
+                    rvec(3, icr)  =  ctho
+                    thvec(1, icr) = -ctho * cpsi
+                    thvec(2, icr) = -ctho * spsi
+                    thvec(3, icr) = -stho
+                    phvec(1, icr) = spsi
+                    phvec(2, icr) = -cpsi
+                    phvec(3, icr) = 0._r32
+
+
+
+
+
+
+
+                    ! FREE SURFACE COEFFICIENTS DERIVED FROM AKI AND RICHARDS.
+                    ! INITIALISE TO NO FREE SURFACE EFFECT.
+                    FS(:,:) = (1.,0.)
+                    FP(:,:) = (1.,0.)
+
+                    IF (WANTFS) THEN
+                       IPLU = P(ICR) / DPLU + 1
+                       DPP = P(ICR) - (IPLU-1) * DPLU
+                       FXPFZS = FXP(IPLU) + DPP * (FXP(IPLU+1) - FXP(IPLU)) / DPLU
+                       FZPFXS = FZP(IPLU) + DPP * (FZP(IPLU+1) - FZP(IPLU)) / DPLU
+
+                       ! FREE-SURFACE AMPLIFICATION COEFFICIENTS FOR INCIDENT P (FP) AND SV (FS)
+                       ! WAVES FOR EACH CORNER AND EACH COMPONENT OF MOTION (X,Y,Z)
+                       FP(1,ICR) = FXPFZS
+                       FP(2,ICR) = FXPFZS
+                       FP(3,ICR) = FZPFXS
+                       FS(1,ICR) = FZPFXS
+                       FS(2,ICR) = FZPFXS
+                       FS(3,ICR) = FXPFZS
+                    ENDIF
+
+                    ! INTEGRAL KERNELS
+                    DO IC = 1,3
+                       IF(LISP) THEN
+                          RVFP      = RVEC(IC,ICR) * FP(IC,ICR)
+                          G(IC,ICR) = RVFP * IR(ICR)
+                       ENDIF
+
+                       IF(LISS) THEN
+                          TVFS      = THVEC(IC,ICR) * FS(IC,ICR)
+                          G(IC,ICR) = ITHETA(ICR) * TVFS + IPHI(ICR) * PHVEC(IC,ICR) * SHFS
+                       ENDIF
+     	           ENDDO
+                 ENDDO  ! END LOOP OVER CORNERS
+
 
                   ENDDO
 
@@ -241,6 +405,8 @@ MODULE m_isochron
 
             ! convolve with mrf here
 
+            ! rotate time-series from fp/fn to x/y
+
             m0 = m0 + mean(mu * slip)
 
           ENDDO
@@ -253,6 +419,12 @@ MODULE m_isochron
 
 
     END SUBROUTINE solve_isochron_integral
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================

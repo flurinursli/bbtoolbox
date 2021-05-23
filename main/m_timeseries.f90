@@ -24,7 +24,7 @@ MODULE m_timeseries
 
   TYPE :: cmp
     REAL(r32)                              :: dt
-    REAL(r32), ALLOCATABLE, DIMENSION(:)   :: time
+    REAL(r32), ALLOCATABLE, DIMENSION(:)   :: time              
     REAL(r32), ALLOCATABLE, DIMENSION(:,:) :: x, y, z
   END TYPE cmp
 
@@ -32,7 +32,9 @@ MODULE m_timeseries
     TYPE(cmp) :: lp, sp, bb
   END TYPE tsr
 
-  TYPE(tsr) :: timeseries            !< timeseries%lp%x(npts, io), timeseries%lp%time(npts), timeseries%lp%dt
+  TYPE(tsr) :: timeseries            !< timeseries%lp%x(npts, nrec), timeseries%lp%time(npts), timeseries%lp%dt
+
+  ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
   PROCEDURE(parse_sw4), POINTER :: psubr
   PROCEDURE(integrate), POINTER :: pfun
