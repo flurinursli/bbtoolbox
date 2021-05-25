@@ -963,12 +963,12 @@ MODULE m_wkbj
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE interpray(is, sr, src, wtp, po, xo, ro, to, qo)
+    SUBROUTINE interpray(is, sr, src, wtp, po, ro, to, qo)
 
       INTEGER(i32),  INTENT(INOUT) :: is
       REAL(r32),     INTENT(IN)    :: sr
       INTEGER(i32),  INTENT(IN)    :: src, wtp
-      REAL(r32),     INTENT(OUT)   :: po, xo, ro, to, qo
+      REAL(r32),     INTENT(OUT)   :: po, ro, to, qo
       INTEGER(i32)                 :: i
       REAL(r64)                    :: delta
 
@@ -976,7 +976,7 @@ MODULE m_wkbj
 
       ASSOCIATE(p => wkbj(src, wtp)%pn, q => wkbj(src, wtp)%q, t => wkbj(src, wtp)%t, x => wkbj(src, wtp)%x, r => wkbj(src, wtp)%r)
 
-        po = 0._r32; xo = 0._r32; ro = 0._r32; to = 0._r32; qo = 0._r32
+        po = 0._r32; ro = 0._r32; to = 0._r32; qo = 0._r32
 
         DO i = is, SIZE(p) - 1
 
@@ -985,7 +985,7 @@ MODULE m_wkbj
             delta = (sr - x(i)) / (x(i + 1) - x(i))
 
             po = p(i) + (p(i + 1) - p(i)) * delta
-            xo = x(i) + (x(i + 1) - x(i)) * delta
+            ! xo = x(i) + (x(i + 1) - x(i)) * delta
             ro = r(i) + (r(i + 1) - r(i)) * delta
             to = t(i) + (t(i + 1) - t(i)) * delta
             qo = q(i) + (q(i + 1) - q(i)) * delta
@@ -1107,7 +1107,7 @@ MODULE m_wkbj
     !     ENDIF
     !
     !   END ASSOCIATE
-    ! 
+    !
     ! END SUBROUTINE interpray
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *

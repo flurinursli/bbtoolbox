@@ -39,7 +39,7 @@ MODULE m_interpolation_r32
 
   INTERFACE interpolate
     MODULE PROCEDURE interp_1d_scalar, interp_2d_scalar, interp_3d_scalar, interp_1d_vector, interp_2d_vector,     &
-                     interp_2d_vector_plaid, interp_3d_vector_plaid
+                     interp_2d_vector_plaid, interp_3d_vector_plaid, interp_1d_scalar_cmplx
   END INTERFACE interpolate
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
@@ -325,6 +325,42 @@ MODULE m_interpolation_r32
       CALL interp_core(x, y, xo, yo, pos)
 
     END SUBROUTINE interp_1d_scalar
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    SUBROUTINE interp_1d_scalar_cmplx(x, y, xo, yo)
+
+      ! Purpose:
+      !   To interpolate a function of one variable at a single point.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   02/09/20                  original version
+      !
+
+      REAL(r__),    DIMENSION(:), INTENT(IN)    :: x
+      COMPLEX(r__), DIMENSION(:), INTENT(IN)    :: y
+      REAL(r__),                  INTENT(IN)    :: xo
+      COMPLEX(r__),               INTENT(OUT)   :: yo
+      INTEGER(i32)                              :: pos
+      REAL(r__)                                 :: yr, yc, yor, yoc
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      pos = 0
+
+      yr = REAL(y, r__)
+      yc = AIMAG(y)
+
+      CALL interp_core(x, yr, xo, yor, pos)       !< interpolate real part
+      CALL interp_core(x, yc, xo, yoc, pos)       !< interpolate imaginary part (use previous "pos")
+
+      yo = CMPLX(yor, yoc, r__)
+
+    END SUBROUTINE interp_1d_scalar_cmplx
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================

@@ -36,6 +36,7 @@ MODULE m_isochron
   REAL(r32), PARAMETER :: PI = 3.14159265358979323846_r64
   REAL(r32), PARAMETER :: DEG_TO_RAD = PI / 180._r32
   REAL(r32), PARAMETER :: BIG = HUGE(0._r32)
+  REAL(r32), PARAMETER :: DPLU = 0.002_r32, DPSM = 0.07_r32         !< free-surface smoothing parameters
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -72,10 +73,10 @@ MODULE m_isochron
       INTEGER(i32)                                        :: i, j, ref, icr, totnutr, seed, src, rec, sheet, wtp, it1, it2
       INTEGER(i32),              DIMENSION(3)             :: iuc, ivc, iab, ibl, shot
       REAL(r32)                                           :: m0, moment, strike, dip, urec, vrec, wrec, taumin, taumax, sd, cd
-      REAL(r32)                                           :: srfvel
+      REAL(r32)                                           :: srfvel, stho
       REAL(r32),                 DIMENSION(2)             :: po, ro, xo, to, qo, zshots
       REAL(r32),                 DIMENSION(3)             :: u, v, w, x, y, z, slip, rise, rupture, rake, nrl, rho, alpha, beta, mu
-      REAL(r32),                 DIMENSION(3)             :: p, q, r, trvt, path, repi, tau, sr, cr
+      REAL(r32),                 DIMENSION(3)             :: p, q, r, trvt, path, repi, tau, sr, cr, rvec, thvec, phvec
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
@@ -89,6 +90,8 @@ MODULE m_isochron
 
       ! set "seed" such that random numbers depend on fault plane number and iteration
       seed = input%source%seed + (iter - 1) * SIZE(plane) + pl
+
+      ncuts(:,:) = 0        !< initialise number of isochron cuts
 
       DO ref = 1, SIZE(nvtr)         !< loop over mesh refinements
 
@@ -162,7 +165,7 @@ MODULE m_isochron
             ! ----------------------------------------------- corner parameters ----------------------------------------------------
 
             DO icr = 1, 3
-              rise(icr)    = mean(nodes(iuc(icr), ivc(icr))%rise)
+              ! rise(icr)    = mean(nodes(iuc(icr), ivc(icr))%rise)
               rupture(icr) = MINVAL(nodes(iuc(icr), ivc(icr))%rupture)
               alpha(icr)   = vinterp(input%velocity(vel)%depth, input%velocity(vel)%vp, input%velocity(vel)%vpgrad, z(icr))
               beta(icr)    = vinterp(input%velocity(vel)%depth, input%velocity(vel)%vs, input%velocity(vel)%vsgrad, z(icr))
@@ -202,14 +205,16 @@ MODULE m_isochron
               ! loop over wave types (i.e. 1=P, 2=S)
               DO wtp = 1, 2
 
-                iab(:) = 1      !< reset sheet-related index
-                ibl(:) = 1
+                abv(:) = 1      !< reset sheet-related index
+                blw(:) = 1
 
-                ! velocity at receiver
+                ! velocity at receiver and source
                 IF (wtp .eq. 1) THEN
                   srfvel = input%velocity(input%receiver%velocity)%vp(1)
+                  velloc = alpha(icr)
                 ELSE
                   srfvel = input%velocity(input%receiver%velocity)%vs(1)
+                  velloc = beta(icr)
                 ENDIF
 
                 ! loop over sheets
@@ -220,42 +225,43 @@ MODULE m_isochron
 
                   DO icr = 1, 3
 
-                    CALL interpray(iab(icr), repi(icr), shot(icr), wtp, po(1), xo(1), ro(1), to(1), qo(1))        !< shot-point above
-                    CALL interpray(ibl(icr), repi(icr), shot(icr) + 1, wtp, po(1), xo(2), ro(2), to(2), qo(2))    !< shot-point below
+                    CALL interpray(abv(icr), sr(icr), shot(icr), wtp, po(1), ro(1), to(1), qo(1))        !< shot-point above
+                    CALL interpray(blw(icr), sr(icr), shot(icr) + 1, wtp, po(1), ro(2), to(2), qo(2))    !< shot-point below
 
-                    trvt(icr) = 0._r32
+                    tau(icr) = -1._r32
 
                     ! interpolate values at depth "z(icr)" only if corner is fully inside sheet
                     IF (ALL(to .ne. 0._r32)) THEN
-                      zshots = [shooting(shot(icr)), shooting(shot(icr) + 1)]      !< shooting points depth vector
-                      CALL interpolate(zshots, po, z(icr), p(icr))
-                      CALL interpolate(zshots, xo, z(icr), r(icr))
-                      CALL interpolate(zshots, ro, z(icr), path(icr))
-                      CALL interpolate(zshots, to, z(icr), trvt(icr))
-                      CALL interpolate(zshots, qo, z(icr), q(icr))
-                    ENDIF
 
-                    ! sum travel-time and rupture time
-                    tau(icr) = trvt(icr) + ruptime(icr)
+                      zshots = [shooting(shot(icr)), shooting(shot(icr) + 1)]      !< shooting points depth vector
+
+                      CALL interpolate(zshots, po, z(icr), p(icr))
+                      CALL interpolate(zshots, ro, z(icr), path(icr))
+                      CALL interpolate(zshots, to, z(icr), trvt)
+                      CALL interpolate(zshots, qo, z(icr), q(icr))
+
+                      ! sum travel-time and rupture time
+                      tau(icr) = trvt + ruptime(icr)
+
+                    ENDIF
 
                   ENDDO
 
-                  ! make sure all corners belong to current sheet, otherwise jump to next sheet
-                  IF (ANY(trvt .eq. 0._r32)) CYCLE
-
                   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
-                  ! ------------------------------------------ limits time integration ---------------------------------------------
+                  ! -------------------------------------------- time integration limits -------------------------------------------
 
-                  taumax = maxval(tau)
-                  taumin = minval(tau)
+                  IF (ANY(tau .lt. 0._r32)) CYCLE
 
-                  it1 = NINT(taumin / dt) + 1
+                  taumax = MAXVAL(tau)
+                  taumin = MINVAL(tau)
 
-                  it2 = it1 + (taumax - taumin) / dt - 1         !< when (taumax-taumin) < dt, it2 < it1
-                  it2 = MIN(npts, it2)                           !< limit to max number of time points
+                  it(1) = NINT(taumin / dt) + 1
+
+                  it(2) = it(1) + (taumax - taumin) / dt - 1         !< when (taumax-taumin) < dt, it2 < it1
+                  it(2) = MIN(npts, it(2))                           !< limit to max number of time points
 
                   ! jump to next sheet if no isochron is spanned
-                  IF (it2 .lt. it1) CYCLE
+                  IF (it(2) .lt. it(1)) CYCLE
 
                   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
                   ! ---------------------------------------------- integral kernel -------------------------------------------------
@@ -271,26 +277,22 @@ MODULE m_isochron
                     cpsi = dx / dr
                     spsi = dy / dr
 
-                    IF (wtp .eq. 1) THEN
-                      velloc = alpha(icr)
-                    ELSE
-                      velloc = beta(icr)
-                    ENDIF
-
                     sloloc = 1._r32 / velloc        !< slowness at corner
 
                     ! "p" is "-p" for downgoing rays
-                    IF (p(icr) .gt . sloloc) p(icr) = -(2._r32 * sloloc - p(icr))
+                    IF (p(icr) .gt. sloloc) p(icr) = -(2._r32 * sloloc - p(icr))
 
                     ! get sign of ray (+ if upgoing, - if downgoing)
                     signp = SIGN(1._r32, p(icr))
 
-                    ! sine of angle eta at source
-                    sthf = velloc * ABS(p(icr))
+                    p(icr) = ABS(p(icr))         !< from here onwards we need only its absolute value
 
-#ifdef ERROR_TRAP
-                    CALL report_error('solve_isochron_integral - ERROR: sin(eta) sensibly larger than 1')
-#endif
+                    ! sine of angle eta at source
+                    sthf = velloc * p(icr)
+
+                    #ifdef ERROR_TRAP
+                    IF (sthf .gt. 1.01_r32) CALL report_error('solve_isochron_integral - ERROR: sin(eta) sensibly larger than 1')
+                    #endif
 
                     sthf = MIN(sthf, 1._r32)     !< handle roundoff errors
 
@@ -327,13 +329,11 @@ MODULE m_isochron
                       iphi(icr)   = slip(icr) * guk * (rncu * cr(icr)) - rncv * sr(icr)))
                     ENDIF
 
-
-                    p(icr) = ABS(p(icr))         !< IS THIS NEEDED?
                     stho = p(icr) * sfrvel
 
-#ifdef ERROR_TRAP
-                    CALL report_error('solve_isochron_integral - ERROR: sin(eta) sensibly larger than 1')
-#endif
+                    #ifdef ERROR_TRAP
+                    IF (stho .gt. 1.01_r32) CALL report_error('solve_isochron_integral - ERROR: sin(eta) sensibly larger than 1')
+                    #endif
 
                     stho = MIN(stho, 1._r32)     !< handle roundoff errors
                     ctho = SQRT(1._r32 - stho**2)
@@ -350,56 +350,130 @@ MODULE m_isochron
                     phvec(2, icr) = -cpsi
                     phvec(3, icr) = 0._r32
 
+                    ! interpolate free-surface amplification coefficients at current ray parameter
+                    CALL interpolate(, fxp, p(icr), fxpfzs)
+                    CALL interpolate(, fzp, p(icr), fzpfxs)
 
+                    ! free-surface amplification coefficients for incident p (fp) and sv (fs) waves for each corner and component
+                    ! of motion (x,y,z)
+                    fp(1, icr) = fxpfzs
+                    fp(2, icr) = fxpfzs
+                    fp(3, icr) = fzpfxs
+                    fs(1, icr) = fzpfxs
+                    fs(2, icr) = fzpfxs
+                    fs(3, icr) = fxpfzs
 
-
-
-
-
-                    ! FREE SURFACE COEFFICIENTS DERIVED FROM AKI AND RICHARDS.
-                    ! INITIALISE TO NO FREE SURFACE EFFECT.
-                    FS(:,:) = (1.,0.)
-                    FP(:,:) = (1.,0.)
-
-                    IF (WANTFS) THEN
-                       IPLU = P(ICR) / DPLU + 1
-                       DPP = P(ICR) - (IPLU-1) * DPLU
-                       FXPFZS = FXP(IPLU) + DPP * (FXP(IPLU+1) - FXP(IPLU)) / DPLU
-                       FZPFXS = FZP(IPLU) + DPP * (FZP(IPLU+1) - FZP(IPLU)) / DPLU
-
-                       ! FREE-SURFACE AMPLIFICATION COEFFICIENTS FOR INCIDENT P (FP) AND SV (FS)
-                       ! WAVES FOR EACH CORNER AND EACH COMPONENT OF MOTION (X,Y,Z)
-                       FP(1,ICR) = FXPFZS
-                       FP(2,ICR) = FXPFZS
-                       FP(3,ICR) = FZPFXS
-                       FS(1,ICR) = FZPFXS
-                       FS(2,ICR) = FZPFXS
-                       FS(3,ICR) = FXPFZS
+                    ! store integral kernel in "g"
+                    IF (wtp .eq. 1) THEN
+                      DO ic = 1, 3
+                        g(ic, icr) = ir(icr) * rvec(ic, icr) * fp(ic, icr)          !< P
+                      ENDDO
+                    ELSE
+                      DO ic = 1, 3
+                        g(ic, icr) = itheta(icr) * thvec(ic, icr) * fs(ic, icr) + iphi(icr) * phvec(ic, icr) * 2._r32    !< SV + SH
+                      ENDDO
                     ENDIF
 
-                    ! INTEGRAL KERNELS
-                    DO IC = 1,3
-                       IF(LISP) THEN
-                          RVFP      = RVEC(IC,ICR) * FP(IC,ICR)
-                          G(IC,ICR) = RVFP * IR(ICR)
-                       ENDIF
-
-                       IF(LISS) THEN
-                          TVFS      = THVEC(IC,ICR) * FS(IC,ICR)
-                          G(IC,ICR) = ITHETA(ICR) * TVFS + IPHI(ICR) * PHVEC(IC,ICR) * SHFS
-                       ENDIF
-     	           ENDDO
-                 ENDDO  ! END LOOP OVER CORNERS
-
-
                   ENDDO
+                  ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+                  ! --------------------------------------------- time integration -------------------------------------------------
+
+                  ! differences in tau between corners
+                  tau31 = tau(3) - tau(1)
+                  tau21 = tau(2) - tau(1)
+                  tau23 = tau(2) - tau(3)
+
+                  ! apparent velocity of the tau curves
+                  c = HYPOT(tau31 / dutr(ref), (tau(2) - 0.5_r32 * (tau(1) + tau(3))) / dvtr(ref))
+                  c = 1._r32 / c
+
+                  DO t = it(1), it(2)
+
+                    tc = (t - 1) * dt
+
+                    dtau(1) = tc - tau(1)
+                    dtau(2) = tc - tau(2)
+                    dtau(3) = tc - tau(3)
+
+                    ! determine which corner is cut. Set "icut=0" when isochron is outside triangle
+                    IF (SIGN(1._r32, dtau(1)) .eq. SIGN(1._r32, dtau(2))) THEN
+                      IF (SIGN(1._r32, dtau(2)) .eq. SIGN(1._r32, dtau(3))) THEN
+                        icut = 0
+                      ELSE
+                        icut = 3
+                      ENDIF
+                    ELSE
+                      IF (SIGN(1._r32, dtau(1)) .eq. SIGN(1._r32, dtau(3))) THEN
+                        icut = 2
+                      ELSE
+                        icut = 1
+                      ENDIF
+                    ENDIF
+
+                    IF ( (dtau(1) .eq. 0._r32) .and. (dtau(2) .eq. 0._r32) ) icut = 3
+                    IF ( (dtau(1) .eq. 0._r32) .and. (dtau(3) .eq. 0._r32) ) icut = 2
+                    IF ( (dtau(2) .eq. 0._r32) .and. (dtau(3) .eq. 0._r32) ) icut = 1
+
+                    ! keep track of total cuts
+                    IF (icut .ne. 0) ncuts(wtp, rec) = ncuts(wtp, rec) + (it(2) - it(1) + 1)
+
+                    DO ic = 1, 3
+
+                      g31 = g(ic, 3) - g(ic, 1)
+                      g21 = g(ic, 2) - g(ic, 1)
+                 	    g23 = g(ic, 2) - g(ic, 3)
+
+                      ! choose the correct integration formulae depending on which corner of the triangle is cut. ga and gb are the
+                      ! values of the integrand at the boundaries of the triangle where intersected by the integration contour.
+                      ! dl is the length of the contour within the triangle.
+
+                      SELECT CASE (icut)
+                        CASE(0)               !< isochron cuts a corner
+                          ga = 0._r32
+                          gb = 0._r32
+                          du = 0._r32
+                          dv = 0._r32
+                        CASE(1)
+                          p13 = dtau(1) / tau31
+                          p12 = dtau(1) / tau21
+                          ga  = g(ic, 1) + p13 * g31
+                          gb  = g(ic, 1) + p12 * g21
+                          dv  = dvtr(ref) * p12
+                          du  = dutr(ref) * (p13 - 0.5_r32 * p12)
+                        CASE(2)
+                          p12 = dtau(1) / tau21
+                          p32 = dtau(3) / tau23
+                          ga  = g(ic, 3) + p32 * g23
+                          gb  = g(ic, 1) + p12 * g21
+                          dv  = dvtr(ref) * (p12 - p32)
+                          du  = dutr(ref) * (1._r32 - 0.5_r32 * p12 - 0.5_r32 * p32)
+                        CASE(3)
+                          p13 = dtau(1) / tau31
+                          p32 = dtau(3) / tau23
+                          ga  = g(ic, 1) + p13 * g31
+                          gb  = g(ic, 3) + p32 * g23
+                          dv  = dvtr(ref) * p32
+                          du  = dutr(ref) * (1._r32 - p13 - 0.5_r32 * p32)
+                      END SELECT
+
+                      dl = HYPOT(du, dv)
+
+                      triseis(ic, t) = triseis(ic, t) + c * (ga + gb) * dl * 0.5_r32
+
+                    ENDDO      !< end loop over components
+
+                  ENDDO     !< end loop over time
 
                 ENDDO     !< end loop over sheets
 
               ENDDO    !< end loop over wave types
 
-
               ! add coda here
+
+
+              timeseries%sp%x(t, nrec) =
+              timeseries%sp%y(t, nrec) =
+              timeseries%sp%z(t, nrec) =
 
             ENDDO   !< end loop over receivers
 
@@ -424,6 +498,341 @@ MODULE m_isochron
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
+    SUBROUTINE SETFS (VP, VS, DPLU, DPSM, NPLU, IRORT, FXP, FZP)
+
+    !  SUBROUTINE TO SET UP A LOOKUP TABLE OF FREE SURFACE AMPLIFICATION
+    ! COEFFICIENTS AND OPTIONALLY TO SMOOTH IT WITH A RUNNING MEAN HAVING
+    ! EITHER A RECTANGULAR OR TRIANGULAR WEIGHTING.
+
+    ! INPUTS.....
+    !  VP, VS   -   P AND S VELOCITY AT THE FREE SURFACE
+    !  DPLU     -   DESIRED SPACING IN P (RAY PARAMETER) OF THE LOOKUP TABLE
+    !  DPSM     -   WIDTH IN P OF THE RUNNING MEAN BOXCAR
+    !  CWORK    -   A COMPLEX DUMMY WORK ARRAY OF DIMENSION NPLUDM
+    !  NPLU     -   DIMENSIONS OF ARRAYS FXP, FZP, AND WORK IN THE CALLING
+    !                ROUTINE
+    !  IRORT    -   INTEGER TO DETERMINE WEIGHTING OF RUNNING MEAN.
+    !                = 0   RECTANGULAR WEIGHTING (NORMAL RUNNING MEAN)
+    !                = 1   TRIANGULAR WEIGHTING
+    !  LP       -   LOGICAL UNIT NUMBERS OF THE LINE PRINTER AND TERMINAL,
+    !               FOR WRITING
+
+    ! OUTPUTS.....
+    !  FXP, FZP -   COMPLEX ARRAYS OF DIMENSION NPLUDM CONTAINING THE FREE
+    !                SURFACE AMPLIFICATION COEFFICIENTS FXPFZS AND FZPFXS
+    !                RESPECTIVELY.
+
+    USE PRECISIONS
+
+    USE INTERFACES, ONLY: EXE_STOP
+
+    IMPLICIT NONE
+
+    REAL(RSP),INTENT(IN)                       :: VP,VS,DPLU,DPSM
+    INTEGER(ISP),INTENT(IN)                    :: NPLU,IRORT
+    COMPLEX(RSP),DIMENSION(NPLU),INTENT(INOUT) :: FXP,FZP
+
+    REAL(RSP)                                  :: P,AMP
+    INTEGER(ISP)        					   :: ILU,IERR
+    INTEGER(ISP)         					   :: NBOX
+
+    CHARACTER(LEN=1)                           :: NR
+
+    !-----------------------------------------------------------------------------------------
+
+    ! COMPUTE FREE-SURFACE AMPLIFICATION COEFFICIENTS
+    DO ILU = 1,NPLU
+
+       P = (ILU-1) * DPLU
+       CALL FSAMP (P, VP, VS, FXP(ILU), FZP(ILU), IERR)
+
+       !print*,P,FZP(ILU)
+
+       !IF (IERR .NE. 0) CALL BOMOU2 (LP, LP, FLOAT(IERR), ' ERROR IN FSAMP')
+       IF (IERR .NE. 0) THEN
+          WRITE(NR,'(I1)') IERR
+          CALL EXE_STOP('SETFS.F90','FSAMP',20,NR)
+       ENDIF
+
+    ENDDO
+
+
+    ! SMOOTH IF BOX LENGTH GREATER THAN ZERO
+    IF (DPSM .GT. 0.) THEN
+
+       NBOX = DPSM / DPLU + 2
+       AMP = 1. / DPSM
+
+       CALL RNMNC (FXP, NPLU, NBOX, IRORT, IERR)
+
+       !IF (IERR .NE. 0) CALL BOMOU2 (LP, LP, FLOAT(IERR),'ERR IN RNMNC, # =')
+       IF (IERR .NE. 0) THEN
+          WRITE(NR,'(I1)') IERR
+          CALL EXE_STOP('SETFS.F90','RNMNC',20,NR)
+       ENDIF
+
+       CALL RNMNC (FZP, NPLU, NBOX, IRORT, IERR)
+
+       !IF (IERR .NE. 0) CALL BOMOU2 (LP, LP, FLOAT(IERR),'ERR IN RNMNC, # =')
+       IF (IERR .NE. 0) THEN
+          WRITE(NR,'(I1)') IERR
+          CALL EXE_STOP('SETFS.F90','RNMNC',20,NR)
+       ENDIF
+
+    ENDIF
+
+    END SUBROUTINE SETFS
+
+
+
+
+    SUBROUTINE FSAMP(P, A, B, FXPFZS, FZPFXS, IERR)
+    !-----------------------------------------------------------------------
+
+    ! SUBROUTINE TO EVALUATE FREE SURFACE AMPLIFICATION COEFFICIENTS FOR
+    ! UPGOING P AND SV RAYS
+
+    ! INPUTS:
+
+    !  P      - RAY PARAMETER
+    !  A      - SURFACE P VELOCITY
+    !  B      - SURFACE S VELOCITY
+
+    ! OUTPUTS:
+
+    !  FXPFZS - COMPLEX AMPLIFICATION FACTOR TO BE APPLIED TO THE HORIZONTAL
+    !            COMPONENT OF P MOTION OR THE VERTICAL COMPONENT OF SV
+    !            MOTION
+
+    !  FZPFXS - COMPLEX AMPLIFICATION FACTOR TO BE APPLIED TO THE VERTICAL
+    !            COMPONENT OF P MOTION AND THE HORIZONTAL COMPONENT OF SV
+    !            MOTION
+
+    !  IERR   - INTEGER ERROR CODE
+    !           = 0  - NO ERRORS
+    !           = 1  - AMPLIFICATION FACTOR FXPFZS NOT PURE REAL WHEN IT
+    !                   SHOULD BE
+    !           = 2  - AMPLIFICATION FACTOR FZPFXS NOT PURE REAL WHEN IT
+    !                   SHOULD BE
+    !           = 3  - IMAGINARY PART OF COSI NEG (THIS FIXED BY CODE)
+    !           = 4  - IMAGINARY PART OF COSJ NEG (THIS FIXED BY CODE)
+    !----------------------------------------------------------------------------------
+
+    USE PRECISIONS
+
+    IMPLICIT NONE
+
+    REAL(RSP),INTENT(IN)     :: P,A,B
+    COMPLEX(RSP),INTENT(OUT) :: FXPFZS,FZPFXS
+    INTEGER(ISP),INTENT(OUT) :: IERR
+    REAL(RSP)                :: PS,G,GS,SINI,SINJ
+    COMPLEX(RSP)             :: COSI,COSJ,CICJ
+    COMPLEX(RSP)             :: Q,D,PUPD,C,CS,CC
+
+    !----------------------------------------------------------------------------------
+
+    PS = P*P
+    G = 1./B**2 - 2.*PS
+    GS = G*G
+
+    SINI = A*P
+    SINJ = B*P
+    COSI = CSQRT ( CMPLX (1.-SINI**2, 0.) )
+    COSJ = CSQRT ( CMPLX (1.-SINJ**2, 0.) )
+
+    IF (AIMAG (COSI) .LT. 0.) THEN
+       COSI = CMPLX ( REAL(COSI), -AIMAG(COSI) )
+       IERR = 3
+    ENDIF
+    IF (AIMAG (COSJ) .LT. 0.) THEN
+       COSJ = CMPLX ( REAL(COSJ), -AIMAG(COSJ) )
+       IERR = 4
+    ENDIF
+
+    CICJ = COSI * COSJ
+
+    Q = 4. * PS * CICJ / A / B
+
+    ! D IS THE RAYLEIGH DENOMINATOR
+    D = GS + Q
+    C = 4. / A / B * G / D
+
+    CS = C * SINI * SINJ
+    CC = C * CICJ
+
+    PUPD = (Q - GS) / D
+
+    FXPFZS = 1. + PUPD + CC
+    FZPFXS = 1. - PUPD + CS
+
+    ! FOR P < 1/A, EVERYTHING SHOULD BE REAL
+    IERR = 0
+    IF (P .LE. 1./A) THEN
+       IF (AIMAG(FXPFZS) .NE. 0.) IERR = 1
+       IF (AIMAG(FZPFXS) .NE. 0.) IERR = 2
+    ENDIF
+
+
+    END SUBROUTINE FSAMP
+
+
+
+    SUBROUTINE RNMNC (A, NA, NRMN, IRORT, IERR)
+
+    ! SUBROUTINE TO CALCULATE THE RUNNING MEAN OF A COMPLEX ARRAY.  THIS
+    ! ROUTINE WILL APPLY EITHER A RECTANGULAR OR TRIANGULAR WEIGHTING TO
+    ! THE RUNNING MEAN.
+
+    !  INPUTS:
+    !    A     -    THE INPUT COMPLEX ARRAY
+    !    NA    -    A(1) TO A(NA) WILL BE USED.
+    !    NRMN  -    NUMBER OF POINTS IN THE RUNNING MEAN WINDOW
+    !    IRORT -    INTEGER SPECIFYING WEIGHTING
+    !                = 0   FOR RECTANGULAR WEIGHTING
+    !                = 1   FOR TRIANGULAR
+
+    !  OUTPUTS:
+    !    A     -    THE COMPLEX ARRAY CONTAINING THE RUNNING MEAN.
+    !    IERR  -    ERROR CODE,
+    !                = 0    NO ERRORS
+    !                = 1    NRMN .LE. 0
+    !                = 2    NRMN .GE. NA
+    !                = 3    IRORT .NE. 0 OR 1
+
+    !  NOTES...... TO CALCULATE A RUNNING MEAN AT THE ENDS OF A, SOME
+    ! ASSUMPTION MUST BE MADE ABOUT A OUTSIDE OF THE INTERVAL A(1-NA).
+    ! IN THIS ROUTINE, WE ASSUME THAT OUTSIDE OF THAT INTERVAL, A MAY BE
+    ! FOUND BY LINEAR EXTRAPOLATION FROM A(1) AND A(2), OR FROM A(NA-1) AND
+    ! A(NA), AS APPROPRIATE.   ALSO, IF NRMN IS ODD, THEN ANSR(1) IS
+    ! EXACTLY COINCIDENT WITH A(1) IN WHATEVER THE DEPENDENT VARIABLE IS,
+    ! E.G. IF A IS A TIME SERIES, ANSR(1) CORRESPONDS TO EXACTLY THE SAME
+    ! TIME AS A(1).  IF NRMN IS EVEN, THEN ANSR(1) WILL CONTAIN THE VALUE
+    ! CORRESPONDING TO THE ORDINATE (E.G. TIME) 1/2 SAMPLE BEFORE A(1).
+
+    USE PRECISIONS
+
+    IMPLICIT NONE
+
+    COMPLEX(RSP),DIMENSION(NA),INTENT(INOUT) :: A
+    INTEGER(ISP),INTENT(IN)                  :: NA,NRMN,IRORT
+    INTEGER(ISP),INTENT(OUT)                 :: IERR
+
+    COMPLEX(RSP),ALLOCATABLE,DIMENSION(:)    :: ANSR
+    INTEGER(ISP)                             :: I,J,NTOT,NEND,NMID,NSHIFT
+    COMPLEX(RSP)                             :: ADIF,SUM
+    REAL(RSP)                                :: WSUM
+    REAL(RSP),DIMENSION(NRMN)                :: W
+
+    ! ---------------------------------------------------------------------------------
+
+    IERR = 0
+    NTOT = NA + 2*(NRMN-1)
+
+    ! WINDOW TOO SMALL
+    IF (NRMN .LE. 0) IERR = 2
+
+    ! WINDOW TOO LARGE
+    IF (NRMN .GE. NA) IERR = 3
+
+    ! WRONG FLAG FOR WINDOW
+    IF (IRORT .NE. 0 .AND. IRORT .NE. 1) IERR = 5
+
+    ! EXIT SUBROUTINE IF AN ERROR WAS DETECTED
+    IF (IERR .NE. 0) RETURN
+
+    ALLOCATE(ANSR(NTOT))
+
+    ! LOAD A INTO ANSWER, SHIFTED
+    DO I = 1,NA
+       ANSR(NRMN - 1 + I) = A(I)
+    ENDDO
+
+    ! DETERMINE END VALUES BY LINEAR INTERPOLATION
+    ADIF = A(2) - A(1)
+    DO  I = 1,NRMN - 1
+       ANSR(I) = A(1) + ADIF * (I - NRMN)
+    ENDDO
+
+    NEND = NA + NRMN - 1
+    ADIF = A(NA) - A(NA - 1)
+    DO I = NA + NRMN, NTOT
+       ANSR(I) = A(NA) + ADIF * (I - NEND)
+    ENDDO
+
+    ! RUNNING MEAN
+    IF (IRORT .EQ. 0) THEN
+
+    !  RECTANGULAR WEIGHTING
+       DO I = 1,NEND
+          SUM = 0.
+          DO J = 1,NRMN
+             SUM = SUM + ANSR(I + J - 1)
+          ENDDO
+          ANSR(I) = SUM / NRMN
+       ENDDO
+
+    ELSE
+
+    !  TRIANGULAR WEIGHTING.  FIGURE OUT WEIGHTS
+       NMID = (NRMN + 1) / 2
+       DO I = 1,NMID
+          W(I) = 2. * I - 1
+       ENDDO
+
+       IF (NMID .LT. NRMN) THEN
+          DO I = NMID+1, NRMN
+             W(I) = W(NRMN - I + 1)
+          ENDDO
+       ENDIF
+
+    !  NORMALIZE WEIGHTS TO 1
+       WSUM = 0.
+       DO I = 1, NRMN
+          WSUM = WSUM + W(I)
+       ENDDO
+       DO I = 1, NRMN
+          W(I) = W(I) / WSUM
+       ENDDO
+
+    !  RUNNING MEAN TRIANGULAR WEIGHTING
+       DO I = 1,NEND
+          SUM = 0.
+          DO J = 1,NRMN
+             SUM = SUM + ANSR(I + J - 1) * W(J)
+          ENDDO
+          ANSR(I) = SUM
+       ENDDO
+
+    ENDIF
+
+    ! SHIFT TO CENTERED WINDOWS.  EXACT FOR NRMN ODD
+    NSHIFT = (NRMN - 1) / 2
+    IF (NSHIFT .GT. 0) THEN
+       DO I = 1,NA
+          ANSR(I) = ANSR(I + NSHIFT)
+       ENDDO
+    ENDIF
+
+    ! RETURN ONLY FIRST NA ELEMENTS
+    DO I = 1,NA
+       A(I) = ANSR(I)
+    ENDDO
+
+    DEALLOCATE(ANSR)
+
+    END SUBROUTINE RNMNC
+
+
+
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
