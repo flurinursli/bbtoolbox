@@ -36,12 +36,13 @@ MODULE m_isochron
   REAL(r32), PARAMETER :: PI = 3.14159265358979323846_r64
   REAL(r32), PARAMETER :: DEG_TO_RAD = PI / 180._r32
   REAL(r32), PARAMETER :: BIG = HUGE(0._r32)
-  REAL(r32), PARAMETER :: DPLU = 0.002_r32, DPSM = 0.07_r32         !< free-surface smoothing parameters
+  REAL(r32), PARAMETER :: DP = 0.002_r32, DPSM = 0.07_r32         !< free-surface smoothing parameters
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
+  COMPLEX(r32), ALLOCATABLE, DIMENSION(:) :: fxp, fzp                 !< free-surface amplification coefficients
   INTEGER(i32),              DIMENSION(2) :: minsheets, maxsheets
-  REAL(r32),    ALLOCATABLE, DIMENSION(:) :: shooting            !< depth of shooting points
+  REAL(r32),    ALLOCATABLE, DIMENSION(:) :: shooting                 !< depth of shooting points
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -68,21 +69,56 @@ MODULE m_isochron
       !   08/03/21                  original version
       !
 
-      INTEGER(i32),                           INTENT(OUT) :: ok
-      INTEGER(i32),                           INTENT(IN)  :: pl, vel, iter
-      INTEGER(i32)                                        :: i, j, ref, icr, totnutr, seed, src, rec, sheet, wtp, it1, it2
-      INTEGER(i32),              DIMENSION(3)             :: iuc, ivc, iab, ibl, shot
-      REAL(r32)                                           :: m0, moment, strike, dip, urec, vrec, wrec, taumin, taumax, sd, cd
-      REAL(r32)                                           :: srfvel, stho
-      REAL(r32),                 DIMENSION(2)             :: po, ro, xo, to, qo, zshots
-      REAL(r32),                 DIMENSION(3)             :: u, v, w, x, y, z, slip, rise, rupture, rake, nrl, rho, alpha, beta, mu
-      REAL(r32),                 DIMENSION(3)             :: p, q, r, trvt, path, repi, tau, sr, cr, rvec, thvec, phvec
+      INTEGER(i32),                             INTENT(OUT) :: ok
+      INTEGER(i32),                             INTENT(IN)  :: pl, vel, iter
+      COMPLEX(r32)                                          :: fxpfzs, fzpfxs, g31, g21, g23, ga, gb
+      COMPLEX(r32),              DIMENSION(3,3)             :: fp, fs, g
+      COMPLEX(r32), ALLOCATABLE, DIMENSION(:)               :: fxp, fzp
+      INTEGER(i32)                                          :: n, i, j, ref, icr, totnutr, seed, src, rec, sheet, wtp, it1, it2, ic
+      INTEGER(i32)                                          :: it, icut
+      INTEGER(i32),              DIMENSION(3)               :: iuc, ivc, abv, blw, shot
+      INTEGER(i32), ALLOCATABLE, DIMENSION(:,:)             :: ncuts
+      REAL(r32)                                             :: m0, moment, strike, dip, urec, vrec, wrec, taumin, taumax, sd, cd
+      REAL(r32)                                             :: srfvel, velloc, stho, r, dx, dy, dr, cpsi, spsi, sloloc, signp, sthf
+      REAL(r32)                                             :: cthf, rn, rv, ru, bn, cn, bu, cu, bv, cv, rnbu, rnbv, rncu, rncv, guk
+      REAL(r32)                                             :: stho, ctho, tau31, tau21, tau23, c, du, dv, p13, p12, p32, dl, scale
+      REAL(r32),                 DIMENSION(2)               :: po, ro, to, qo, zshots
+      REAL(r32),                 DIMENSION(3)               :: u, v, w, x, y, z, slip, rise, rupture, rake, nrl, rho, alpha, beta
+      REAL(r32),                 DIMENSION(3)               :: mu, p, q, path, repi, tau, sr, cr, rvec, thvec, phvec, ir, itheta
+      REAL(r32),                 DIMENSION(3)               :: iphi, dtau
+      REAL(r32),    ALLOCATABLE, DIMENSION(:)               :: fsp
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
       CALL setup_interpolation('linear', 'zero', ok)
 
-      moment = 0._r32
+      IF (ok .ne. 0) RETURN
+
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+      ! ---------------------------------------- lookup table free-surface coefficients --------------------------------------------
+
+      alpha = BIG
+      beta  = BIG
+
+      ! find minimum velocities amongst all receivers
+      DO rec = 1, SIZE(input%receiver)
+        alpha(1) = MIN(alpha(1), input%velocity(input%receiver(rec)%velocity)%vp(1))
+        beta(1)  = MIN(beta(1), input%velocity(input%receiver(rec)%velocity)%vs(1))
+      ENDDO
+
+      n = NINT(1._r32 / beta(1) / DP) + 1      !< coefficients are computed at "n" slowness points
+
+      ALLOCATE(fxp(n), fzp(n), fsp(n))
+
+      ! determine coefficients
+      CALL setf(ok, alpha(1), beta(1), 1, fsp, fxp, fzp)
+
+      IF (ok .ne. 0) RETURN
+
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+      ! --------------------------------------- solve integral for each mesh refinement --------------------------------------------
+
+      moment = 0._r32      !< keep track of actual moment
 
       nodefun => rik_at_nodes
 
@@ -91,7 +127,9 @@ MODULE m_isochron
       ! set "seed" such that random numbers depend on fault plane number and iteration
       seed = input%source%seed + (iter - 1) * SIZE(plane) + pl
 
-      ncuts(:,:) = 0        !< initialise number of isochron cuts
+      ALLOCATE(ncuts(2, SIZE(input%receiver)))
+
+      ncuts(:,:) = 0        !< keep track of mean isochron cuts for each wave type and receiver
 
       DO ref = 1, SIZE(nvtr)         !< loop over mesh refinements
 
@@ -205,15 +243,17 @@ MODULE m_isochron
               ! loop over wave types (i.e. 1=P, 2=S)
               DO wtp = 1, 2
 
-                abv(:) = 1      !< reset sheet-related index
-                blw(:) = 1
+                DO icr = 1, 3
+                  abv(icr) = 1      !< reset sheet-related index
+                  blw(icr) = 1
+                ENDDO
 
                 ! velocity at receiver and source
                 IF (wtp .eq. 1) THEN
-                  srfvel = input%velocity(input%receiver%velocity)%vp(1)
+                  srfvel = input%velocity(input%receiver(rec)r%velocity)%vp(1)
                   velloc = alpha(icr)
                 ELSE
-                  srfvel = input%velocity(input%receiver%velocity)%vs(1)
+                  srfvel = input%velocity(input%receiver(rec)%velocity)%vs(1)
                   velloc = beta(icr)
                 ENDIF
 
@@ -241,7 +281,7 @@ MODULE m_isochron
                       CALL interpolate(zshots, qo, z(icr), q(icr))
 
                       ! sum travel-time and rupture time
-                      tau(icr) = trvt + ruptime(icr)
+                      tau(icr) = trvt + rupture(icr)
 
                     ENDIF
 
@@ -250,18 +290,18 @@ MODULE m_isochron
                   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
                   ! -------------------------------------------- time integration limits -------------------------------------------
 
-                  IF (ANY(tau .lt. 0._r32)) CYCLE
+                  IF (ANY(tau .lt. 0._r32)) CYCLE       !< all corners must belong to same sheet
 
                   taumax = MAXVAL(tau)
                   taumin = MINVAL(tau)
 
-                  it(1) = NINT(taumin / dt) + 1
+                  it1 = NINT(taumin / timeseries%sp%dt) + 1
 
-                  it(2) = it(1) + (taumax - taumin) / dt - 1         !< when (taumax-taumin) < dt, it2 < it1
-                  it(2) = MIN(npts, it(2))                           !< limit to max number of time points
+                  it2 = it1 + (taumax - taumin) / timeseries%sp%dt - 1      !< when (taumax-taumin) < dt, it2 < it1
+                  it2 = MIN(SIZE(timeseries%sp%time), it2)                  !< limit to max number of time points
 
                   ! jump to next sheet if no isochron is spanned
-                  IF (it(2) .lt. it(1)) CYCLE
+                  IF (it2 .lt. it1) CYCLE
 
                   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
                   ! ---------------------------------------------- integral kernel -------------------------------------------------
@@ -351,8 +391,8 @@ MODULE m_isochron
                     phvec(3, icr) = 0._r32
 
                     ! interpolate free-surface amplification coefficients at current ray parameter
-                    CALL interpolate(, fxp, p(icr), fxpfzs)
-                    CALL interpolate(, fzp, p(icr), fzpfxs)
+                    CALL interpolate(fsp, fxp, p(icr), fxpfzs)
+                    CALL interpolate(fsp, fzp, p(icr), fzpfxs)
 
                     ! free-surface amplification coefficients for incident p (fp) and sv (fs) waves for each corner and component
                     ! of motion (x,y,z)
@@ -387,13 +427,13 @@ MODULE m_isochron
                   c = HYPOT(tau31 / dutr(ref), (tau(2) - 0.5_r32 * (tau(1) + tau(3))) / dvtr(ref))
                   c = 1._r32 / c
 
-                  DO t = it(1), it(2)
+                  DO it = it1, it2
 
-                    tc = (t - 1) * dt
-
-                    dtau(1) = tc - tau(1)
-                    dtau(2) = tc - tau(2)
-                    dtau(3) = tc - tau(3)
+                    ! t = (it - 1) * timeseries%sp%dt
+                    ! t = timeseries%sp%time(it)
+                    dtau(1) = timeseries%sp%time(it) - tau(1)
+                    dtau(2) = timeseries%sp%time(it) - tau(2)
+                    dtau(3) = timeseries%sp%time(it) - tau(3)
 
                     ! determine which corner is cut. Set "icut=0" when isochron is outside triangle
                     IF (SIGN(1._r32, dtau(1)) .eq. SIGN(1._r32, dtau(2))) THEN
@@ -458,30 +498,34 @@ MODULE m_isochron
 
                       dl = HYPOT(du, dv)
 
-                      triseis(ic, t) = triseis(ic, t) + c * (ga + gb) * dl * 0.5_r32
+                      triseis(ic, it) = triseis(ic, it) + c * (ga + gb) * dl * 0.5_r32
 
                     ENDDO      !< end loop over components
 
                   ENDDO     !< end loop over time
 
+                  ! stack envelopes here (p-only, s-only, depending on wtp), weighted by "Q" and "dl"
+
                 ENDDO     !< end loop over sheets
 
               ENDDO    !< end loop over wave types
 
+              ! add hilber transform here
+
+              ! move back from "u/t" (fault-parallel/fault-normal) to "x/y" coordinates
+              CALL rotate(spx, spy, spz, 0._r32, 0._r32, strike)
+
+              timeseries%sp%x(it, rec) = timeseries%sp%x(it, rec) + spx(it)
+              timeseries%sp%y(it, rec) = timeseries%sp%y(it, rec) + spy(it)
+              timeseries%sp%z(it, rec) = timeseries%sp%z(it, rec) + spz(it)
+
               ! add coda here
 
-
-              timeseries%sp%x(t, nrec) =
-              timeseries%sp%y(t, nrec) =
-              timeseries%sp%z(t, nrec) =
+              ! convolve with mrf here
 
             ENDDO   !< end loop over receivers
 
-            ! convolve with mrf here
-
-            ! rotate time-series from fp/fn to x/y
-
-            m0 = m0 + mean(mu * slip)
+            m0 = m0 + mean(mu * slip)        !< average moment contribution (area is added later)
 
           ENDDO
         ENDDO
@@ -489,7 +533,21 @@ MODULE m_isochron
 
         CALL dealloc_nodes()
 
+        moment = moment + m0 * dutr(ref) * dvtr(ref) * 0.5_r32      !< sum is over mesh refinements
+
       ENDDO        !< end loop over mesh refinements
+
+      scale = plane(pl)%targetm0 / moment
+
+      ! rescale synthetics to target moment
+      DO rec = 1, SIZE(input%receiver)
+        DO it = 1, SIZE(timeseries%sp%time)
+          timeseries%sp%x(it, rec) = timeseries%sp%x(it, rec) * scale
+          timeseries%sp%y(it, rec) = timeseries%sp%y(it, rec) * scale
+          timeseries%sp%z(it, rec) = timeseries%sp%z(it, rec) * scale
+        ENDDO
+      ENDDO
+
 
 
     END SUBROUTINE solve_isochron_integral
@@ -498,342 +556,201 @@ MODULE m_isochron
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE SETFS (VP, VS, DPLU, DPSM, NPLU, IRORT, FXP, FZP)
+    SUBROUTINE setfs(ok, vp, vs, irort, fsp, fxp, fzp)
 
-    !  SUBROUTINE TO SET UP A LOOKUP TABLE OF FREE SURFACE AMPLIFICATION
-    ! COEFFICIENTS AND OPTIONALLY TO SMOOTH IT WITH A RUNNING MEAN HAVING
-    ! EITHER A RECTANGULAR OR TRIANGULAR WEIGHTING.
+      INTEGER(i32),               INTENT(OUT) :: ok
+      REAL(r32),                  INTENT(IN)  :: vp, vs
+      INTEGER(i32),               INTENT(IN)  :: irort
+      COMPLEX(r32), DIMENSION(:), INTENT(OUT) :: fsp, fxp, fzp
+      COMPLEX(r32)                            :: cosi, cosj, cicj, q, d, pupd, c, cs, cc
+      INTEGER(i32)                            :: i, n
+      REAL(r32)                               :: p, ps, g, gs, sini, sinj
 
-    ! INPUTS.....
-    !  VP, VS   -   P AND S VELOCITY AT THE FREE SURFACE
-    !  DPLU     -   DESIRED SPACING IN P (RAY PARAMETER) OF THE LOOKUP TABLE
-    !  DPSM     -   WIDTH IN P OF THE RUNNING MEAN BOXCAR
-    !  CWORK    -   A COMPLEX DUMMY WORK ARRAY OF DIMENSION NPLUDM
-    !  NPLU     -   DIMENSIONS OF ARRAYS FXP, FZP, AND WORK IN THE CALLING
-    !                ROUTINE
-    !  IRORT    -   INTEGER TO DETERMINE WEIGHTING OF RUNNING MEAN.
-    !                = 0   RECTANGULAR WEIGHTING (NORMAL RUNNING MEAN)
-    !                = 1   TRIANGULAR WEIGHTING
-    !  LP       -   LOGICAL UNIT NUMBERS OF THE LINE PRINTER AND TERMINAL,
-    !               FOR WRITING
+      !-----------------------------------------------------------------------------------------------------------------------------
 
-    ! OUTPUTS.....
-    !  FXP, FZP -   COMPLEX ARRAYS OF DIMENSION NPLUDM CONTAINING THE FREE
-    !                SURFACE AMPLIFICATION COEFFICIENTS FXPFZS AND FZPFXS
-    !                RESPECTIVELY.
+      ok = 0
 
-    USE PRECISIONS
+      n = SIZE(fxp)
 
-    USE INTERFACES, ONLY: EXE_STOP
+      ! compute free-surface amplification coefficients
+      DO i = 1, n
 
-    IMPLICIT NONE
+        p  = (i - 1) * DP
+        ps = p**2
+        g  = 1._r32 / vs**2 - 2._r32 * ps
+        gs = g**2
 
-    REAL(RSP),INTENT(IN)                       :: VP,VS,DPLU,DPSM
-    INTEGER(ISP),INTENT(IN)                    :: NPLU,IRORT
-    COMPLEX(RSP),DIMENSION(NPLU),INTENT(INOUT) :: FXP,FZP
+        sini = vp * p
+        sinj = vs * p
+        cosi = SQRT(CMPLX(1._r32 - sini**2, 0._r32))
+        cosj = SQRT(CMPLX(1._r32 - sinj**2, 0._r32))
 
-    REAL(RSP)                                  :: P,AMP
-    INTEGER(ISP)        					   :: ILU,IERR
-    INTEGER(ISP)         					   :: NBOX
+        IF (AIMAG(cosi) .lt. 0._r32) THEN
+          cosi = CMPLX(REAL(cosi, r32), -AIMAG(cosi))
+        ENDIF
+        IF (AIMAG(cosj) .lt. 0._r32) THEN
+          cosj = CMPLX(REAL(cosj), -AIMAG(cosj))
+        ENDIF
 
-    CHARACTER(LEN=1)                           :: NR
+        cicj = cosi * cosj
 
-    !-----------------------------------------------------------------------------------------
+        q = 4._r32 * ps * cicj / vp / vs
 
-    ! COMPUTE FREE-SURFACE AMPLIFICATION COEFFICIENTS
-    DO ILU = 1,NPLU
+        ! d is the Rayleigh denominator
+        d = gs + q
+        c = 4._r32 / vp / vs * g / d
 
-       P = (ILU-1) * DPLU
-       CALL FSAMP (P, VP, VS, FXP(ILU), FZP(ILU), IERR)
+        cs = c * sini * sinj
+        cc = c * cicj
 
-       !print*,P,FZP(ILU)
+        pupd = (q - gs) / d
 
-       !IF (IERR .NE. 0) CALL BOMOU2 (LP, LP, FLOAT(IERR), ' ERROR IN FSAMP')
-       IF (IERR .NE. 0) THEN
-          WRITE(NR,'(I1)') IERR
-          CALL EXE_STOP('SETFS.F90','FSAMP',20,NR)
-       ENDIF
+        fxp(i) = 1._r32 + pupd + cc
+        fzp(i) = 1._r32 - pupd + cs
 
-    ENDDO
+        fsp(i) = p
 
+        ! check that for p < 1/vp, all coefficients must be real
+        IF ( (AIMAG(fxp(i)) .ne. 0._r32) .or. (AIMAG(fzp(i)) .ne. 0._r32) ) THEN
+          CALL report_error('setfs - ERROR: coefficient fxp and/or fzp not purely real for p < 1/vp')
+          RETURN
+        ENDIF
 
-    ! SMOOTH IF BOX LENGTH GREATER THAN ZERO
-    IF (DPSM .GT. 0.) THEN
+      ENDDO
 
-       NBOX = DPSM / DPLU + 2
-       AMP = 1. / DPSM
+      ! smooth coefficients
+      CALL rnmnc(fxp, irort, ok)
 
-       CALL RNMNC (FXP, NPLU, NBOX, IRORT, IERR)
+      IF (ok .ne. 0) RETURN
 
-       !IF (IERR .NE. 0) CALL BOMOU2 (LP, LP, FLOAT(IERR),'ERR IN RNMNC, # =')
-       IF (IERR .NE. 0) THEN
-          WRITE(NR,'(I1)') IERR
-          CALL EXE_STOP('SETFS.F90','RNMNC',20,NR)
-       ENDIF
+      CALL rnmc(fzp, irort, ok)
 
-       CALL RNMNC (FZP, NPLU, NBOX, IRORT, IERR)
+      IF (ok .ne. 0) RETURN
 
-       !IF (IERR .NE. 0) CALL BOMOU2 (LP, LP, FLOAT(IERR),'ERR IN RNMNC, # =')
-       IF (IERR .NE. 0) THEN
-          WRITE(NR,'(I1)') IERR
-          CALL EXE_STOP('SETFS.F90','RNMNC',20,NR)
-       ENDIF
-
-    ENDIF
-
-    END SUBROUTINE SETFS
-
-
-
-
-    SUBROUTINE FSAMP(P, A, B, FXPFZS, FZPFXS, IERR)
-    !-----------------------------------------------------------------------
-
-    ! SUBROUTINE TO EVALUATE FREE SURFACE AMPLIFICATION COEFFICIENTS FOR
-    ! UPGOING P AND SV RAYS
-
-    ! INPUTS:
-
-    !  P      - RAY PARAMETER
-    !  A      - SURFACE P VELOCITY
-    !  B      - SURFACE S VELOCITY
-
-    ! OUTPUTS:
-
-    !  FXPFZS - COMPLEX AMPLIFICATION FACTOR TO BE APPLIED TO THE HORIZONTAL
-    !            COMPONENT OF P MOTION OR THE VERTICAL COMPONENT OF SV
-    !            MOTION
-
-    !  FZPFXS - COMPLEX AMPLIFICATION FACTOR TO BE APPLIED TO THE VERTICAL
-    !            COMPONENT OF P MOTION AND THE HORIZONTAL COMPONENT OF SV
-    !            MOTION
-
-    !  IERR   - INTEGER ERROR CODE
-    !           = 0  - NO ERRORS
-    !           = 1  - AMPLIFICATION FACTOR FXPFZS NOT PURE REAL WHEN IT
-    !                   SHOULD BE
-    !           = 2  - AMPLIFICATION FACTOR FZPFXS NOT PURE REAL WHEN IT
-    !                   SHOULD BE
-    !           = 3  - IMAGINARY PART OF COSI NEG (THIS FIXED BY CODE)
-    !           = 4  - IMAGINARY PART OF COSJ NEG (THIS FIXED BY CODE)
-    !----------------------------------------------------------------------------------
-
-    USE PRECISIONS
-
-    IMPLICIT NONE
-
-    REAL(RSP),INTENT(IN)     :: P,A,B
-    COMPLEX(RSP),INTENT(OUT) :: FXPFZS,FZPFXS
-    INTEGER(ISP),INTENT(OUT) :: IERR
-    REAL(RSP)                :: PS,G,GS,SINI,SINJ
-    COMPLEX(RSP)             :: COSI,COSJ,CICJ
-    COMPLEX(RSP)             :: Q,D,PUPD,C,CS,CC
-
-    !----------------------------------------------------------------------------------
-
-    PS = P*P
-    G = 1./B**2 - 2.*PS
-    GS = G*G
-
-    SINI = A*P
-    SINJ = B*P
-    COSI = CSQRT ( CMPLX (1.-SINI**2, 0.) )
-    COSJ = CSQRT ( CMPLX (1.-SINJ**2, 0.) )
-
-    IF (AIMAG (COSI) .LT. 0.) THEN
-       COSI = CMPLX ( REAL(COSI), -AIMAG(COSI) )
-       IERR = 3
-    ENDIF
-    IF (AIMAG (COSJ) .LT. 0.) THEN
-       COSJ = CMPLX ( REAL(COSJ), -AIMAG(COSJ) )
-       IERR = 4
-    ENDIF
-
-    CICJ = COSI * COSJ
-
-    Q = 4. * PS * CICJ / A / B
-
-    ! D IS THE RAYLEIGH DENOMINATOR
-    D = GS + Q
-    C = 4. / A / B * G / D
-
-    CS = C * SINI * SINJ
-    CC = C * CICJ
-
-    PUPD = (Q - GS) / D
-
-    FXPFZS = 1. + PUPD + CC
-    FZPFXS = 1. - PUPD + CS
-
-    ! FOR P < 1/A, EVERYTHING SHOULD BE REAL
-    IERR = 0
-    IF (P .LE. 1./A) THEN
-       IF (AIMAG(FXPFZS) .NE. 0.) IERR = 1
-       IF (AIMAG(FZPFXS) .NE. 0.) IERR = 2
-    ENDIF
-
-
-    END SUBROUTINE FSAMP
-
-
-
-    SUBROUTINE RNMNC (A, NA, NRMN, IRORT, IERR)
-
-    ! SUBROUTINE TO CALCULATE THE RUNNING MEAN OF A COMPLEX ARRAY.  THIS
-    ! ROUTINE WILL APPLY EITHER A RECTANGULAR OR TRIANGULAR WEIGHTING TO
-    ! THE RUNNING MEAN.
-
-    !  INPUTS:
-    !    A     -    THE INPUT COMPLEX ARRAY
-    !    NA    -    A(1) TO A(NA) WILL BE USED.
-    !    NRMN  -    NUMBER OF POINTS IN THE RUNNING MEAN WINDOW
-    !    IRORT -    INTEGER SPECIFYING WEIGHTING
-    !                = 0   FOR RECTANGULAR WEIGHTING
-    !                = 1   FOR TRIANGULAR
-
-    !  OUTPUTS:
-    !    A     -    THE COMPLEX ARRAY CONTAINING THE RUNNING MEAN.
-    !    IERR  -    ERROR CODE,
-    !                = 0    NO ERRORS
-    !                = 1    NRMN .LE. 0
-    !                = 2    NRMN .GE. NA
-    !                = 3    IRORT .NE. 0 OR 1
-
-    !  NOTES...... TO CALCULATE A RUNNING MEAN AT THE ENDS OF A, SOME
-    ! ASSUMPTION MUST BE MADE ABOUT A OUTSIDE OF THE INTERVAL A(1-NA).
-    ! IN THIS ROUTINE, WE ASSUME THAT OUTSIDE OF THAT INTERVAL, A MAY BE
-    ! FOUND BY LINEAR EXTRAPOLATION FROM A(1) AND A(2), OR FROM A(NA-1) AND
-    ! A(NA), AS APPROPRIATE.   ALSO, IF NRMN IS ODD, THEN ANSR(1) IS
-    ! EXACTLY COINCIDENT WITH A(1) IN WHATEVER THE DEPENDENT VARIABLE IS,
-    ! E.G. IF A IS A TIME SERIES, ANSR(1) CORRESPONDS TO EXACTLY THE SAME
-    ! TIME AS A(1).  IF NRMN IS EVEN, THEN ANSR(1) WILL CONTAIN THE VALUE
-    ! CORRESPONDING TO THE ORDINATE (E.G. TIME) 1/2 SAMPLE BEFORE A(1).
-
-    USE PRECISIONS
-
-    IMPLICIT NONE
-
-    COMPLEX(RSP),DIMENSION(NA),INTENT(INOUT) :: A
-    INTEGER(ISP),INTENT(IN)                  :: NA,NRMN,IRORT
-    INTEGER(ISP),INTENT(OUT)                 :: IERR
-
-    COMPLEX(RSP),ALLOCATABLE,DIMENSION(:)    :: ANSR
-    INTEGER(ISP)                             :: I,J,NTOT,NEND,NMID,NSHIFT
-    COMPLEX(RSP)                             :: ADIF,SUM
-    REAL(RSP)                                :: WSUM
-    REAL(RSP),DIMENSION(NRMN)                :: W
-
-    ! ---------------------------------------------------------------------------------
-
-    IERR = 0
-    NTOT = NA + 2*(NRMN-1)
-
-    ! WINDOW TOO SMALL
-    IF (NRMN .LE. 0) IERR = 2
-
-    ! WINDOW TOO LARGE
-    IF (NRMN .GE. NA) IERR = 3
-
-    ! WRONG FLAG FOR WINDOW
-    IF (IRORT .NE. 0 .AND. IRORT .NE. 1) IERR = 5
-
-    ! EXIT SUBROUTINE IF AN ERROR WAS DETECTED
-    IF (IERR .NE. 0) RETURN
-
-    ALLOCATE(ANSR(NTOT))
-
-    ! LOAD A INTO ANSWER, SHIFTED
-    DO I = 1,NA
-       ANSR(NRMN - 1 + I) = A(I)
-    ENDDO
-
-    ! DETERMINE END VALUES BY LINEAR INTERPOLATION
-    ADIF = A(2) - A(1)
-    DO  I = 1,NRMN - 1
-       ANSR(I) = A(1) + ADIF * (I - NRMN)
-    ENDDO
-
-    NEND = NA + NRMN - 1
-    ADIF = A(NA) - A(NA - 1)
-    DO I = NA + NRMN, NTOT
-       ANSR(I) = A(NA) + ADIF * (I - NEND)
-    ENDDO
-
-    ! RUNNING MEAN
-    IF (IRORT .EQ. 0) THEN
-
-    !  RECTANGULAR WEIGHTING
-       DO I = 1,NEND
-          SUM = 0.
-          DO J = 1,NRMN
-             SUM = SUM + ANSR(I + J - 1)
-          ENDDO
-          ANSR(I) = SUM / NRMN
-       ENDDO
-
-    ELSE
-
-    !  TRIANGULAR WEIGHTING.  FIGURE OUT WEIGHTS
-       NMID = (NRMN + 1) / 2
-       DO I = 1,NMID
-          W(I) = 2. * I - 1
-       ENDDO
-
-       IF (NMID .LT. NRMN) THEN
-          DO I = NMID+1, NRMN
-             W(I) = W(NRMN - I + 1)
-          ENDDO
-       ENDIF
-
-    !  NORMALIZE WEIGHTS TO 1
-       WSUM = 0.
-       DO I = 1, NRMN
-          WSUM = WSUM + W(I)
-       ENDDO
-       DO I = 1, NRMN
-          W(I) = W(I) / WSUM
-       ENDDO
-
-    !  RUNNING MEAN TRIANGULAR WEIGHTING
-       DO I = 1,NEND
-          SUM = 0.
-          DO J = 1,NRMN
-             SUM = SUM + ANSR(I + J - 1) * W(J)
-          ENDDO
-          ANSR(I) = SUM
-       ENDDO
-
-    ENDIF
-
-    ! SHIFT TO CENTERED WINDOWS.  EXACT FOR NRMN ODD
-    NSHIFT = (NRMN - 1) / 2
-    IF (NSHIFT .GT. 0) THEN
-       DO I = 1,NA
-          ANSR(I) = ANSR(I + NSHIFT)
-       ENDDO
-    ENDIF
-
-    ! RETURN ONLY FIRST NA ELEMENTS
-    DO I = 1,NA
-       A(I) = ANSR(I)
-    ENDDO
-
-    DEALLOCATE(ANSR)
-
-    END SUBROUTINE RNMNC
-
-
-
+    END SUBROUTINE setfs
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
+    SUBROUTINE rnmnc(ok, a, irort)
 
-    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
-    !===============================================================================================================================
-    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+      INTEGER(i32),                            INTENT(OUT)   :: ok
+      COMPLEX(r32),              DIMENSION(:), INTENT(INOUT) :: a
+      INTEGER(i32),                            INTENT(IN)    :: irort
+      COMPLEX(r32)                                           :: adif, sum
+      COMPLEX(r32), ALLOCATABLE, DIMENSION(:)                :: ansr
+      INTEGER(i32)                                           :: i, j, na, nrmn, ntot, nend, nmid, nshift
+      REAL(r32)                                              :: wsum
+      REAL(RSP),    ALLOCATABLE, DIMENSION(:)                :: w
 
+      ! ----------------------------------------------------------------------------------------------------------------------------
+
+      ok = 0
+
+      na = SIZE(a)
+
+      nrmn = dpsm / dp + 2          !< points in the running mean window
+
+      ntot = na + 2 * (nrmn - 1)
+
+      IF (nrmn .le. 0) THEN
+        CALL report_error('rnmc - ERROR: running mean window too short')
+        ok = 1
+        RETURN
+      ENDIF
+
+      IF (nrmn .ge. na) THEN
+        CALL report_error('rnmc - ERROR: running mean window too long')
+        ok = 1
+        RETURN
+      ENDIF
+
+      IF ( (irort .lt. 0) .and. (irort .gt. 1) ) THEN
+        CALL report_error('rnmc - ERROR: unsupported window')
+        ok = 1
+        RETURN
+      ENDIF
+
+      ALLOCATE(ansr(ntot), w(nrmn))
+
+      ! load a into answer, shifted
+      DO i = 1, na
+        ansr(nrmn - 1 + i) = a(i)
+      ENDDO
+
+      ! determine end values by linear interpolation
+      adif = a(2) - a(1)
+      DO  i = 1, nrmn - 1
+        ansr(i) = a(1) + adif * (i - nrmn)
+      ENDDO
+
+      nend = na + nrmn - 1
+      adif = a(na) - a(na - 1)
+      DO i = na + nrmn, ntot
+        ansr(i) = a(na) + adif * (i - nend)
+      ENDDO
+
+      ! running mean
+      IF (irort .eq. 0) THEN
+
+        ! rectangular weighting
+        DO i = 1, nend
+          sum = 0._r32
+          DO j = 1, nrmn
+            sum = sum + ansr(i + j - 1)
+          ENDDO
+          ansr(i) = sum / nrmn
+        ENDDO
+
+      ELSE
+
+        ! triangular weighting.  figure out weights
+        nmid = (nrmn + 1) / 2
+        DO i = 1, nmid
+          w(i) = 2._r32 * i - 1
+        ENDDO
+
+        IF (nmid .lt. nrmn) THEN
+          DO i = nmid + 1, nrmn
+            w(i) = w(nrmn - i + 1)
+          ENDDO
+        ENDIF
+
+        ! normalize weights to 1
+        wsum = 0._r32
+        DO i = 1, nrmn
+          wsum = wsum + w(i)
+        ENDDO
+        DO i = 1, nrmn
+          w(i) = w(i) / wsum
+        ENDDO
+
+        ! running mean triangular weighting
+        DO i = 1, nend
+          sum = 0._r32
+          DO j = 1, nrmn
+            sum = sum + ansr(i + j - 1) * w(j)
+          ENDDO
+          ansr(i) = sum
+        ENDDO
+
+      ENDIF
+
+      ! shift to centered windows.  exact for nrmn odd
+      nshift = (nrmn - 1) / 2
+      IF (nshift .gt. 0) THEN
+        DO i = 1, na
+          ansr(i) = ansr(i + nshift)
+        ENDDO
+      ENDIF
+
+      ! return only first na elements
+      DO i = 1, na
+        a(i) = ansr(i)
+      ENDDO
+
+    END SUBROUTINE rnmnc
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
@@ -861,6 +778,8 @@ MODULE m_isochron
       !-----------------------------------------------------------------------------------------------------------------------------
 
       CALL setup_interpolation('linear', 'zero', ok)
+
+      IF (ok .ne. 0) RETURN
 
       fo = 'node_' + num2char(pl) + '_' + num2char(vel) + '_' + num2char(iter) + '.bin'
 

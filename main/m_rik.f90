@@ -19,7 +19,7 @@ MODULE m_rik
 
   PRIVATE
 
-  PUBLIC :: rik, rik_at_nodes
+  PUBLIC :: rik, rik_at_nodes, mrf_rik
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -668,6 +668,58 @@ MODULE m_rik
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
+    SUBROUTINE mrf_rik(iuc, ivc, mrf)
+
+      INTEGER(i32),              DIMENSION(3), INTENT(IN) :: iuc, ivc
+      REAL(r32),    ALLOCATABLE, DIMENSION(:)             :: mrf
+      INTEGER(i32)                                        :: icr, src, it, it1, it2, iu, iv, nsubs
+      REAL(r32)                                           :: slip, povr, trapz
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+
+
+      DO icr = 1, 3
+
+        iu = iuc(icr)
+        iv = ivc(icr)
+
+        nsubs = SIZE(nodes(iu, iv)%rise)       !< number of subsources affecting node
+
+        DO src = 1, nsubs
+
+          it1 = NINT(nodes(iu, iv)%rupture(src) / timeseries%sp%dt) + 1
+          it2 = it1 + NINT(nodes(iu, iv)%rise(src) / timeseries%sp%dt)
+
+          slip = nodes(iu, iv)%slip(src)
+
+          povr = PI / nodes(iu, iv)%rise(src)
+
+          DO it = it1, it2
+            mrf(it) = mrf(it) + slip * (timeseries%sp%time(it) - rupture(src)) * EXP(-(t - rupture) * povr) * povr**2
+          ENDDO
+
+        ENDDO
+
+      ENDDO
+
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+      ! -------------------------------------------- normalize integral to unity ---------------------------------------------------
+
+      trapz = 0.5_r32 * mrf(1)
+
+      DO it = 2, it2 - 1
+        trapz = trapz + mrf(it)
+      ENDDO
+
+      trapz = trapz + 0.5_r32 * mrf(it2)
+      trapz = trapz * timeseries%sp%dt
+
+      DO it = 1, it2
+        mrf(it) = mrf(it) / trapz
+      ENDDO
+
+    END SUBROUTINE mrf_rik
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
