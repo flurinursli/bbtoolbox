@@ -8,6 +8,7 @@ MODULE m_rik
   USE, NON_INTRINSIC :: m_source
   USE, NON_INTRINSIC :: m_stat
   USE, NON_INTRINSIC :: m_strings
+  USE, NON_INTRINSIC :: m_timeseries
   USE, NON_INTRINSIC :: m_toolbox, ONLY: input, watch_start, watch_stop
 #ifdef MPI
   USE :: mpi
@@ -673,7 +674,7 @@ MODULE m_rik
       INTEGER(i32),              DIMENSION(3), INTENT(IN) :: iuc, ivc
       REAL(r32),    ALLOCATABLE, DIMENSION(:)             :: mrf
       INTEGER(i32)                                        :: icr, src, it, it1, it2, iu, iv, nsubs
-      REAL(r32)                                           :: slip, povr, trapz
+      REAL(r32)                                           :: slip, povr, trapz, rupture, time, rise
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
@@ -688,15 +689,18 @@ MODULE m_rik
 
         DO src = 1, nsubs
 
-          it1 = NINT(nodes(iu, iv)%rupture(src) / timeseries%sp%dt) + 1
-          it2 = it1 + NINT(nodes(iu, iv)%rise(src) / timeseries%sp%dt)
+          slip    = nodes(iu, iv)%slip(src)
+          rupture = nodes(iu, iv)%rupture(src)
+          rise    = nodes(iu, iv)%rise(src)
 
-          slip = nodes(iu, iv)%slip(src)
+          it1 = NINT(rupture / timeseries%sp%dt) + 1
+          it2 = it1 + NINT(rise / timeseries%sp%dt)
 
-          povr = PI / nodes(iu, iv)%rise(src)
+          povr = PI / rise
 
           DO it = it1, it2
-            mrf(it) = mrf(it) + slip * (timeseries%sp%time(it) - rupture(src)) * EXP(-(t - rupture) * povr) * povr**2
+            time = timeseries%sp%time(it) - rupture
+            mrf(it) = mrf(it) + slip * time * EXP(-(time) * povr) * povr**2
           ENDDO
 
         ENDDO

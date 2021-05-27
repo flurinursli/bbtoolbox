@@ -341,19 +341,22 @@ MODULE m_interpolation_r32
       !   02/09/20                  original version
       !
 
-      REAL(r__),    DIMENSION(:), INTENT(IN)    :: x
-      COMPLEX(r__), DIMENSION(:), INTENT(IN)    :: y
-      REAL(r__),                  INTENT(IN)    :: xo
-      COMPLEX(r__),               INTENT(OUT)   :: yo
-      INTEGER(i32)                              :: pos
-      REAL(r__)                                 :: yr, yc, yor, yoc
+      REAL(r__),    DIMENSION(:),      INTENT(IN)  :: x
+      COMPLEX(r__), DIMENSION(:),      INTENT(IN)  :: y
+      REAL(r__),                       INTENT(IN)  :: xo
+      COMPLEX(r__),                    INTENT(OUT) :: yo
+      INTEGER(i32)                                 :: pos, i
+      REAL(r__)                                    :: yor, yoc
+      REAL(r__),    DIMENSION(SIZE(y))             :: yr, yc
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
       pos = 0
 
-      yr = REAL(y, r__)
-      yc = AIMAG(y)
+      DO i = 1, SIZE(y)
+        yr(i) = REAL(y(i), r__)
+        yc(i) = AIMAG(y(i))
+      ENDDO
 
       CALL interp_core(x, yr, xo, yor, pos)       !< interpolate real part
       CALL interp_core(x, yc, xo, yoc, pos)       !< interpolate imaginary part (use previous "pos")

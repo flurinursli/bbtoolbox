@@ -995,7 +995,7 @@ MODULE m_source
 
       ! Purpose:
       !   to compute integration time-step for "pl"-th fault plane, "vel"-th velocity model and grid-step "du" such that the
-      !   requirement of having at least "input%advanced%avecuts" cuts per triangle is fulfilled.
+      !   requirement of having at least "input%advanced%avecuts" cuts per triangle is likely fulfilled.
       !
       ! Revisions:
       !     Date                    Description of change
@@ -1032,6 +1032,7 @@ MODULE m_source
 
       END ASSOCIATE
 
+      ! here we consider "vmax * input%source%vrfact" as the approximate maximum rupture speed
       time_stepping = du / vmax / input%source%vrfact / input%advanced%avecuts
 
     END FUNCTION time_stepping

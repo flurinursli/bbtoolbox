@@ -104,7 +104,7 @@ MODULE m_wkbj
       ! constant velocity values
       ilay = 0
       z = vel(1,1)
-      DO i = 1,nmod
+      DO i = 1, nmod
         IF (vel(1,i) .eq. z) THEN
           ilay = ilay + 1
           icn(ilay) = i
