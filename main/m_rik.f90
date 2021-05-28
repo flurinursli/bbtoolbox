@@ -469,9 +469,9 @@ MODULE m_rik
 
       CALL setup_rng(ok, 'uniform', 0._r32, 1._r32, seed)
 
-! #ifdef PERF
-!       CALL watch_start(tictoc, COMM)
-! #endif
+#ifdef PERF
+      CALL watch_start(tictoc, COMM)
+#endif
 
       CALL rng(z)      !< this is parallelized if openmp flag is set
 
@@ -499,6 +499,9 @@ MODULE m_rik
 !       CALL watch_stop(tictoc, COMM)
 ! #endif
 !
+! print*, 't1 ', tictoc
+
+!
 !       IF (input%advanced%verbose .eq. 2) THEN
 !         CALL update_log(num2char('<min/max rupt-to-point>', justify='c', width=30) +   &
 !                         num2char(num2char(MINVAL(subrupt), notation='f', width=6, precision=2) + ', ' +  &
@@ -508,6 +511,10 @@ MODULE m_rik
 !                         precision=3, justify='r') + '|', blankline=.false.)
 ! #endif
 !       ENDIF
+
+! #ifdef PERF
+!       CALL watch_start(tictoc, COMM)
+! #endif
 
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! ---------------------------------------- slip, rupture and rise-time at nodes ----------------------------------------------
@@ -589,6 +596,12 @@ MODULE m_rik
         ENDDO
       ENDDO
       !$omp end parallel do
+
+! #ifdef PERF
+!       CALL watch_stop(tictoc, COMM)
+! #endif
+!
+!       print*, 't2 ', tictoc
 
       IF (input%advanced%verbose .eq. 2) THEN
 
@@ -677,8 +690,6 @@ MODULE m_rik
       REAL(r32)                                           :: slip, povr, trapz, rupture, time, rise
 
       !-----------------------------------------------------------------------------------------------------------------------------
-
-
 
       DO icr = 1, 3
 
