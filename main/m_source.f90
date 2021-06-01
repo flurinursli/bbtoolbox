@@ -991,10 +991,10 @@ MODULE m_source
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    REAL(r32) FUNCTION time_stepping(pl, vel, du)
+    REAL(r32) FUNCTION time_stepping(ref, pl, vel)
 
       ! Purpose:
-      !   to compute integration time-step for "pl"-th fault plane, "vel"-th velocity model and grid-step "du" such that the
+      !   to compute integration time-step for "pl"-th fault plane, "vel"-th velocity model and mesh refinement "ref" such that the
       !   requirement of having at least "input%advanced%avecuts" cuts per triangle is likely fulfilled.
       !
       ! Revisions:
@@ -1003,37 +1003,57 @@ MODULE m_source
       !   08/03/21                  original version
       !
 
-      INTEGER(i32), INTENT(IN) :: pl, vel
-      REAL(r32),    INTENT(IN) :: du
-      INTEGER(i32)             :: layer
-      REAL(r32)                :: ztop, zmax, vmax
+      INTEGER(i32), INTENT(IN) :: ref, pl, vel
+      REAL(r32)                :: sd, z, vs, du
+      ! INTEGER(i32)             :: layer
+      ! REAL(r32)                :: ztop, zmax, vmax
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
-      ztop = plane(pl)%z + plane(pl)%v(1) * SIN(plane(pl)%dip * DEG_TO_RAD)     !< for point-source, "z" (u=v=0) is center, not top
-      zmax = ztop + plane(pl)%width * SIN(plane(pl)%dip * DEG_TO_RAD)
+      sd = SIN(plane(pl)%dip * DEG_TO_RAD)
 
-      vmax = 0._r32
-
-      ! loop over layers to find maximum shear wave speed on fault plane
       ASSOCIATE(model => input%velocity(vel))
 
-        DO layer = 1, SIZE(model%depth) - 1
-          vmax = MAX(vmax, model%vsgrad(layer) * (ztop - model%depth(layer)) + model%vs(layer))    !< top
-          vmax = MAX(vmax, model%vsgrad(layer) * (MIN(model%depth(layer + 1), zmax) - model%depth(layer)) + model%vs(layer))  !< bottom
-          ztop = model%depth(layer + 1)
-          IF (zmax .lt. ztop) EXIT
-        ENDDO
+        z = plane(pl)%z + vmingr(ref) * sd
 
-        IF (zmax .ge. ztop) THEN
-          vmax = MAX(vmax, model%vsgrad(layer) * (ztop - model%depth(layer)) + model%vs(layer))    !< top
-          vmax = MAX(vmax, model%vsgrad(layer) * (zmax - model%depth(layer)) + model%vs(layer))    !< bottom
-        ENDIF
+        vs = vinterp(model%depth, model%vs, model%vsgrad, z)        !< velocity at beginning of mesh
+
+        z = plane(pl)%z + vmaxgr(ref) * sd
+
+        vs = MAX(vs, vinterp(model%depth, model%vs, model%vsgrad, z))   !< velocity at end of mesh
 
       END ASSOCIATE
 
+      du = mean(dutr(ref) + dvtr(ref))
+
+      ! here we consider "vs * input%source%vrfact" as the approximate maximum rupture speed
+      time_stepping = du / (vs * input%source%vrfact * input%advanced%avecuts)
+
+
+      ! ztop = plane(pl)%z + plane(pl)%v(1) * SIN(plane(pl)%dip * DEG_TO_RAD)     !< for point-source, "z" (u=v=0) is center, not top
+      ! zmax = ztop + plane(pl)%width * SIN(plane(pl)%dip * DEG_TO_RAD)
+      !
+      ! vmax = 0._r32
+      !
+      ! ! loop over layers to find maximum shear wave speed on fault plane
+      ! ASSOCIATE(model => input%velocity(vel))
+      !
+      !   DO layer = 1, SIZE(model%depth) - 1
+      !     vmax = MAX(vmax, model%vsgrad(layer) * (ztop - model%depth(layer)) + model%vs(layer))    !< top
+      !     vmax = MAX(vmax, model%vsgrad(layer) * (MIN(model%depth(layer + 1), zmax) - model%depth(layer)) + model%vs(layer))  !< bottom
+      !     ztop = model%depth(layer + 1)
+      !     IF (zmax .lt. ztop) EXIT
+      !   ENDDO
+      !
+      !   IF (zmax .ge. ztop) THEN
+      !     vmax = MAX(vmax, model%vsgrad(layer) * (ztop - model%depth(layer)) + model%vs(layer))    !< top
+      !     vmax = MAX(vmax, model%vsgrad(layer) * (zmax - model%depth(layer)) + model%vs(layer))    !< bottom
+      !   ENDIF
+      !
+      ! END ASSOCIATE
+
       ! here we consider "vmax * input%source%vrfact" as the approximate maximum rupture speed
-      time_stepping = du / vmax / input%source%vrfact / input%advanced%avecuts
+      ! time_stepping = du / vmax / input%source%vrfact / input%advanced%avecuts
 
     END FUNCTION time_stepping
 

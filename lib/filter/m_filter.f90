@@ -35,13 +35,13 @@ MODULE m_filter_r32
 
   IMPLICIT none
 
-  ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+  ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
   PRIVATE
 
-  PUBLIC :: make_iir_plan, destroy_iir_plan, iir, filter_error, impz ! xfilter, freqz
+  PUBLIC :: make_iir_plan, destroy_iir_plan, iir, filter_error, impz, freqz, get_iir_coefficients, set_iir_coefficients
 
-  ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+  ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
   ! set precisions of input/output arguments at compile-time
 #ifdef DOUBLE_PREC
@@ -50,18 +50,20 @@ MODULE m_filter_r32
   INTEGER, PARAMETER :: r__ = r32
 #endif
 
-  REAL(r64),                           PARAMETER :: pi = 3.14159265358979323846_r64
+  ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
-  REAL(r64),                           PARAMETER :: big = HUGE(0._r64)
+  REAL(r64),    PARAMETER :: PI = 3.14159265358979323846_r64
+  REAL(r64),    PARAMETER :: BIG = HUGE(0._r64)
+  COMPLEX(r64), PARAMETER :: EMPTY = CMPLX(BIG, BIG, r64)           !< constant for empty complex vector
 
-  ! transfer FUNCTION coefficients of filter ("b" is numerator, "a" is denominator)
+
+  ! transfer function coefficients of filter ("b" is numerator, "a" is denominator)
   REAL(r64), ALLOCATABLE, DIMENSION(:)           :: iira, iirb
 
   ! initial conditions for zero-phase filtering
   REAL(r64), ALLOCATABLE, DIMENSION(:)           :: zi
 
-  ! constant expression for empty complex vectors
-  COMPLEX(r64),                        PARAMETER :: empty = CMPLX(big, big, r64)
+  !$omp threadprivate (iira, iirb, zi)
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
@@ -222,13 +224,13 @@ MODULE m_filter_r32
       ENDIF
 
       ! analog, prewarped frequency
-      w = TAN(pi * w / 2._r64)
+      w = TAN(PI * w / 2._r64)
 
       ! prepare arrays for zeros and poles large enough for bandpass/bandstop doubling
       ALLOCATE(zero(order * 2), pole(order * 2))
 
-      zero = empty
-      pole = empty
+      zero = EMPTY
+      pole = EMPTY
 
       ! compute poles, zeroes and gain
       IF (fd .eq. 1) CALL butter(order, zero, pole, gain)
@@ -264,7 +266,7 @@ MODULE m_filter_r32
       ! CALL report('poles', pole)
       ! print*, 'gain ', REAL(gain, r32)
 
-      n = count(pole .ne. empty) + 1
+      n = COUNT(pole .ne. EMPTY) + 1
 
       ALLOCATE(iira(n), iirb(n))
 
@@ -298,7 +300,7 @@ MODULE m_filter_r32
         IF (fir .eqv. .true.) THEN
 
           ! evaluate filter impulse response
-          CALL freqz(freq, amp, phase = phase, dt = dt)
+          CALL freqz(freq, amp, phase, dt = dt)
 
           OPEN(1, file = 'filter_impulse_response.txt', status = 'unknown', form = 'formatted', iostat = ok)
 
@@ -434,7 +436,7 @@ MODULE m_filter_r32
         iir(i) = REAL(x(nt + i), r__)
       ENDDO
 
-      DEALLOCATE(x)
+      ! DEALLOCATE(x)
 
     END FUNCTION iir
 
@@ -561,7 +563,7 @@ MODULE m_filter_r32
     !
     !   print*, message
     !
-    !   DO i = 1, count(x .ne. empty)
+    !   DO i = 1, COUNT(x .ne. empty)
     !     WRITE(stdout, *), REAL(x(i), r32), REAL(AIMAG(x(i)), r32)
     !   ENDDO
     !
@@ -593,9 +595,9 @@ MODULE m_filter_r32
       n = order * 2._r64
 
       DO i = 1, order
-        arg     = (2._r64 * (i - 1) + 1) * pi / n
+        arg     = (2._r64 * (i - 1) + 1) * PI / n
         pole(i) = CMPLX(-SIN(arg), COS(arg), r64)
-        zero(i) = empty
+        zero(i) = EMPTY
       ENDDO
 
       IF (MOD(order, 2) .ne. 0) pole((order + 1) / 2) = -1._r64
@@ -639,9 +641,9 @@ MODULE m_filter_r32
       y = -cosh(v0)
 
       DO i = 1, order
-        arg     = (2._r64 * (i - 1) + 1) * pi / n
+        arg     = (2._r64 * (i - 1) + 1) * PI / n
         pole(i) = CMPLX(x * SIN(arg), y * COS(arg), r64)
-        zero(i) = empty
+        zero(i) = EMPTY
       ENDDO
 
       gain = PRODUCT(-pole(1:order))
@@ -691,10 +693,10 @@ MODULE m_filter_r32
       DO i = 1, order
 
         l       = 2 * (i - 1) + 1
-        arg     = REAL(l, r64) * pi / n
+        arg     = REAL(l, r64) * PI / n
         im      = COS(arg)
 
-        ! skip zeroes at infinity (e.g. when arg = pi/2, leading to COS(arg) = 0)
+        ! skip zeroes at infinity (e.g. when arg = PI/2, leading to COS(arg) = 0)
         IF (l .ne. order) THEN
           k       = k + 1
           zero(k) = CMPLX(0._r64, 1._r64 / COS(arg), r64)
@@ -879,7 +881,7 @@ MODULE m_filter_r32
       ! exactly one
       IF (k .eq. 1._r64) THEN
 
-        ek = big
+        ek = BIG
 
       ! near one
       ELSEIF (k .gt. kmax) THEN
@@ -892,7 +894,7 @@ MODULE m_filter_r32
 
         CALL landen(k, tol, v)
 
-        ek = PRODUCT(1._r64 + v) * pi / 2._r64
+        ek = PRODUCT(1._r64 + v) * PI / 2._r64
 
         DEALLOCATE(v)
 
@@ -901,7 +903,7 @@ MODULE m_filter_r32
       ! exactly zero
       IF (k .eq. 0._r64) THEN
 
-        ekc = big
+        ekc = BIG
 
       ! near one
       ELSEIF (k .gt. kmin) THEN
@@ -914,7 +916,7 @@ MODULE m_filter_r32
 
         CALL landen(kc, tol, v)
 
-        ekc = PRODUCT(1._r64 + v) * pi / 2._r64
+        ekc = PRODUCT(1._r64 + v) * PI / 2._r64
 
         DEALLOCATE(v)
 
@@ -956,7 +958,7 @@ MODULE m_filter_r32
 
         CALL ceifk(k1, tol, ek1, ek1c)
 
-        q = EXP(-pi * ek1c / ek1)                !< nome
+        q = EXP(-PI * ek1c / ek1)                !< nome
         q = q**(1._r64 / REAL(order, r64))
 
         n = 0._r64
@@ -1017,7 +1019,7 @@ MODULE m_filter_r32
 
       CALL landen(k, tol, v)
 
-      sn = SIN(u * pi / 2._r64)
+      sn = SIN(u * PI / 2._r64)
 
       ! reverse loop order to perform an ascending landen transformation
       DO i = SIZE(v), 1, -1
@@ -1070,7 +1072,7 @@ MODULE m_filter_r32
 
       ENDDO
 
-      u = 2._r64 / pi * acos(x)
+      u = 2._r64 / PI * acos(x)
 
       IF (REAL(x, r64) .eq. 1._r64) u = CMPLX(0._r64, 0._r64)
 
@@ -1123,8 +1125,8 @@ MODULE m_filter_r32
       ok = 0
 
       ! number of poles and zeroes
-      np = count(pole .ne. empty)
-      nz = count(zero .ne. empty)
+      np = COUNT(pole .ne. EMPTY)
+      nz = COUNT(zero .ne. EMPTY)
 
       ! determine if vector "zero" and "pole" are completely empty
       zempty = nz .eq. 0
@@ -1305,8 +1307,8 @@ MODULE m_filter_r32
       !-----------------------------------------------------------------------------------------------------------------------------
 
       ! number of poles and zeroes
-      np = count(pole .ne. empty)
-      nz = count(zero .ne. empty)
+      np = COUNT(pole .ne. EMPTY)
+      nz = COUNT(zero .ne. EMPTY)
 
       gain = gain * REAL(PRODUCT(1._r64 - zero(1:nz)) / PRODUCT(1._r64 - pole(1:np)), r64)
 
@@ -1370,7 +1372,7 @@ MODULE m_filter_r32
           c(i + 1) = y(i + 1) - x(j) * y(i)
         ENDDO
         DO i = 2, j + 1
-          y(i) = c(i)          !< plug retuls back into y
+          y(i) = c(i)          !< plug result back into y
         ENDDO
       ENDDO
 
@@ -1395,8 +1397,8 @@ MODULE m_filter_r32
       !
       !   a) both "dt" and "npts" arguments are given => df = 1/(npts*dt),   fmax = 0.5/dt
       !   b) only argument "dt" is given              => df = 1/(1024*dt),   fmax = 0.5/dt
-      !   c) only argument "npts" is given            => df = 1/(2*pi*npts), fmax = pi
-      !   d) nor "npts" nor "dt" are given            => df = 1/(2*pi*1024), fmax = pi
+      !   c) only argument "npts" is given            => df = 1/(2*PI*npts), fmax = PI
+      !   d) nor "npts" nor "dt" are given            => df = 1/(2*PI*1024), fmax = PI
       !
       ! Revisions:
       !     Date                    Description of change
@@ -1429,7 +1431,7 @@ MODULE m_filter_r32
       CALL make_fftw_plan([nfft])
 
       ! default sampling frequency
-      sf = 2._r__ * pi
+      sf = 2._r__ * PI
 
       ! update according to time-step
       IF (PRESENT(dt)) sf = 1._r__ / dt
@@ -1527,7 +1529,7 @@ MODULE m_filter_r32
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
-      twopi = 2._r__ * pi
+      twopi = 2._r__ * PI
 
       n = SIZE(x)
 
@@ -1541,9 +1543,9 @@ MODULE m_filter_r32
       peaks(:) = 0._r__
 
       ! compute corrections (deltas) to unwrap phase
-      WHERE(d > pi)
+      WHERE(d > PI)
         peaks = nint(ABS(d) / twopi) * twopi
-      ELSEWHERE(d < -pi)
+      ELSEWHERE(d < -PI)
         peaks = -nint(ABS(d) / twopi) * twopi
       ENDWHERE
 
@@ -1608,7 +1610,7 @@ MODULE m_filter_r32
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
-      y = x * 180._r__ / pi
+      y = x * 180._r__ / PI
 
     END FUNCTION rad2deg
 
@@ -1690,7 +1692,6 @@ MODULE m_filter_r32
       !   02/09/20                  original version
       !
 
-
       REAL(r__),   DIMENSION(:),      INTENT(OUT) :: x                    !< impulse response
       INTEGER(i32)                                :: l, n                 !< counters
       REAL(r__),   DIMENSION(SIZE(x))             :: delta
@@ -1714,6 +1715,69 @@ MODULE m_filter_r32
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    SUBROUTINE get_iir_coefficients(a, b, z)
+
+      ! Purpose:
+      !   to return the filter coefficients created when calling "make_iir_plan".
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   02/09/20                  original version
+      !
+
+      REAL(r64), ALLOCATABLE, DIMENSION(:),           INTENT(OUT) :: a, b
+      REAL(r64), ALLOCATABLE, DIMENSION(:), OPTIONAL, INTENT(OUT) :: z
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      a = iira
+      b = iirb
+
+      IF (PRESENT(z)) THEN
+        IF (ALLOCATED(zi)) THEN
+          z = zi
+        ELSE
+          z = iirb * 0._r32             !< return zeros if only one-pass was selected
+        ENDIF
+      ENDIF
+
+    END SUBROUTINE get_iir_coefficients
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    SUBROUTINE set_iir_coefficients(a, b, z)
+
+      ! Purpose:
+      !   to assign filter coefficients (created by calling "make_iir_plan").
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   02/09/20                  original version
+      !
+
+      REAL(r64), DIMENSION(:),           INTENT(IN) :: a, b
+      REAL(r64), DIMENSION(:), OPTIONAL, INTENT(IN) :: z
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      iira = a
+      iirb = b
+
+      IF (PRESENT(z)) zi = z
+
+print*, omp_get_thread_num(), iira(1:2), iirb(1:2), zi(1:2)
+
+    END SUBROUTINE set_iir_coefficients
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
 
     FUNCTION filter_error(ierr) RESULT(msg)
 

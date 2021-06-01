@@ -69,6 +69,8 @@ MODULE m_isochron
       !   08/03/21                  original version
       !
 
+      USE, NON_INTRINSIC :: m_fft_real
+
       INTEGER(i32),                             INTENT(OUT) :: ok
       INTEGER(i32),                             INTENT(IN)  :: pl, vel, iter
       COMPLEX(r32)                                          :: fxpfzs, fzpfxs, g31, g21, g23, ga, gb
@@ -78,7 +80,7 @@ MODULE m_isochron
       INTEGER(i32)                                          :: it, icut, iat, band
       INTEGER(i32),              DIMENSION(3)               :: iuc, ivc, abv, blw, shot
       INTEGER(i32), ALLOCATABLE, DIMENSION(:,:)             :: ncuts
-      REAL(r32)                                             :: m0, moment, strike, dip, urec, vrec, wrec, taumin, taumax, sd, cd
+      REAL(r32)                                             :: m0, moment, strike, dip, urec, vrec, wrec, taumin, taumax, sd, cd, dt
       REAL(r32)                                             :: srfvel, velloc, stho, r, dx, dy, dr, cpsi, spsi, sloloc, signp, sthf
       REAL(r32)                                             :: cthf, rn, rv, ru, bn, cn, bu, cu, bv, cv, rnbu, rnbv, rncu, rncv, guk
       REAL(r32)                                             :: ctho, tau31, tau21, tau23, c, du, dv, p13, p12, p32, dl, scale
@@ -95,11 +97,14 @@ MODULE m_isochron
 
       IF (ok .ne. 0) RETURN
 
-      CALL make_fftw_plan([n])
-      CALL make_iir_plan(ok, 'butter', dt, fbands(:, k), 'pass', 2, zphase = .true.)
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+      ! ------------------------------------------- coefficients for IIR filter ----------------------------------------------------
 
-      CALL destroy_fftw_plan([n])
-      CALL destroy_iir_plan()
+      ! we assume that all attenuation models are defined at same frequency bands
+      DO band = 1, SIZE(input%attenuation(1)%gss)
+        CALL make_iir_plan(ok, 'butter', dt, [2._r32, 4._r32], 'bandpass', 2, zphase = .true.)
+        CALL get_iir_coefficients(iira(:, band), iirb(:, band), iirz(:, band))
+      ENDDO
 
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! ---------------------------------------- lookup table free-surface coefficients --------------------------------------------
@@ -139,6 +144,20 @@ MODULE m_isochron
       ncuts(:,:) = 0        !< keep track of mean isochron cuts for each wave type and receiver
 
       DO ref = 1, SIZE(nvtr)         !< loop over mesh refinements
+
+        dt = time_stepping(ref, pl, vel)     !< integration time-step
+
+        npts = NINT(timeseries%sp%time(SIZE(timeseries%sp%time)) / dt) + 1
+
+        ALLOCATE(rseis(npts))
+
+        ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+        ! ------------------------------------------- allocate memory for FFT/IFFT -------------------------------------------------
+
+        CALL make_fftw_plan([npts])
+
+        ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+        ! ------------------------------------------ define RIK model on mesh nodes ------------------------------------------------
 
         ALLOCATE(nodes(nugr(ref), nvgr(ref)))
 
@@ -234,7 +253,8 @@ MODULE m_isochron
             ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
             ! ---------------------------------------- moment rate function of triangle --------------------------------------------
 
-            CALL mrf_rik(iuc, ivc, mrf)     !< return normalized mrf (area ~ 1)
+            CALL mrf_rik(iuc, ivc, mrf)      !< normalized mrf (area ~ 1)
+            CALL fft(mrf, tv)                !< ... and its spectrum
 
             ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
             ! -------------------------------------- triangle contribution to ground motion ----------------------------------------
@@ -254,7 +274,7 @@ MODULE m_isochron
                 repi(icr) = HYPOT(urec - u(icr), vrec - v(icr))        !< epicentral distance (corner-receiver)
               ENDDO
 
-              iat = input%receiver(rec)%attenuation      !< attenuation model
+              model = input%receiver(rec)%attenuation      !< attenuation model
 
               ! loop over wave types (i.e. 1=P, 2=S)
               DO wtp = 1, 2
@@ -293,11 +313,11 @@ MODULE m_isochron
 
                       CALL interpolate(zshots, po, z(icr), p(icr))
                       CALL interpolate(zshots, ro, z(icr), path(icr))
-                      CALL interpolate(zshots, to, z(icr), trvt)
+                      CALL interpolate(zshots, to, z(icr), trvt(icr))
                       CALL interpolate(zshots, qo, z(icr), q(icr))
 
                       ! sum travel-time and rupture time
-                      tau(icr) = trvt + rupture(icr)
+                      tau(icr) = trvt(icr) + rupture(icr)
 
                     ENDIF
 
@@ -364,7 +384,7 @@ MODULE m_isochron
 
                     ! radiation pattern-dependent kernel stuff
                     IF (wtp .eq. 1) THEN
-                      ir(icr) = 2._r32 * mu(icr) * q(icr) * rn * (ru * cr(icr)) - rv * sr(icr))) * slip(icr)
+                      ir(icr) = 2._r32 * mu(icr) * q(icr) * rn * (ru * cr(icr) - rv * sr(icr)) * slip(icr)
                     ELSE
                       ! dot products
                       bn = (cthf * spsi * sd - sthf * cd)
@@ -381,8 +401,8 @@ MODULE m_isochron
 
                       guk = mu(icr) * q(icr)
 
-                      itheta(icr) = slip(icr) * guk * (rnbu * cr(icr)) - rnbv * sr(icr)))
-                      iphi(icr)   = slip(icr) * guk * (rncu * cr(icr)) - rncv * sr(icr)))
+                      itheta(icr) = slip(icr) * guk * (rnbu * cr(icr) - rnbv * sr(icr))
+                      iphi(icr)   = slip(icr) * guk * (rncu * cr(icr) - rncv * sr(icr))
                     ENDIF
 
                     stho = p(icr) * sfrvel
@@ -444,52 +464,70 @@ MODULE m_isochron
                   c = HYPOT(tau31 / dutr(ref), (tau(2) - 0.5_r32 * (tau(1) + tau(3))) / dvtr(ref))
                   c = 1._r32 / c
 
-                  ! path averaged over corners
+                  ! amplitude of direct wave for isotropic radiation (0.63), free-surface (2)
+                  direct = 2._r32 * ABS(mean(q)) * mean(mu) * mean(slip) * c * 0.63_r32 * 2._r32
+
                   avepath = mean(path)
+                  avetrvt = mean(trvt)
 
-                  DO ic = 1, 3
+                  ! loop over frequency bands
+                  DO band = 1, SIZE(input%attenuation(model)%gss)
 
-                    g31 = g(ic, 3) - g(ic, 1)
-                    g21 = g(ic, 2) - g(ic, 1)
-                    g23 = g(ic, 2) - g(ic, 3)
+                    ! CALL rtt(eta..., envelope)
 
-                    DO it = it1, it2
+                    CALL set_iir_coefficients(iira(:, band), iirb(:, band), iirz(:, band))       !< enforce right coefficients
 
-                      ! t = (it - 1) * timeseries%sp%dt
-                      ! t = timeseries%sp%time(it)
-                      dtau(1) = timeseries%sp%time(it) - tau(1)
-                      dtau(2) = timeseries%sp%time(it) - tau(2)
-                      dtau(3) = timeseries%sp%time(it) - tau(3)
+                    IF (wtp .eq. 1) THEN
+                      scattering = input%attenuation(model)%gpp(band) + input%attenuation(model)%gps(band)             !< P
+                    ELSE
+                      scattering = input%attenuation(model)%gss(band) + input%attenuation(model)%gps(band) / 6._r32    !< S
+                    ENDIF
 
-                      ! determine which corner is cut. Set "icut=0" when isochron is outside triangle
-                      IF (SIGN(1._r32, dtau(1)) .eq. SIGN(1._r32, dtau(2))) THEN
-                        IF (SIGN(1._r32, dtau(2)) .eq. SIGN(1._r32, dtau(3))) THEN
-                          icut = 0
+                    ! term for direct wave amplitude attenuation
+                    attenuation = EXP(-(avepath * scattering + input%attenuation(model)%b(band) * avetrvt) / 2._r32)
+
+
+                    DO ic = 1, 3
+
+                      g31 = g(ic, 3) - g(ic, 1)
+                      g21 = g(ic, 2) - g(ic, 1)
+                      g23 = g(ic, 2) - g(ic, 3)
+
+                      DO it = it1, it2
+
+                        ! t = (it - 1) * timeseries%sp%dt
+                        ! t = timeseries%sp%time(it)
+                        dtau(1) = timeseries%sp%time(it) - tau(1)
+                        dtau(2) = timeseries%sp%time(it) - tau(2)
+                        dtau(3) = timeseries%sp%time(it) - tau(3)
+
+                        ! determine which corner is cut. Set "icut=0" when isochron is outside triangle
+                        IF (SIGN(1._r32, dtau(1)) .eq. SIGN(1._r32, dtau(2))) THEN
+                          IF (SIGN(1._r32, dtau(2)) .eq. SIGN(1._r32, dtau(3))) THEN
+                            icut = 0
+                          ELSE
+                            icut = 3
+                          ENDIF
                         ELSE
-                          icut = 3
+                          IF (SIGN(1._r32, dtau(1)) .eq. SIGN(1._r32, dtau(3))) THEN
+                            icut = 2
+                          ELSE
+                            icut = 1
+                          ENDIF
                         ENDIF
-                      ELSE
-                        IF (SIGN(1._r32, dtau(1)) .eq. SIGN(1._r32, dtau(3))) THEN
-                          icut = 2
-                        ELSE
-                          icut = 1
-                        ENDIF
-                      ENDIF
 
-                      IF ( (dtau(1) .eq. 0._r32) .and. (dtau(2) .eq. 0._r32) ) icut = 3
-                      IF ( (dtau(1) .eq. 0._r32) .and. (dtau(3) .eq. 0._r32) ) icut = 2
-                      IF ( (dtau(2) .eq. 0._r32) .and. (dtau(3) .eq. 0._r32) ) icut = 1
+                        IF ( (dtau(1) .eq. 0._r32) .and. (dtau(2) .eq. 0._r32) ) icut = 3
+                        IF ( (dtau(1) .eq. 0._r32) .and. (dtau(3) .eq. 0._r32) ) icut = 2
+                        IF ( (dtau(2) .eq. 0._r32) .and. (dtau(3) .eq. 0._r32) ) icut = 1
 
-                      ! keep track of total cuts
-                      IF ( (band .eq. 1) .and. (ic .eq. 1) ) THEN
-                        IF (icut .ne. 0) ncuts(wtp, rec) = ncuts(wtp, rec) + (it(2) - it(1) + 1)
-                      ENDIF
+                        ! keep track of total cuts
+                        IF (icut .ne. 0) ncuts(wtp, rec) = ncuts(wtp, rec) + 1
 
-                      ! choose the correct integration formulae depending on which corner of the triangle is cut. ga and gb are the
-                      ! values of the integrand at the boundaries of the triangle where intersected by the integration contour.
-                      ! dl is the length of the contour within the triangle.
+                        ! choose the correct integration formulae depending on which corner of the triangle is cut. ga and gb are the
+                        ! values of the integrand at the boundaries of the triangle where intersected by the integration contour.
+                        ! dl is the length of the contour within the triangle.
 
-                      SELECT CASE (icut)
+                        SELECT CASE (icut)
                           CASE(0)               !< isochron cuts a corner
                             ga = 0._r32
                             gb = 0._r32
@@ -510,45 +548,39 @@ MODULE m_isochron
                             dv  = dvtr(ref) * (p12 - p32)
                             du  = dutr(ref) * (1._r32 - 0.5_r32 * p12 - 0.5_r32 * p32)
                           CASE(3)
-                            p13 = dtau(1) / tau31
-                            p32 = dtau(3) / tau23
-                            ga  = g(ic, 1) + p13 * g31
-                            gb  = g(ic, 3) + p32 * g23
-                            dv  = dvtr(ref) * p32
-                            du  = dutr(ref) * (1._r32 - p13 - 0.5_r32 * p32)
-                      END SELECT
+                            p13   = dtau(1) / tau31
+                            p32   = dtau(3) / tau23
+                            ga(1) = g(ic, 1) + p13 * g31
+                            gb(1) = g(ic, 3) + p32 * g23
+                            dv    = dvtr(ref) * p32
+                            du    = dutr(ref) * (1._r32 - p13 - 0.5_r32 * p32)
+                        END SELECT
 
-                      dl = HYPOT(du, dv)
+                        dl = HYPOT(du, dv)
 
-                      triseis(it, ic) = c * (ga + gb) * dl * 0.5_r32
+                        ! result of integration (real and imaginary parts)
+                        rtri(it) = c * REAL(ga + gb, r32) * dl * 0.5_r32
+                        itri(it) = c * AIMAG(ga + gb) * dl * 0.5_r32
 
-                    ENDDO      !< end loop over time (cuts)
+                      ENDDO      !< end loop over time (cuts)
 
-                  ENDDO     !< end loop over components of motion
+                      ! filter direct wave terms in the frequency range [flow(band), fhigh(band)]
+                      CALL iir(rtri, ok)
+                      CALL iir(itri, ok)
 
-                  ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
-                  ! --------------------------------------------- attenuation & coda -----------------------------------------------
-
-                  ! loop over frequency bands
-                  DO band = 1, SIZE(input%attenuation(iat)%gss)
-
-                    eta = input%attenuation(iat)%b(band)
-
-                    IF (wtp .eq. 1) THEN
-                      eta = eta + input%attenuation(iat)%gpp(band) + input%attenuation(iat)%gps(band)       !< P
-                    ELSE
-                      eta = eta + input%attenuation(iat)%gps(band) / 6._r32 + input%attenuation(iat)%gss(band)    !< S
-                    ENDIF
-
-                    attenuation = EXP(-mean(path) * eta(band, wtp) / 2._r32)        !< attenuation factor direct wave (amplitude, not energy)
-
-                    DO ic = 1, 3
+                      ! stack filtered triangle response
                       DO it = it1, it2
-                        direct(it, ic, band, rec) = direct(it, ic, band, rec) + triseis(it, ic) * attenuation
+                        sample = NINT((it - 1) * dt / timeseries%bb%dt) + 1
+                        rseis(sample, ic) = rseis(sample, ic) + rtri(it) * attenuation
+                        iseis(sample, ic) = iseis(sample, ic) + itri(it) * attenuation
                       ENDDO
-                    ENDDO
 
-                    ! stack envelopes here (p-only, s-only, depending on wtp), weighted by "Q" and "dl"
+                      ! stack triangle contribution to coda
+                      DO it = 1, npts
+                        coda(it, ic) = coda(it, ic) + envelope(it) * noise(it, band) * aveq      !< modulate amplitude of coda
+                      ENDDO
+
+                    ENDDO      !< end loop over components
 
                   ENDDO      !< end loop over frequency bands
 
@@ -556,34 +588,47 @@ MODULE m_isochron
 
               ENDDO    !< end loop over wave types
 
-              ! add hilbert transform here
-              CALL fft(AIMAG(triseis(:, ic, band)), spectrum)
+! try with rec, band, wtp
 
-              spectrum(:) = spectrum(:) * hlb(:)
+              ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+              ! --------------------------------------------- convolution with MRF -------------------------------------------------
 
-              CALL ifft(analytic, spectrum)
+              DO ic = 1, 3
 
-              seis = CMPLX(REAL(rseis, r32), -AIMAG(analytic), r32)
+                ! add coda and real part of direct waves ("rseis")
+                DO it = 1, npts
+                  rseis(it, ic) = rseis(it, ic) + coda(it, ic)
+                ENDDO
 
+                CALL fft(rseis(:, ic), tur)
+                CALL fft(cseis(:, ic), tuc)
 
+                ! multiply spectra
+                DO i = 1, npts/2 + 1
+                  tur(i) = tur(i) * tv(i)
+                  tuc(i) = tuc(i) * tv(i)
+                ENDDO
 
+                CALL ifft(rseis(:, ic), tur)
+                CALL ifft(cseis(:, ic), tuc)
+
+              ENDDO
+
+              ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+              ! ---------------------------------------------- rotate & stack ------------------------------------------------------
 
               ! move back from "u/t" (fault-parallel/fault-normal) to "x/y" coordinates
-              CALL rotate(spx, spy, spz, 0._r32, 0._r32, strike)
+              CALL rotate(rseis(:, 1), rseis(:, 2), rseis(:, 3), 0._r32, 0._r32, strike)
+              CALL rotate(cseis(:, 1), cseis(:, 2), cseis(:, 3), 0._r32, 0._r32, strike)
 
-              timeseries%sp%x(it, rec) = timeseries%sp%x(it, rec) + spx(it)
-              timeseries%sp%y(it, rec) = timeseries%sp%y(it, rec) + spy(it)
-              timeseries%sp%z(it, rec) = timeseries%sp%z(it, rec) + spz(it)
-
-              ! add coda here
-
-              ! convolve with mrf here
-
-              ! add bandpass filter here
+              DO it = 1, npts
+                respr(it, ic, rec) = respr(it, ic, rec) + rseis(it, ic)
+                respc(it, ic, rec) = respc(it, ic, rec) + cseis(it, ic)
+              ENDDO
 
             ENDDO   !< end loop over receivers
 
-            m0 = m0 + mean(mu * slip)        !< average moment contribution (area is added later)
+            m0 = m0 + mean(mu * slip)        !< average moment contribution (area is included later)
 
           ENDDO
         ENDDO
@@ -595,20 +640,82 @@ MODULE m_isochron
 
       ENDDO        !< end loop over mesh refinements
 
-      scale = plane(pl)%targetm0 / moment
+      CALL destroy_fftw_plan([npts])
+      CALL destroy_iir_plan()
 
-      ! rescale synthetics to target moment
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+      ! ---------------------------------------------- Hilbert transform -----------------------------------------------------------
+
+      scale = plane(pl)%targetm0 / moment          !< scaling factor to scale to desired moment
+
+      !$omp parallel do default(shared) private(rec, it)
       DO rec = 1, SIZE(input%receiver)
-        DO it = 1, SIZE(timeseries%sp%time)
-          timeseries%sp%x(it, rec) = timeseries%sp%x(it, rec) * scale
-          timeseries%sp%y(it, rec) = timeseries%sp%y(it, rec) * scale
-          timeseries%sp%z(it, rec) = timeseries%sp%z(it, rec) * scale
+
+        CALL hilbert(respc(:, 1, rec))
+        CALL hilbert(respc(:, 2, rec))
+        CALL hilbert(respc(:, 3, rec))
+
+        DO it = 1, npts
+          timeseries%sp%x(it, rec) = (respr(it, 1, rec) - respc(it, 1, rec)) * scale
+          timeseries%sp%y(it, rec) = (respr(it, 2, rec) - respc(it, 2, rec)) * scale
+          timeseries%sp%z(it, rec) = (respr(it, 3, rec) - respc(it, 3, rec)) * scale
         ENDDO
+
       ENDDO
-
-
+      !$omp end parallel do
 
     END SUBROUTINE solve_isochron_integral
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    SUBROUTINE hilbert(x)
+
+      ! Purpose:
+      !   to compute the Hilbert transform of timeseries "x".
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      USE, NON_INTRINSIC :: m_fft_cmplx
+
+      REAL(r32),    DIMENSION(:),      INTENT(INOUT) :: x
+      COMPLEX(r32), DIMENSION(SIZE(x))               :: analytic, spectrum
+      INTEGER(i32)                                   :: i, n
+      REAL(r32),    DIMENSION(SIZE(x))               :: h
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      n = SIZE(x)
+
+      ! "h" is weighting function to compute analytic signal
+      h(:) = 0._r32
+      h(1) = 1._r32
+
+      IF (MOD(n, 2) .eq. 0) THEN
+        h(n/2 + 1) = 1._r32
+        h(2:n/2)   = 2._r32
+      ELSE
+        h(2:(n + 1)/2) = 2._r32
+      ENDIF
+
+      CALL fft(x, spectrum)
+
+      DO i = 1, SIZE(x)
+        spectrum(i) = spectrum(i) * h(i)
+      ENDDO
+
+      CALL ifft(analytic, spectrum)
+
+      DO i = 1, SIZE(x)
+        x(i) = AIMAG(analytic(i))
+      ENDDO
+
+    END SUBROUTINE hilbert
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
