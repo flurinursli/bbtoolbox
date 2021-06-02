@@ -682,36 +682,60 @@ MODULE m_rik
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE mrf_rik(iuc, ivc, mrf)
+    SUBROUTINE mrf_rik(iuc, ivc, dt, tau, mrf)
 
-      INTEGER(i32),              DIMENSION(3), INTENT(IN) :: iuc, ivc
-      REAL(r32),    ALLOCATABLE, DIMENSION(:)             :: mrf
-      INTEGER(i32)                                        :: icr, src, it, it1, it2, iu, iv, nsubs
-      REAL(r32)                                           :: slip, povr, trapz, rupture, time, rise
+      ! Purpose:
+      !   to build the moment rate function for a triangle whose corner indices are "iuc" and "ivc", each characterized by minimum
+      !   rupture time "tau" and time-step "dt".
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      INTEGER(i32), DIMENSION(3), INTENT(IN)  :: iuc, ivc
+      REAL(r32),                  INTENT(IN)  :: dt
+      REAL(r32),    DIMENSION(3), INTENT(IN)  :: tau
+      REAL(r32),    DIMENSION(:), INTENT(OUT) :: mrf
+      INTEGER(i32)                            :: icr, src, it, it1, it2, iu, iv, nsubs, npts, imax
+      REAL(r32)                               :: slip, povr, trapz, rupture, time, rise, t, t0
 
       !-----------------------------------------------------------------------------------------------------------------------------
+
+      npts = SIZE(mrf)
+
+      DO it = 1, npts
+        mrf(it) = 0._r32
+      ENDDO
+
+      imax = 0
 
       DO icr = 1, 3
 
         iu = iuc(icr)
         iv = ivc(icr)
 
-        nsubs = SIZE(nodes(iu, iv)%rise)       !< number of subsources affecting node
+        nsubs = SIZE(nodes(iu, iv)%slip)                 !< number of subsources affecting node
 
         DO src = 1, nsubs
 
           slip    = nodes(iu, iv)%slip(src)
-          rupture = nodes(iu, iv)%rupture(src)
+          rupture = nodes(iu, iv)%rupture(src) - tau(icr)
           rise    = nodes(iu, iv)%rise(src)
 
-          it1 = NINT(rupture / timeseries%sp%dt) + 1
-          it2 = it1 + NINT(rise / timeseries%sp%dt)
+          it1 = (rupture / dt) + 1
+          it2 = MAX(npts, it1 + NINT(5._r32 * rise / dt) + 1)      !< compute up to 5*rise but stay within size of mrf
+
+          imax = MAX(imax, it2)     !< keep track of max time sample
 
           povr = PI / rise
 
+          t0 = (it1 - 1) * dt - rupture
+
           DO it = it1, it2
-            time = timeseries%sp%time(it) - rupture
-            mrf(it) = mrf(it) + slip * time * EXP(-(time) * povr) * povr**2
+            t = t0 + (it - it1) * dt
+            mrf(it) = mrf(it) + slip * t * EXP(-(t) * povr) * povr**2
           ENDDO
 
         ENDDO
@@ -723,14 +747,14 @@ MODULE m_rik
 
       trapz = 0.5_r32 * mrf(1)
 
-      DO it = 2, it2 - 1
+      DO it = 2, imax - 1
         trapz = trapz + mrf(it)
       ENDDO
 
-      trapz = trapz + 0.5_r32 * mrf(it2)
-      trapz = trapz * timeseries%sp%dt
+      trapz = trapz + 0.5_r32 * mrf(imax)
+      trapz = trapz * dt
 
-      DO it = 1, it2
+      DO it = 1, imax
         mrf(it) = mrf(it) / trapz
       ENDDO
 

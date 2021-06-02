@@ -1770,7 +1770,7 @@ MODULE m_filter_r32
 
       IF (PRESENT(z)) zi = z
 
-print*, omp_get_thread_num(), iira(1:2), iirb(1:2), zi(1:2)
+! print*, omp_get_thread_num(), iira(1:2), iirb(1:2), zi(1:2)
 
     END SUBROUTINE set_iir_coefficients
 

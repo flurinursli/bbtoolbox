@@ -21,7 +21,7 @@ MODULE m_source
 
   PUBLIC :: hypocenter, plane, dutr, dvtr, nutr, nvtr, nugr, nvgr, umingr, vmingr, umaxgr, vmaxgr, nodes
   PUBLIC :: MIN_DEPTH
-  PUBLIC :: setup_source, meshing, missing_rupture, dealloc_nodes, cornr, cornr2uv, uvw2xyz, vinterp, ptrsrc_at_nodes
+  PUBLIC :: setup_source, meshing, missing_rupture, dealloc_nodes, cornr, cornr2uv, uvw2xyz, vinterp, ptrsrc_at_nodes, time_stepping
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -1004,7 +1004,7 @@ MODULE m_source
       !
 
       INTEGER(i32), INTENT(IN) :: ref, pl, vel
-      REAL(r32)                :: sd, z, vs, du
+      REAL(r32)                :: sd, z, vs, du, eps
       ! INTEGER(i32)             :: layer
       ! REAL(r32)                :: ztop, zmax, vmax
 
@@ -1016,15 +1016,23 @@ MODULE m_source
 
         z = plane(pl)%z + vmingr(ref) * sd
 
+        eps = EPSILON(z)
+
+        z = z * (1._r32 + EPSILON(z))     !< just below what could be a velocity interface
+
         vs = vinterp(model%depth, model%vs, model%vsgrad, z)        !< velocity at beginning of mesh
 
         z = plane(pl)%z + vmaxgr(ref) * sd
+
+        eps = EPSILON(z)
+
+        z = z * (1._r32 - EPSILON(z))     !< just above what could be a velocity interface
 
         vs = MAX(vs, vinterp(model%depth, model%vs, model%vsgrad, z))   !< velocity at end of mesh
 
       END ASSOCIATE
 
-      du = mean(dutr(ref) + dvtr(ref))
+      du = 0.5_r32 * (dutr(ref) + dvtr(ref))
 
       ! here we consider "vs * input%source%vrfact" as the approximate maximum rupture speed
       time_stepping = du / (vs * input%source%vrfact * input%advanced%avecuts)
