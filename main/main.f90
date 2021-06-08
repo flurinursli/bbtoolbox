@@ -134,7 +134,6 @@ PROGRAM main
                         num2char(pl, width=15, justify='r') + '|' + num2char(vlc, width=15, justify='r') + '|', blankline=.false.)
 
         CALL meshing(pl, vlc)
-        !CALL roughness(pl, iter)
 
         CALL rik(ok, pl, vlc, iter)
 
@@ -142,7 +141,7 @@ PROGRAM main
         CALL node2disk(ok, pl, vlc, iter)
 #endif
 
-        CALL solve_isochron_integral(ok, pl, vlc, iter)
+        CALL solve_isochron_integral(ok, 1, pl, vlc, iter)
 
         ! DO irec = 1, SIZE(input%receiver)
         !   !IF (input%receiver(irec)%velocity .eq. vlc) CALL quake(irec, pl)

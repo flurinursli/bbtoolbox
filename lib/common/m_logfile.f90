@@ -26,13 +26,13 @@ MODULE m_logfile
 
   PRIVATE
 
-  PUBLIC :: set_log_module, report_error, update_log, carriage
+  PUBLIC :: set_log_module, report_error, report_assert, update_log, carriage
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
   CHARACTER(LEN=1),                           PARAMETER :: carriage = ACHAR(13)
 
-  CHARACTER(:),     ALLOCATABLE                         :: set_ecolor
+  CHARACTER(:),     ALLOCATABLE                         :: set_ecolor, set_tcolor
 
   INTEGER(i32),     ALLOCATABLE, DIMENSION(:)           :: log_units
 
@@ -45,7 +45,7 @@ MODULE m_logfile
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE set_log_module(ok, disk, screen, errclr)
+    SUBROUTINE set_log_module(ok, disk, screen, errclr, trueclr)
 
       ! Purpose:
       !   to setup the log-file environment. Log messages can be reported to disk and/or to screen.
@@ -58,7 +58,7 @@ MODULE m_logfile
 
       INTEGER(i32),                       INTENT(OUT) :: ok
       LOGICAL,                  OPTIONAL, INTENT(IN)  :: disk, screen
-      CHARACTER(*),             OPTIONAL, INTENT(IN)  :: errclr
+      CHARACTER(*),             OPTIONAL, INTENT(IN)  :: errclr, trueclr
       CHARACTER(8)                                    :: date
       CHARACTER(10)                                   :: time
       CHARACTER(:), ALLOCATABLE                       :: fo, timestamp
@@ -102,6 +102,7 @@ MODULE m_logfile
 
       ! set (background) color for error messages
       IF (PRESENT(errclr)) set_ecolor = errclr
+      IF (PRESENT(trueclr)) set_tcolor = trueclr
 
     END SUBROUTINE set_log_module
 
@@ -137,6 +138,52 @@ MODULE m_logfile
       ENDDO
 
     END SUBROUTINE report_error
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    SUBROUTINE report_assert(assert, true_msg, false_msg)
+
+      ! Purpose:
+      !   to convert an error code into an error message based on the provided external funtion and to report content to selected
+      !   units.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   02/09/20                  original version
+      !
+
+      LOGICAL,                  INTENT(IN) :: assert
+      CHARACTER(*),             INTENT(IN) :: true_msg, false_msg
+      CHARACTER(:), ALLOCATABLE            :: clr, msg
+      INTEGER(i32)                         :: i, n
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      n = 0
+
+      IF (ALLOCATED(log_units)) n = SIZE(log_units)
+
+      clr = set_ecolor
+
+
+      IF (assert) THEN
+        msg = true_msg
+        clr = set_tcolor
+      ELSE
+        msg = false_msg
+        clr = set_ecolor
+      ENDIF
+
+      DO i = 1, n
+        WRITE(log_units(i), *)
+        WRITE(log_units(i), '(A)') colorize(msg, background = clr)
+        WRITE(log_units(i), *)
+      ENDDO
+
+    END SUBROUTINE report_assert
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================

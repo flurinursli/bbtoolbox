@@ -1,8 +1,4 @@
-#ifdef DOUBLE_PREC
-MODULE m_filter_r64
-#else
-MODULE m_filter_r32
-#endif
+MODULE m_filter
 
   ! description:
   !   collection of subprograms to filter time-series according to iir or fir filters.
@@ -29,9 +25,10 @@ MODULE m_filter_r32
   !   0.1 -> initial version, only iir filters implemented
   !
 
+  !$ USE             :: omp_lib
   USE, NON_INTRINSIC :: m_precisions
-  USE, NON_INTRINSIC :: m_llsq_r64
-  USE, NON_INTRINSIC :: m_fft_real
+  USE, NON_INTRINSIC :: m_llsq_r64        !< double precision
+  USE, NON_INTRINSIC :: m_fft_real        !< double precision
 
   IMPLICIT none
 
@@ -58,10 +55,10 @@ MODULE m_filter_r32
 
 
   ! transfer function coefficients of filter ("b" is numerator, "a" is denominator)
-  REAL(r64), ALLOCATABLE, DIMENSION(:)           :: iira, iirb
+  REAL(r64), ALLOCATABLE, DIMENSION(:) :: iira, iirb
 
   ! initial conditions for zero-phase filtering
-  REAL(r64), ALLOCATABLE, DIMENSION(:)           :: zi
+  REAL(r64), ALLOCATABLE, DIMENSION(:) :: zi
 
   !$omp threadprivate (iira, iirb, zi)
 
@@ -268,11 +265,13 @@ MODULE m_filter_r32
 
       n = COUNT(pole .ne. EMPTY) + 1
 
+      !$omp parallel default(shared)
       ALLOCATE(iira(n), iirb(n))
 
       ! now convert to filter coefficients
       iirb = gain * poly(zero(1:n-1))             !< numerator
       iira = poly(pole(1:n-1))                    !< denominator
+      !$omp end parallel
 
       ! clean up
       DEALLOCATE(pole, zero)
@@ -286,9 +285,13 @@ MODULE m_filter_r32
       IF (PRESENT(zphase)) THEN
         IF (zphase .eqv. .true.) THEN
 
+          ok = 0
+
+          !$omp parallel default(shared) reduction(max: ok)
           ALLOCATE(zi(n - 1))
 
           zi = initial_conditions(iirb, iira, ok)
+          !$omp end parallel
 
           IF (ok .ne. 0) RETURN
 
@@ -341,9 +344,11 @@ MODULE m_filter_r32
       !-----------------------------------------------------------------------------------------------------------------------------
 
       ! always check allocation state to avoid run-time problems if one calls "destroy_iir_plan" before "make_iir_plan"
+      !$omp parallel default(shared)
       IF (ALLOCATED(iira)) DEALLOCATE(iira)
       IF (ALLOCATED(iirb)) DEALLOCATE(iirb)
       IF (ALLOCATED(zi))   DEALLOCATE(zi)
+      !$omp end parallel
 
     END SUBROUTINE destroy_iir_plan
 
@@ -364,12 +369,12 @@ MODULE m_filter_r32
       !   02/09/20                  original version
       !
 
-      REAL(r__),                 DIMENSION(:),        INTENT(IN)    :: fun                   !< input time-series
-      INTEGER(i32),                                   INTENT(INOUT) :: ok                    !< error flag
-      INTEGER(i32)                                                  :: i, l, n, nt
-      INTEGER(i32)                                                  :: ierr
-      REAL(r__),                 DIMENSION(SIZE(fun))               :: iir
-      REAL(r64),    ALLOCATABLE, DIMENSION(:)                       :: x
+      REAL(r__),                 DIMENSION(:),        INTENT(IN)  :: fun                   !< input time-series
+      INTEGER(i32),                                   INTENT(OUT) :: ok                    !< error flag
+      INTEGER(i32)                                                :: i, l, n, nt
+      INTEGER(i32)                                                :: ierr
+      REAL(r__),                 DIMENSION(SIZE(fun))             :: iir
+      REAL(r64),    ALLOCATABLE, DIMENSION(:)                     :: x
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
@@ -1504,7 +1509,7 @@ MODULE m_filter_r32
 
       DEALLOCATE(num, den, u, v)
 
-    END SUBROUTINE
+    END SUBROUTINE freqz
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
@@ -1735,13 +1740,7 @@ MODULE m_filter_r32
       a = iira
       b = iirb
 
-      IF (PRESENT(z)) THEN
-        IF (ALLOCATED(zi)) THEN
-          z = zi
-        ELSE
-          z = iirb * 0._r32             !< return zeros if only one-pass was selected
-        ENDIF
-      ENDIF
+      IF (PRESENT(z) .and. ALLOCATED(zi)) z = zi
 
     END SUBROUTINE get_iir_coefficients
 
@@ -1765,12 +1764,16 @@ MODULE m_filter_r32
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
+      !$omp parallel default(shared)
+
       iira = a
       iirb = b
 
       IF (PRESENT(z)) zi = z
 
-! print*, omp_get_thread_num(), iira(1:2), iirb(1:2), zi(1:2)
+! print*, omp_get_thread_num(), size(iira), size(iirb), ALLOCATED(zi)
+
+      !$omp end parallel
 
     END SUBROUTINE set_iir_coefficients
 
@@ -1861,8 +1864,4 @@ MODULE m_filter_r32
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-#ifdef DOUBLE_PREC
-END MODULE m_filter_r64
-#else
-END MODULE m_filter_r32
-#endif
+END MODULE m_filter
