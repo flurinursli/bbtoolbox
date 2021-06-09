@@ -8,7 +8,7 @@ F90_OBJ = m_fft_real.o m_fft_complex.o
 fft : dirs $(LIB_NAME)
 
 $(F90_OBJ) : %.o : %.f90
-	$(FC) $(OPT) -cpp -DDOUBLE_PREC -I../common/include -I$(INCL_FFTW) -c -o $@ $<
+	$(FC) $(OPT) $(OMP) -cpp -DDOUBLE_PREC -I../common/include -I$(INCL_FFTW) -c -o $@ $<
 
 $(LIB_NAME): $(F90_OBJ)
 	ar qc $@ $(F90_OBJ)

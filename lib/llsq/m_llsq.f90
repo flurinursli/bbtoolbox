@@ -36,7 +36,7 @@ MODULE m_llsq_r32
   !   02/09/20                  original version
   !
 
-  USE                :: omp_lib
+  !$ USE             :: omp_lib
   USE, NON_INTRINSIC :: m_precisions
   USE, NON_INTRINSIC :: m_strings
 

@@ -35,7 +35,7 @@ PROGRAM main
 
   IMPLICIT none
 
-  INTEGER(i32)              :: ierr, rank, ntasks, ok, i0, i1, iter, irec, pl, vlc
+  INTEGER(i32)              :: ierr, rank, ntasks, ok, i0, i1, iter, irec, pl, vlc, band
   REAL(r64),   DIMENSION(2) :: tictoc
 
   !---------------------------------------------------------------------------------------------------------------------------------
@@ -123,6 +123,11 @@ PROGRAM main
 
   DO iter = i0, i1            !< every iteration is characterized by different source properties (rik, roughness)
 
+    ! reset short-period timeseries
+    timeseries%sp%x(:,:) = 0._r32
+    timeseries%sp%y(:,:) = 0._r32
+    timeseries%sp%z(:,:) = 0._r32
+
     DO pl = 1, SIZE(plane)
 
       DO vlc = 1, SIZE(input%velocity)
@@ -138,18 +143,20 @@ PROGRAM main
         CALL rik(ok, pl, vlc, iter)
 
 #ifdef DEBUG
-        CALL node2disk(ok, pl, vlc, iter)
+        ! CALL node2disk(ok, pl, vlc, iter)
 #endif
 
-        CALL solve_isochron_integral(ok, 1, pl, vlc, iter)
-
-        ! DO irec = 1, SIZE(input%receiver)
-        !   !IF (input%receiver(irec)%velocity .eq. vlc) CALL quake(irec, pl)
+        ! DO band = 1, SIZE(input%attenuation(1)%gss)
+        !   IF (input%attenuation(1)%lcut(band) .lt. input%coda%fmax) THEN
+        !     CALL solve_isochron_integral(ok, band, pl, vlc, iter)
+        !   ENDIF
         ! ENDDO
 
-      ENDDO
+      ENDDO    !< end loop over velocity models
 
-    ENDDO
+    ENDDO   !< end loop over fault planes
+
+    CALL correct4impz(ok, iter)
 
     DO irec = 1, SIZE(input%receiver)
       !CALL add_coda(irec)
@@ -157,7 +164,7 @@ PROGRAM main
       !CALL save2disk(irec, iter)
     ENDDO
 
-  ENDDO
+  ENDDO  !< end loop over iterations
 
   CALL watch_stop(tictoc(1))
 

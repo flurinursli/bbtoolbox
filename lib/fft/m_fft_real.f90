@@ -30,6 +30,7 @@ MODULE m_fft_real
   !   02/09/20                  original version
   !
 
+  !$ USE             :: omp_lib
   USE, INTRINSIC     :: iso_c_binding
   USE, NON_INTRINSIC :: m_precisions
 
