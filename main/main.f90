@@ -93,7 +93,9 @@ PROGRAM main
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
   ! ------------------------------------------------------- time stuff -------------------------------------------------------------
 
-  timeseries%sp%dt = 0.25_r32 / input%coda%fmax             !< fnyq must be twice fmax
+  ! timeseries%sp%dt = 0.25_r32 / input%coda%fmax        !< fnyq must be twice fmax
+  timeseries%sp%dt = 0.5_r32 / (input%coda%fmax * 3._r32/2._r32)
+
 
   pl = NINT(40. / timeseries%sp%dt)
   ALLOCATE(timeseries%sp%time(pl))
@@ -119,7 +121,9 @@ PROGRAM main
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
   ! ---------------------------------------------------- start simulations ---------------------------------------------------------
 
-  CALL split_task(input%source%samples, ntasks, rank, i0, i1)
+  ! CALL split_task(input%source%samples, ntasks, rank, i0, i1)
+  CALL split_task(input%source%samples * input%coda%samples, ntasks, rank, i0, i1)    !< this is a temporary hack
+
 
   DO iter = i0, i1            !< every iteration is characterized by different source properties (rik, roughness)
 
@@ -140,17 +144,17 @@ PROGRAM main
 
         CALL meshing(pl, vlc)
 
-        CALL rik(ok, pl, vlc, iter)
+        IF (input%source%add_rik) CALL rik(ok, pl, vlc, iter)
 
 #ifdef DEBUG
-        ! CALL node2disk(ok, pl, vlc, iter)
+        CALL node2disk(ok, pl, vlc, iter)
 #endif
 
-        ! DO band = 1, SIZE(input%attenuation(1)%gss)
-        !   IF (input%attenuation(1)%lcut(band) .lt. input%coda%fmax) THEN
-        !     CALL solve_isochron_integral(ok, band, pl, vlc, iter)
-        !   ENDIF
-        ! ENDDO
+        DO band = 1, SIZE(input%attenuation(1)%gss)
+          IF (input%attenuation(1)%lcut(band) .lt. input%coda%fmax) THEN
+            CALL solve_isochron_integral(ok, band, pl, vlc, iter)
+          ENDIF
+        ENDDO
 
       ENDDO    !< end loop over velocity models
 
@@ -158,11 +162,11 @@ PROGRAM main
 
     CALL correct4impz(ok, iter)
 
-    DO irec = 1, SIZE(input%receiver)
-      !CALL add_coda(irec)
-      !CALL stitch(irec)
-      !CALL save2disk(irec, iter)
-    ENDDO
+    !CALL add_coda(irec)
+    !CALL stitch(irec)
+    !CALL save2disk(irec, iter)
+
+    CALL seis2disk(ok, iter, 'sp')
 
   ENDDO  !< end loop over iterations
 
@@ -171,6 +175,8 @@ PROGRAM main
   tictoc = tictoc / 60._r32
 
   IF (rank .eq. 0) CALL update_log('Program completed in' + num2char(tictoc(1), notation='f', width=10, precision=1) + ' minutes')
+
+  CALL mpi_finalize(ierr)
 
 END PROGRAM main
 

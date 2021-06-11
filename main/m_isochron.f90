@@ -84,7 +84,7 @@ MODULE m_isochron
       REAL(r32)                                             :: avepath, avetrvt, scattering, attenuation, t, direct
       REAL(r32),                 DIMENSION(3)               :: u, v, w, x, y, z, slip, rupture, rake, nrl, rho, alpha, beta, mu
       REAL(r32),                 DIMENSION(3)               :: p, q, path, trvt, repi, tau, sr, cr, velloc
-      REAL(r32),    ALLOCATABLE, DIMENSION(:)               :: fsp, mrf, envelope
+      REAL(r32),    ALLOCATABLE, DIMENSION(:)               :: fsp, mrf, envelope, stack, time
       REAL(r32),    ALLOCATABLE, DIMENSION(:,:)             :: rtri, itri, ncuts, active
       REAL(r32),    ALLOCATABLE, DIMENSION(:,:,:)           :: rseis, iseis, seis
       REAL(r64)                                             :: tictoc
@@ -110,12 +110,23 @@ MODULE m_isochron
       IF (ok .ne. 0) RETURN
 
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
-      ! --------------------------------------- allocate array for real&imaginary parts --------------------------------------------
+      ! ---------------------------------------- allocate arrays to handle seismograms ---------------------------------------------
 
-      ALLOCATE(seis(SIZE(timeseries%sp%time), 3, SIZE(input%receiver)))
+      dt = timeseries%sp%dt !* (input%coda%fmax / MIN(input%attenuation(1)%hcut(band), fmax))
 
-      ALLOCATE(rseis(SIZE(timeseries%sp%time), 3, SIZE(input%receiver)))
-      ALLOCATE(iseis(SIZE(timeseries%sp%time), 3, SIZE(input%receiver)))
+      IF (input%source%is_point) dt = MAXVAL(plane(pl)%rupture) / (input%advanced%avecuts * 4)
+
+      npts = NINT(timeseries%sp%time(SIZE(timeseries%sp%time)) / dt) + 2
+
+      ALLOCATE(seis(npts, 3, SIZE(input%receiver)), rseis(npts, 3, SIZE(input%receiver)), iseis(npts, 3, SIZE(input%receiver)))
+      ALLOCATE(rtri(npts, 3), itri(npts, 3))
+      ALLOCATE(time(npts), mrf(npts), envelope(npts), tur(npts/2+1), tui(npts/2+1), tv(npts/2+1))
+
+      seis(:, :, :) = 0._r32
+
+      DO it = 1, npts
+        time(it) = (it - 1) * dt
+      ENDDO
 
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! --------------------------------------- solve integral for each mesh refinement --------------------------------------------
@@ -152,15 +163,10 @@ MODULE m_isochron
         ncuts(:,:)  = 0       !< total isochron cuts for each wave type and receiver
         active(:,:) = 0       !< total triangles that were cut
 
-        ! dt = time_stepping(ref, pl, vel)     !< integration time-step will be somewhat different for every refinement
-        ! dt = MIN(dt, timeseries%sp%dt)       !< make sure it is never larger than broadband time-step
-        dt = timeseries%sp%dt
-
-        npts = NINT(timeseries%sp%time(SIZE(timeseries%sp%time)) / dt) + 1
-
-        ! allocate some time-related resources whose size may change between each refinement
-        ALLOCATE(mrf(npts), envelope(npts))
-        ALLOCATE(rtri(npts, 3), itri(npts, 3))
+        IF (input%advanced%verbose .eq. 2) THEN
+          CALL update_log(num2char('<time step>', width=30, justify='c') +    &
+                          num2char(dt, notation='f', width=15, precision=4, justify='r') + '|')
+        ENDIF
 
         ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
         ! ------------------------------------------ define RIK model on mesh nodes ------------------------------------------------
@@ -211,8 +217,6 @@ MODULE m_isochron
 
         CALL make_fftw_plan([npts])
 
-        ALLOCATE(tur(npts/2+1), tui(npts/2+1), tv(npts/2+1))
-
         !$omp parallel do default(shared) private(i, j, iuc, ivc, icr, slip, u, v, w, x, y, z, nrl, strike, dip, rake, sd, cd)   &
         !$omp private(sr, cr, tictoc, rupture, alpha, beta, rho, mu, ic, src, shot, mrf, rec, urec, vrec, wrec, repi, model)     &
         !$omp private(rtri, itri, wtp, abv, blw, velloc, srfvel, scattering, sheet, p, path, trvt, q, tau, taumin, taumax, it1)   &
@@ -246,7 +250,7 @@ MODULE m_isochron
             CALL cornr2uv(iuc, ivc, ref, u, v)        !< on-fault coordinates
 
             DO icr = 1, 3
-              w(icr) = roughness(iuc(icr), ivc(icr))      !< add roughness
+              w(icr) = roughness(iuc(icr), ivc(icr))      !< add roughness (always zero for point-sources)
             ENDDO
 
             CALL uvw2xyz(pl, u, v, w, x, y, z)            !< get cartesian coordinates
@@ -309,9 +313,11 @@ MODULE m_isochron
             ! find shooting points above/below
             DO icr = 1, 3
               DO src = 1, SIZE(shooting) - 1
-                IF ( (z(icr) .ge. shooting(src)) .and. (z(icr) .lt. shooting(src + 1)) ) shot(icr) = src
+                IF ( (z(icr) .ge. shooting(src)) .and. (z(icr) .le. shooting(src + 1)) ) shot(icr) = src
               ENDDO
             ENDDO
+
+! print*, 'shot ', shot, ' - ', shooting, ' - ', z
 
             ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
             ! ---------------------------------------- moment rate function of triangle --------------------------------------------
@@ -320,8 +326,15 @@ MODULE m_isochron
             CALL watch_start(tictoc, COMM)
 #endif
 
-            CALL mrf_rik(iuc, ivc, dt, rupture, mrf)     !< moment rate function (averaged over corners)
+            IF (input%source%is_point) THEN
+              mrf = dbrune(time, input%source%freq)
+            ELSE
+              CALL mrf_rik(iuc, ivc, dt, rupture, mrf)     !< moment rate function (averaged over corners)
+            ENDIF
+
             CALL fft(mrf, tv)                            !< ... and its spectrum
+
+print*, 'X ', any(isnan(mrf)), any(isnan(real(tv))), any(isnan(aimag(tv)))
 
 #ifdef PERF
             CALL watch_stop(tictoc, COMM)
@@ -388,6 +401,12 @@ MODULE m_isochron
                   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
                   ! ------------------------------------------ time integration limits -------------------------------------------
 
+
+print*, 'r ', rec, wtp, sheet, ' x ', mean(repi), ' - ', path, ' - ', trvt
+
+
+
+
                   IF (ANY(trvt .eq. 0._r32)) CYCLE       !< all corners must belong to same sheet
 
                   tau(:) = trvt(:) + rupture(:)          !< sum travel-time and rupture time
@@ -398,7 +417,12 @@ MODULE m_isochron
                   it1 = NINT(taumin / dt) + 1
 
                   it2 = it1 + (taumax - taumin) / dt - 1      !< when (taumax-taumin) < dt, it2 < it1
+
                   it2 = MIN(npts, it2)                        !< limit to max number of time points
+
+
+print*, 't ', rec, wtp, sheet, ' - ', taumin, taumax, ' - ', it1, it2
+
 
                   ! jump to next sheet if no isochron is spanned (i.e. no cuts)
                   IF (it2 .lt. it1) CYCLE
@@ -438,6 +462,9 @@ MODULE m_isochron
 
                   ncuts(wtp, rec) = ncuts(wtp, rec) + cut
 
+print*, 'c ', rec, wtp, sheet, ' - ', cut, ' - ', ncuts(wtp, rec), ' - ', active(wtp, rec)
+
+
 #ifdef PERF
                   CALL watch_stop(tictoc, COMM)
                   otimer(6) = otimer(6) + tictoc
@@ -474,6 +501,9 @@ MODULE m_isochron
                 CALL fft(rtri(:, ic), tur)
                 CALL fft(itri(:, ic), tui)
 
+print*, 'A0 ', any(isnan(rtri)), any(isnan(itri)) , any(isnan(real(tur))), any(isnan(aimag(tur))),    &
+               any(isnan(real(tui))), any(isnan(aimag(tui))), any(isnan(real(tv))), any(isnan(aimag(tv)))
+
                 ! multiply spectra
                 DO it = 1, npts/2 + 1
                   tur(it) = tur(it) * tv(it)
@@ -482,6 +512,9 @@ MODULE m_isochron
 
                 CALL ifft(rtri(:, ic), tur)
                 CALL ifft(itri(:, ic), tui)
+
+print*, 'B0 ', any(isnan(rtri)), any(isnan(itri)) !, any(isnan(tur)), any(isnan(tui))
+
 
               ENDDO
 
@@ -512,16 +545,13 @@ MODULE m_isochron
         ENDDO
         !$omp end parallel do
 
-        DEALLOCATE(mrf, envelope)
-        DEALLOCATE(rtri, itri)
-        DEALLOCATE(tur, tui, tv)
-
         CALL dealloc_nodes()
 
         moment = moment + m0 * dutr(ref) * dvtr(ref) * 0.5_r32      !< sum is over mesh refinements
 
         CALL destroy_fftw_plan([npts])
 
+print*, 'A ', any(isnan(rseis)), any(isnan(iseis))
 
         ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
         ! ----------------------------------------------- Hilbert transform --------------------------------------------------------
@@ -540,6 +570,9 @@ MODULE m_isochron
           ENDDO
         ENDDO
         !$omp end parallel do
+
+print*, 'B ', any(isnan(seis))
+
 
 #ifdef PERF
         CALL watch_stop(tictoc, COMM)
@@ -567,32 +600,41 @@ MODULE m_isochron
 
         ENDIF
 
-
       ENDDO        !< end loop over mesh refinements
 
       scale = plane(pl)%targetm0 / moment          !< scaling factor to scale to desired moment
 
-print*, 'scale ', scale
-
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
-      ! --------------------------------------------- filter, scale & stack --------------------------------------------------------
+      ! ------------------------------------- filter, differentiate, scale & stack -------------------------------------------------
 
 #ifdef PERF
       CALL watch_start(tictoc, COMM)
 #endif
 
+      ALLOCATE(stack(SIZE(timeseries%sp%time)))
+
       ASSOCIATE(model => input%attenuation(1), fmax => input%coda%fmax)
 
         CALL make_iir_plan(ok, 'butter', dt, [model%lcut(band), MIN(model%hcut(band), fmax)], 'pass', 2, zphase = .true.)
 
+print*, ok, [model%lcut(band), MIN(model%hcut(band), fmax)], npts, dt
+
         DO rec = 1, SIZE(input%receiver)
-          seis(:, 1, rec) = iir(seis(:, 1, rec), ok)
-          seis(:, 2, rec) = iir(seis(:, 2, rec), ok)
-          seis(:, 3, rec) = iir(seis(:, 3, rec), ok)
-          DO it = 1, SIZE(timeseries%sp%time)
-            timeseries%sp%x(it, rec) = timeseries%sp%x(it, rec) + seis(it, 1, rec) * scale
-            timeseries%sp%y(it, rec) = timeseries%sp%y(it, rec) + seis(it, 2, rec) * scale
-            timeseries%sp%z(it, rec) = timeseries%sp%z(it, rec) + seis(it, 3, rec) * scale
+          DO ic = 1, 3
+
+            !seis(:, ic, rec) = iir(seis(:, ic, rec), ok)                       !< filter
+            seis(:, ic, rec) = differentiate(seis(:, ic, rec), dt)             !< move from displacement to velocity
+
+            CALL interpolate(time, seis(:, ic, rec), timeseries%sp%time, stack)
+
+            IF (ic .eq. 1) THEN
+              timeseries%sp%x(:, rec) = timeseries%sp%x(:, rec) + stack(:) * scale
+            ELSEIF (ic .eq. 2) THEN
+              timeseries%sp%y(:, rec) = timeseries%sp%y(:, rec) + stack(:) * scale
+            ELSE
+              timeseries%sp%z(:, rec) = timeseries%sp%z(:, rec) + stack(:) * scale
+            ENDIF
+
           ENDDO
         ENDDO
 
@@ -605,6 +647,8 @@ print*, 'scale ', scale
       timer(5) = timer(5) + tictoc
 #endif
 
+
+print*, 'C ', any(isnan(seis))
 
 
 
@@ -698,7 +742,7 @@ print*, 'scale ', scale
           IF ( (dtau(2) .eq. 0._r32) .and. (dtau(3) .eq. 0._r32) ) icut = 1
 
           ! keep track of cuts
-          IF (icut .ne. 0) ncuts = ncuts + 1
+          IF ( (ic .eq. 1) .and. (icut .ne. 0) ) ncuts = ncuts + 1
 
           ! choose the correct integration formulae depending on which corner of the triangle is cut. ga and gb are the
           ! values of the integrand at the boundaries of the triangle where intersected by the integration contour.
@@ -1303,7 +1347,7 @@ print*, 'scale ', scale
             CALL cornr2uv(iuc, ivc, ref, u, v)        !< on-fault coordinates
 
             DO icr = 1, 3
-              w(icr) = roughness(iuc(icr), ivc(icr))
+              w(icr) = roughness(iuc(icr), ivc(icr))       !< this is always zero for point-sources
             ENDDO
 
             CALL uvw2xyz(pl, u, v, w, x, y, z)            !< get cartesian coordinates
@@ -1739,19 +1783,23 @@ print*, 'scale ', scale
       INTEGER(i32),                           INTENT(IN)  :: iter
       CHARACTER(:), ALLOCATABLE                           :: fo
       COMPLEX(r32), ALLOCATABLE, DIMENSION(:)             :: spectrum
-      INTEGER(i32)                                        :: band, f1, f2, rec, i, lu, npts
-      REAL(r32)                                           :: df
+      INTEGER(i32)                                        :: band, rec, i, lu, npts
       REAL(r32),    ALLOCATABLE, DIMENSION(:)             :: freq, amp, phase, respz, blob
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
       ASSOCIATE(model => input%attenuation(1), fmax => input%coda%fmax, dt => timeseries%sp%dt)
 
+        ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+        ! ----------------------------------------- overall filter response --------------------------------------------------------
+
         DO band = 1, SIZE(model%lcut)
 
           IF (model%lcut(band) .ge. fmax) EXIT
 
           CALL make_iir_plan(ok, 'butter', dt, [model%lcut(band), MIN(model%hcut(band), fmax)], 'pass', 2, zphase = .true.)
+
+print*, 'correct4impz ', ok, [model%lcut(1), MIN(model%hcut(band), fmax)], dt
 
           CALL freqz(freq, amp, phase, dt, SIZE(timeseries%sp%time))
 
@@ -1767,28 +1815,33 @@ print*, 'scale ', scale
 
         band = band - 1
 
+        ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+        ! ----------------------------------------- compensate filter response -----------------------------------------------------
+
         IF (band .gt. 1) THEN
 
+          ! we want the composite filter reponse to look identical to that of a filter between lowest fcut and highest fcut(/fmax)
           CALL make_iir_plan(ok, 'butter', dt, [model%lcut(1), MIN(model%hcut(band), fmax)], 'pass', 2, zphase = .true.)
+
+print*, 'correct4impz ', ok, [model%lcut(1), MIN(model%hcut(band), fmax)], dt
+
           CALL freqz(freq, amp, phase, dt, SIZE(timeseries%sp%time))
           CALL destroy_iir_plan()
 
           npts = SIZE(timeseries%sp%time)
 
-          df = freq(2) - freq(1)
-
-          f1 = NINT(model%lcut(1) / df) + 1
-          f2 = NINT(MIN(model%hcut(band), fmax) / df) + 1
-
           blob = respz
 
-          respz(f1:f2) = 1._r32 / respz(f1:f2) * amp(f1:f2)
+          ! correct filter response for non-negligibile amplitude levels
+          DO i = 1, SIZE(respz)
+            IF (respz(i) .gt. 1.E-04) respz(i) = amp(i)**2 / respz(i)    !< **2 is because we used two-pass filters
+          ENDDO
 
 #ifdef DEBUG
 
           fo = 'respz_' + num2char(iter) + '.txt'
 
-          OPEN(newunit = lu, file = fo, status = 'unknown', form = 'formatted', access = 'sequential', action = 'write', iostat= ok)
+          OPEN(newunit = lu, file = fo, status = 'replace', form = 'formatted', access = 'sequential', action = 'write', iostat= ok)
 
           IF (ok .ne. 0) THEN
             CALL report_error('Error while opening file' + TRIM(fo))
@@ -1796,7 +1849,7 @@ print*, 'scale ', scale
           ENDIF
 
           DO i = 1, SIZE(respz)
-            WRITE(lu, *) freq(i), blob(i), respz(i)
+            WRITE(lu, *) freq(i), blob(i), respz(i), amp(i)**2       !< blob*respz should be equal to amp**2
           ENDDO
 
           CLOSE(lu, iostat = ok)
@@ -1812,19 +1865,20 @@ print*, 'scale ', scale
 
           ALLOCATE(spectrum(npts/2 + 1))
 
+          ! apply spectral correction function
           DO rec = 1, SIZE(input%receiver)
 
-            CALL fft(timeseries%sp%x(:, rec), spectrum)
-            spectrum(f1:f2) = spectrum(f1:f2) * respz(f1:f2)
-            CALL ifft(timeseries%sp%x(:, rec), spectrum)
-
-            CALL fft(timeseries%sp%y(:, rec), spectrum)
-            spectrum(f1:f2) = spectrum(f1:f2) * respz(f1:f2)
-            CALL ifft(timeseries%sp%y(:, rec), spectrum)
-
-            CALL fft(timeseries%sp%z(:, rec), spectrum)
-            spectrum(f1:f2) = spectrum(f1:f2) * respz(f1:f2)
-            CALL ifft(timeseries%sp%z(:, rec), spectrum)
+            ! CALL fft(timeseries%sp%x(:, rec), spectrum)
+            ! spectrum(:) = spectrum(:) * respz(:)
+            ! CALL ifft(timeseries%sp%x(:, rec), spectrum)
+            !
+            ! CALL fft(timeseries%sp%y(:, rec), spectrum)
+            ! spectrum(:) = spectrum(:) * respz(:)
+            ! CALL ifft(timeseries%sp%y(:, rec), spectrum)
+            !
+            ! CALL fft(timeseries%sp%z(:, rec), spectrum)
+            ! spectrum(:) = spectrum(:) * respz(:)
+            ! CALL ifft(timeseries%sp%z(:, rec), spectrum)
 
           ENDDO
 

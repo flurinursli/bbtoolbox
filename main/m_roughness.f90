@@ -50,7 +50,9 @@ MODULE m_roughness
 
       ok = 0
 
-      IF ( (input%advanced%verbose .eq. 2) .and. (ref .eq. 1) ) ALLOCATE(avg(SIZE(nugr)), var(SIZE(nugr)), npts(SIZE(nugr)))
+      IF (input%source%add_roughness .and. (input%advanced%verbose .eq. 2) .and. (ref .eq. 1) )  THEN
+        ALLOCATE(avg(SIZE(nugr)), var(SIZE(nugr)), npts(SIZE(nugr)))
+      ENDIF
 
       IF (ALLOCATED(roughness)) DEALLOCATE(roughness)
 
@@ -69,116 +71,111 @@ MODULE m_roughness
 
       roughness(:,:) = 0._r32
 
-      ! define points where the random field will be computed
-      DO j = 1, nvgr(ref)
-        du = (1 - MOD(j, 2)) * dutr(ref) / 2._r32                !< "du" is 0 for odd "j", dutr/2 for even "j"
-        DO i = 1, nugr(ref) + MOD(j,2) - 1                       !< "i" tops at "nugr" for odd "j", at "nugr-1" for even "j"
-          u(i, j) = umingr + (i - 1) * dutr(ref) + du
-          v(i, j) = vmingr(ref) + (j - 1) * dvtr(ref)
+      IF (input%source%add_roughness) THEN
+
+        ! define points where the random field will be computed
+        DO j = 1, nvgr(ref)
+          du = (1 - MOD(j, 2)) * dutr(ref) / 2._r32                !< "du" is 0 for odd "j", dutr/2 for even "j"
+          DO i = 1, nugr(ref) + MOD(j,2) - 1                       !< "i" tops at "nugr" for odd "j", at "nugr-1" for even "j"
+            u(i, j) = umingr + (i - 1) * dutr(ref) + du
+            v(i, j) = vmingr(ref) + (j - 1) * dvtr(ref)
+          ENDDO
+          IF (i .eq. nugr(ref)) THEN
+            u(nugr(ref), j) = u(i - 1, j)      !< last u-point for even "j" is simply a copy
+            v(nugr(ref), j) = v(i - 1, j)
+          ENDIF
         ENDDO
-        IF (i .eq. nugr(ref)) THEN
-          u(nugr(ref), j) = u(i - 1, j)      !< last u-point for even "j" is simply a copy
-          v(nugr(ref), j) = v(i - 1, j)
+
+        u1(1:nugr(ref)*nvgr(ref)) => u
+        v1(1:nugr(ref)*nvgr(ref)) => v
+
+        r1(1:nugr(ref)*nvgr(ref)) => roughness
+
+        sigma = SUM(plane(:)%length) * 10**input%source%roughness         !< assume zero-mean, such that rms = std.dev.
+
+        ! use user-defined PSD, unstructured grid, set "ds" always larger than "dh" to avoid aliasing
+        CALL scarf_initialize(dh, 2, cl, sigma, u1, v1, nc = nc, fc = fc, ds = 2*MAX(dutr(ref), dvtr(ref)), rescale=1)
+
+        CALL scarf_execute(seed, r1, stats)
+
+        CALL scarf_finalize()
+
+        NULLIFY(u1, v1, r1)
+
+        ! rescale roughness such that alpha = 10**input%source%roughness = RMS / LENGTH
+        ! rms = SQRT(mean(roughness)**2 + variance(roughness))
+        ! rms = SUM(plane(:)%length) * (10**input%source%roughness) / rms
+        !
+        ! roughness = roughness * rms
+
+        IF (input%advanced%verbose .eq. 2) THEN
+
+          var(ref) = variance(roughness)
+          avg(ref) = mean(roughness)
+          npts(ref) = nugr(ref) * nvgr(ref)
+
+          IF (ref .eq. SIZE(nugr)) THEN
+
+            !rms = SQRT(mean(roughness)**2 + variance(roughness))
+            CALL parallel_variance(var, avg, npts, rms, mu)
+
+            rms = SQRT(mu**2 + rms)
+
+            CALL update_log(num2char('<fault roughness>', justify='c', width=30) +    &
+            num2char('Actual RMS', width=15, justify='r') + '|' +  &
+            num2char('Expected RMS', width=15, justify='r') + '|')
+
+            CALL update_log(num2char('', width=30, justify='c')  +  &
+            num2char(rms, width=15, notation='f', precision=2, justify='r') + '|' + &
+            num2char(sigma, width=15, notation='f', precision=2, justify='r') + '|', blankline=.false.)
+
+            DEALLOCATE(var, avg, npts)
+
+          ENDIF
         ENDIF
-      ENDDO
-
-      u1(1:nugr(ref)*nvgr(ref)) => u
-      v1(1:nugr(ref)*nvgr(ref)) => v
-
-      r1(1:nugr(ref)*nvgr(ref)) => roughness
-
-      sigma = SUM(plane(:)%length) * 10**input%source%roughness         !< assume zero-mean, such that rms = std.dev.
-
-      ! use user-defined PSD, unstructured grid, set "ds" always larger than "dh" to avoid aliasing
-      CALL scarf_initialize(dh, 2, cl, sigma, u1, v1, nc = nc, fc = fc, ds = 2*MAX(dutr(ref), dvtr(ref)), rescale=1)
-
-      CALL scarf_execute(seed, r1, stats)
-
-      CALL scarf_finalize()
-
-      NULLIFY(u1, v1, r1)
-
-      ! rescale roughness such that alpha = 10**input%source%roughness = RMS / LENGTH
-      ! rms = SQRT(mean(roughness)**2 + variance(roughness))
-      ! rms = SUM(plane(:)%length) * (10**input%source%roughness) / rms
-      !
-      ! roughness = roughness * rms
-
-      IF (input%advanced%verbose .eq. 2) THEN
-
-        var(ref) = variance(roughness)
-        avg(ref) = mean(roughness)
-        npts(ref) = nugr(ref) * nvgr(ref)
-
-        IF (ref .eq. SIZE(nugr)) THEN
-
-          !rms = SQRT(mean(roughness)**2 + variance(roughness))
-          CALL parallel_variance(var, avg, npts, rms, mu)
-
-          rms = SQRT(mu**2 + rms)
-
-          CALL update_log(num2char('<fault roughness>', justify='c', width=30) +    &
-                          num2char('Actual RMS', width=15, justify='r') + '|' +  &
-                          num2char('Expected RMS', width=15, justify='r') + '|')
-
-          CALL update_log(num2char('', width=30, justify='c')  +  &
-                          num2char(rms, width=15, notation='f', precision=2, justify='r') + '|' + &
-                          num2char(sigma, width=15, notation='f', precision=2, justify='r') + '|', blankline=.false.)
-
-          DEALLOCATE(var, avg, npts)
-
-        ENDIF
-      ENDIF
 
 #ifdef DEBUG
 
-      fo = 'roughness_' + num2char(ref) + '_' + num2char(pl) + '_' + num2char(iter) + '.bin'
+        fo = 'roughness_' + num2char(ref) + '_' + num2char(pl) + '_' + num2char(iter) + '.bin'
 
-      OPEN(newunit = lu, file = fo, status = 'replace', form = 'unformatted', access = 'stream', action = 'write', IOSTAT = ok)
+        OPEN(newunit = lu, file = fo, status = 'replace', form = 'unformatted', access = 'stream', action = 'write', IOSTAT = ok)
 
-      WRITE(lu, POS=1) nutr(ref)
-      WRITE(lu)        nvtr(ref)
+        WRITE(lu, POS=1) nutr(ref)
+        WRITE(lu)        nvtr(ref)
 
-      totnutr = 2*nutr(ref) - 1
+        totnutr = 2*nutr(ref) - 1
 
-      DO j = 1, nvtr(ref)
-        DO i = 1, totnutr
+        DO j = 1, nvtr(ref)
+          DO i = 1, totnutr
 
-          CALL cornr(j, i, iuc, ivc)                  !< corner indices for current triangle
+            CALL cornr(j, i, iuc, ivc)                  !< corner indices for current triangle
 
-          CALL cornr2uv(iuc, ivc, ref, uc, vc)        !< on-fault coordinates
+            CALL cornr2uv(iuc, ivc, ref, uc, vc)        !< on-fault coordinates
 
-          DO icr = 1, 3
-            WRITE(lu) uc(icr), vc(icr), roughness(iuc(icr), ivc(icr))
+            DO icr = 1, 3
+              WRITE(lu) uc(icr), vc(icr), roughness(iuc(icr), ivc(icr))
+            ENDDO
+
           ENDDO
-
         ENDDO
-      ENDDO
 
-      WRITE(lu) sigma
+        WRITE(lu) sigma
 
-      CLOSE(lu, iostat = ok)
+        CLOSE(lu, iostat = ok)
 
-      IF (ok .ne. 0) THEN
-        CALL report_error('Error while closing file ' + fo)
-        RETURN
-      ENDIF
+        IF (ok .ne. 0) THEN
+          CALL report_error('Error while closing file ' + fo)
+          RETURN
+        ENDIF
 
 #endif
+
+      ENDIF
 
     END SUBROUTINE fault_roughness
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
-
-
-
-    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
-    !===============================================================================================================================
-    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
-
-
-
 
 END MODULE m_roughness

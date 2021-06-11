@@ -22,6 +22,7 @@ MODULE m_source
   PUBLIC :: hypocenter, plane, dutr, dvtr, nutr, nvtr, nugr, nvgr, umingr, vmingr, umaxgr, vmaxgr, nodes
   PUBLIC :: MIN_DEPTH
   PUBLIC :: setup_source, meshing, missing_rupture, dealloc_nodes, cornr, cornr2uv, uvw2xyz, vinterp, ptrsrc_at_nodes, time_stepping
+  PUBLIC :: dbrune
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -112,12 +113,15 @@ MODULE m_source
         plane(1)%strike   = input%source%strike
         plane(1)%dip      = input%source%dip
 
-        ALLOCATE(plane(1)%u(3), plane(1)%v(3))
-        ALLOCATE(plane(1)%rise(3,3), plane(1)%slip(3,3), plane(1)%rake(3,3), plane(1)%rupture(3,3))
+        ! ALLOCATE(plane(1)%u(3), plane(1)%v(3))
+        ! ALLOCATE(plane(1)%rise(3,3), plane(1)%slip(3,3), plane(1)%rake(3,3), plane(1)%rupture(3,3))
+        ALLOCATE(plane(1)%u(2), plane(1)%v(2))
+        ALLOCATE(plane(1)%rise(2,2), plane(1)%slip(2,2), plane(1)%rake(2,2), plane(1)%rupture(2,2))
 
         ! slip in this context does not matter, as we will rescale output according to input "m0"
-        plane(1)%slip(:,:) = 0._r32
-        plane(1)%slip(2, 2) = 1._r32
+        ! plane(1)%slip(:,:) = 0._r32
+        ! plane(1)%slip(2, 2) = 1._r32
+        plane(1)%slip(:,:) = 1._r32
 
         plane(1)%rake(:,:) = input%source%rake * DEG_TO_RAD
 
@@ -846,17 +850,22 @@ MODULE m_source
 
         ! first condition for point-sources: lambda_min >> d, where d is diagonal of a square fault
         ! diagonal = l*sqrt(2) = 2*sqrt(2)*du (l = 2*du)
-        du = PTSRC_FACTOR * beta / input%coda%fmax / SQRT(2._r32) / 2._r32
+        ! du = PTSRC_FACTOR * beta / input%coda%fmax / SQRT(2._r32) / 2._r32
+        du = PTSRC_FACTOR * beta / input%coda%fmax / SQRT(2._r32)
 
-        plane(pl)%u = [-du, 0._r32, du]
-        plane(pl)%v = [-du, 0._r32, du]
+        ! plane(pl)%u = [-du, 0._r32, du]
+        ! plane(pl)%v = [-du, 0._r32, du]
+        plane(pl)%u = [-du, du] / 2._r32
+        plane(pl)%v = [-du, du] / 2._r32
 
         ! second condition for point-source: max(rupture time) << tr, where tr is the shortes period observed (i.e. 1/fmax)
         dt = PTSRC_FACTOR / input%coda%fmax
 
-        plane(pl)%rupture(:, 1) = dt * [1._r32, 1._r32/SQRT(2._r32), 1._r32]                   !< proceed along-strike (along u)
-        plane(pl)%rupture(:, 2) = dt * [1._r32/SQRT(2._r32), 0._r32, 1._r32/SQRT(2._r32)]
-        plane(pl)%rupture(:, 3) = dt * [1._r32, 1._r32/SQRT(2._r32), 1._r32]
+        ! plane(pl)%rupture(:, 1) = dt * [1._r32, 1._r32/SQRT(2._r32), 1._r32]                   !< proceed along-strike (along u)
+        ! plane(pl)%rupture(:, 2) = dt * [1._r32/SQRT(2._r32), 0._r32, 1._r32/SQRT(2._r32)]
+        ! plane(pl)%rupture(:, 3) = dt * [1._r32, 1._r32/SQRT(2._r32), 1._r32]
+        plane(pl)%rupture(:, 1) = dt * [0._r32, 1._r32]                   !< proceed along-strike (along u)
+        plane(pl)%rupture(:, 2) = dt * [0._r32, 1._r32]
 
         ! make sure uppermost down-dip "edge" point is always slightly (1m) below free-surface
         plane(pl)%z = MAX(1._r32, plane(pl)%z + MAX(0._r32, sd * du - plane(pl)%z))
@@ -864,12 +873,21 @@ MODULE m_source
         IF (ALLOCATED(vmingr)) DEALLOCATE(vmingr, vmaxgr, nutr, nvtr, dutr, dvtr, nugr, nvgr)
 
         ! set mesh parameters
-        umingr = -du
-        umaxgr = du
-        vmingr = [-du]
-        vmaxgr = [du]
-        nutr = [2]
-        nvtr = [2]
+        ! umingr = -du
+        ! umaxgr = du
+        ! vmingr = [-du]
+        ! vmaxgr = [du]
+        ! nutr = [2]
+        ! nvtr = [2]
+        ! dutr = [du]
+        ! dvtr = [du]
+
+        umingr = -du / 2._r32
+        umaxgr = du / 2._r32
+        vmingr = [-du] / 2._r32
+        vmaxgr = [du] / 2._r32
+        nutr = [1]
+        nvtr = [1]
         dutr = [du]
         dvtr = [du]
 
@@ -1035,7 +1053,7 @@ MODULE m_source
       du = 0.5_r32 * (dutr(ref) + dvtr(ref))
 
       ! here we consider "vs * input%source%vrfact" as the approximate maximum rupture speed
-      time_stepping = du / (vs * input%source%vrfact * input%advanced%avecuts)
+      time_stepping = (du / (vs * input%source%vrfact)) / input%advanced%avecuts
 
 
       ! ztop = plane(pl)%z + plane(pl)%v(1) * SIN(plane(pl)%dip * DEG_TO_RAD)     !< for point-source, "z" (u=v=0) is center, not top

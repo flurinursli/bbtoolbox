@@ -31,9 +31,9 @@ MODULE m_userdef
       !   08/03/21                  original version
       !
 
-      INTEGER(i32),                              INTENT(OUT) :: ok
-      INTEGER(i32),                              INTENT(IN)  :: lu
-      REAL(r32),    ALLOCATABLE, DIMENSION(:),   INTENT(OUT) :: time, x, y, z
+      INTEGER(i32),                            INTENT(OUT) :: ok
+      INTEGER(i32),                            INTENT(IN)  :: lu
+      REAL(r32),    ALLOCATABLE, DIMENSION(:), INTENT(OUT) :: time, x, y, z
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
@@ -58,9 +58,9 @@ MODULE m_userdef
       !   08/03/21                  original version
       !
 
-      INTEGER(i32),                              INTENT(OUT) :: ok
-      INTEGER(i32),                              INTENT(IN)  :: lu
-      REAL(r32),    ALLOCATABLE, DIMENSION(:),   INTENT(IN)  :: time, x, y, z
+      INTEGER(i32),               INTENT(OUT) :: ok
+      INTEGER(i32),               INTENT(IN)  :: lu
+      REAL(r32),    DIMENSION(:), INTENT(IN)  :: time, x, y, z
 
       !-----------------------------------------------------------------------------------------------------------------------------
 

@@ -510,6 +510,13 @@ MODULE m_toolbox
 
       input%output%folder = TRIM(str)     !< folder
 
+      CALL parse(ok, str, lu, 'format', ["'", "'"], 'input', com = '#')
+      CALL missing_arg(ok, is_empty(str), 'Argument "format" for keyword "output" not found')
+
+      IF (ok .ne. 0) RETURN
+
+      input%output%format = TRIM(str)     !< format
+
       CALL parse(ok, str, lu, 'variable', ["'", "'"], 'output', com = '#')
       CALL missing_arg(ok, is_empty(str), 'Argument "variable" for keyword "output" not found')
 
@@ -607,6 +614,7 @@ MODULE m_toolbox
 
         input%source%add_rik = .false.
         input%source%add_roughness = .false.
+        input%source%samples = 1
 
       ENDIF
 

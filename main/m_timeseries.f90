@@ -4,7 +4,7 @@ MODULE m_timeseries
   USE, NON_INTRINSIC :: m_logfile
   USE, NON_INTRINSIC :: m_strings
   USE, NON_INTRINSIC :: m_toolbox, ONLY: input
-  USE, NON_INTRINSIC :: m_userdef, ONLY: parse_usr => read_usr
+  USE, NON_INTRINSIC :: m_userdef, ONLY: parse_usr => read_usr, write_usr
 #ifdef MPI
   USE :: mpi
 #endif
@@ -16,15 +16,19 @@ MODULE m_timeseries
   PRIVATE
 
   PUBLIC :: timeseries
-  PUBLIC :: read_lp
+  PUBLIC :: read_lp, seis2disk, differentiate
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
   INTEGER(i32), PARAMETER :: SW4_HEADER_LINE = 13
 
+  ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+
+  INTEGER(i32) :: m_iter, m_rcvr
+
   TYPE :: cmp
     REAL(r32)                              :: dt
-    REAL(r32), ALLOCATABLE, DIMENSION(:)   :: time              
+    REAL(r32), ALLOCATABLE, DIMENSION(:)   :: time
     REAL(r32), ALLOCATABLE, DIMENSION(:,:) :: x, y, z
   END TYPE cmp
 
@@ -36,8 +40,9 @@ MODULE m_timeseries
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
-  PROCEDURE(parse_sw4), POINTER :: psubr
-  PROCEDURE(integrate), POINTER :: pfun
+  PROCEDURE(parse_sw4), POINTER :: psubr => NULL()
+  PROCEDURE(write_sw4), POINTER :: wsubr => NULL()
+  PROCEDURE(integrate), POINTER :: pfun => NULL()
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -100,7 +105,6 @@ MODULE m_timeseries
       INTEGER(i32),                             INTENT(OUT) :: ok
       CHARACTER(:), ALLOCATABLE                             :: fo, extension
       INTEGER(i32)                                          :: lu, rcvr
-      INTEGER(i32),              DIMENSION(0:2)             :: request
       REAL(r32)                                             :: dt
       REAL(r32),    ALLOCATABLE, DIMENSION(:)               :: time, x, y, z
 
@@ -126,22 +130,26 @@ MODULE m_timeseries
 
       ENDIF
 
-      ! set processing function
-      IF (input%input%variable .ne. input%output%variable) THEN
+      ! set processing function such that input timeseries are velocities
+      IF (TRIM(input%input%variable) .eq. 'displacement') pfun => differentiate
+      IF (TRIM(input%input%variable) .eq. 'acceleration') pfun => integrate
 
-        IF (TRIM(input%input%variable) .eq. 'displacement') pfun => differentiate
 
-        IF (TRIM(input%input%variable) .eq. 'velocity') THEN
-          IF (TRIM(input%output%variable) .eq. 'displacement') THEN
-            pfun => integrate
-          ELSE
-            pfun => differentiate
-          ENDIF
-        ENDIF
-
-        IF (TRIM(input%input%variable) .eq. 'acceleration') pfun => integrate
-
-      ENDIF
+      ! IF (input%input%variable .ne. input%output%variable) THEN
+      !
+      !   IF (TRIM(input%input%variable) .eq. 'displacement') pfun => differentiate
+      !
+      !   IF (TRIM(input%input%variable) .eq. 'velocity') THEN
+      !     IF (TRIM(input%output%variable) .eq. 'displacement') THEN
+      !       pfun => integrate
+      !     ELSE
+      !       pfun => differentiate
+      !     ENDIF
+      !   ENDIF
+      !
+      !   IF (TRIM(input%input%variable) .eq. 'acceleration') pfun => integrate
+      !
+      ! ENDIF
 
       DO rcvr = 1, SIZE(input%receiver)
 
@@ -175,13 +183,13 @@ MODULE m_timeseries
           y = pfun(y, dt)
           z = pfun(z, dt)
 
-          IF (TRIM(input%input%variable) .ne. 'velocity') THEN
-            IF ( (TRIM(input%output%variable) .eq. 'acceleration') .and. (TRIM(input%output%variable) .eq. 'displacement') ) THEN
-              x = pfun(x, dt)
-              y = pfun(y, dt)
-              z = pfun(z, dt)
-            ENDIF
-          ENDIF
+          ! IF (TRIM(input%input%variable) .ne. 'velocity') THEN
+          !   IF ( (TRIM(input%output%variable) .eq. 'acceleration') .and. (TRIM(input%output%variable) .eq. 'displacement') ) THEN
+          !     x = pfun(x, dt)
+          !     y = pfun(y, dt)
+          !     z = pfun(z, dt)
+          !   ENDIF
+          ! ENDIF
 
         ENDIF
 
@@ -216,6 +224,8 @@ MODULE m_timeseries
         DEALLOCATE(time, x, y, z)
 
       ENDDO
+
+      pfun => NULL()
 
     END SUBROUTINE disk2seis
 
@@ -451,10 +461,256 @@ MODULE m_timeseries
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
+    SUBROUTINE seis2disk(ok, iter, seis)
 
+      ! Purpose:
+      !   to store hybrid timeseries to disk. On exit, "ok" is not zero if an error occurred.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      INTEGER(i32),                           INTENT(OUT) :: ok
+      INTEGER(i32),                           INTENT(IN)  :: iter
+      CHARACTER(2),                           INTENT(IN)  :: seis
+      CHARACTER(:), ALLOCATABLE                           :: fo, extension
+      INTEGER(i32)                                        :: lu, rcvr
+      REAL(r32)                                           :: dt
+      REAL(r32),    ALLOCATABLE, DIMENSION(:)             :: time, x, y, z
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      fo = TRIM(input%output%format)
+
+      IF ( (fo .eq. 'sw4') .or. (fo .eq. 'SW4') ) THEN
+        extension = '.txt'
+        wsubr => write_sw4
+
+      ELSEIF ( (fo .eq. 'txt') .or. (fo .eq. 'TXT') ) THEN
+        extension = '.txt'
+        wsubr => write_plaintxt
+
+      ELSEIF ( (fo .eq. 'usr') .or. (fo .eq. 'USR') ) THEN
+        extension = '.txt'
+        wsubr => write_usr
+
+      ELSE
+        CALL report_error('seis2disk - ERROR: ' + fo + ' is an invalid format descriptor for output files')
+        ok = 1
+
+      ENDIF
+
+      IF ( (seis .ne. 'lp') .and. (seis .ne. 'sp') .and. (seis .ne. 'bb') ) THEN
+        CALL report_error('seis2disk - ERROR: ' + seis + ' is an invalid descriptor for timeseries')
+        ok = 1
+      ENDIF
+
+      ! set processing function such that output timeseries are transformed from velocity as necessary
+      IF (TRIM(input%output%variable) .eq. 'displacement') pfun => integrate
+      IF (TRIM(input%output%variable) .eq. 'acceleration') pfun => differentiate
+
+      DO rcvr = 1, SIZE(input%receiver)
+
+        fo = TRIM(input%output%folder) + '/' + TRIM(input%receiver(rcvr)%file) + '_' + seis + extension
+
+        OPEN(newunit = lu, file = fo, status = 'replace', form = 'formatted', access = 'sequential', action = 'write', iostat= ok)
+
+        IF (ok .ne. 0) THEN
+          CALL report_error('seis2disk - ERROR: opening file ' + TRIM(fo) + ' failed with code ' + num2char(ok))
+          RETURN
+        ENDIF
+
+        IF (seis .eq. 'lp') THEN
+
+          ASSOCIATE(x => timeseries%bb%x(:, rcvr), y => timeseries%bb%y(:, rcvr), z => timeseries%bb%z(:, rcvr),      &
+                    time => timeseries%bb%time, dt => timeseries%bb%dt)
+
+            IF (ASSOCIATED(pfun)) THEN
+              x = pfun(x, dt)
+              y = pfun(y, dt)
+              z = pfun(z, dt)
+            ENDIF
+
+            m_iter = iter         !< pass values to module aliases
+            m_rcvr = rcvr
+
+            CALL wsubr(ok, lu, time, x, y, z)
+
+          END ASSOCIATE
+
+        ELSEIF (seis .eq. 'sp') THEN
+
+          ASSOCIATE(x => timeseries%sp%x(:, rcvr), y => timeseries%sp%y(:, rcvr), z => timeseries%sp%z(:, rcvr),      &
+                    time => timeseries%sp%time, dt => timeseries%sp%dt)
+
+            IF (ASSOCIATED(pfun)) THEN
+              x = pfun(x, dt)
+              y = pfun(y, dt)
+              z = pfun(z, dt)
+            ENDIF
+
+            m_iter = iter         !< pass values to module aliases
+            m_rcvr = rcvr
+
+            CALL wsubr(ok, lu, time, x, y, z)
+
+          END ASSOCIATE
+
+        ELSEIF (seis .eq. 'bb') THEN
+
+          ASSOCIATE(x => timeseries%bb%x(:, rcvr), y => timeseries%bb%y(:, rcvr), z => timeseries%bb%z(:, rcvr),      &
+                    time => timeseries%bb%time, dt => timeseries%bb%dt)
+
+            IF (ASSOCIATED(pfun)) THEN
+              x = pfun(x, dt)
+              y = pfun(y, dt)
+              z = pfun(z, dt)
+            ENDIF
+
+            m_iter = iter         !< pass values to module aliases
+            m_rcvr = rcvr
+
+            CALL wsubr(ok, lu, time, x, y, z)
+
+          END ASSOCIATE
+
+        ENDIF
+
+          IF (ok .ne. 0) THEN
+            CALL report_error('seis2disk - ERROR: could not write to file ' + fo)
+            RETURN
+          ENDIF
+
+          CLOSE(lu, IOSTAT = ok)
+
+          IF (ok .ne. 0) THEN
+            CALL report_error('seis2disk - ERROR: closing file ' + fo + ' returned error code ' + num2char(ok))
+            RETURN
+          ENDIF
+
+      ENDDO
+
+      pfun => NULL()
+
+    END SUBROUTINE seis2disk
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    SUBROUTINE write_sw4(ok, lu, time, x, y, z)
+
+      ! Purpose:
+      !   to write ASCII sw4/wpp output files. On exit, "ok" is not zero if an error occurred.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      INTEGER(i32),                           INTENT(OUT) :: ok
+      INTEGER(i32),                           INTENT(IN)  :: lu
+      REAL(r32),                DIMENSION(:), INTENT(IN)  :: time, x, y, z
+      CHARACTER(5)                                        :: zone
+      CHARACTER(8)                                        :: date
+      CHARACTER(10)                                       :: hms
+      CHARACTER(:), ALLOCATABLE                           :: timestamp, lonlat, xy
+      INTEGER(i32)                                        :: lino
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      CALL DATE_AND_TIME(date, hms, zone)
+
+      timestamp = date(7:8) + '/' + date(5:6) + '/' + date(1:4) + ' ' + hms(1:2) + ':' + hms(3:4) + ':' + hms(5:10) + ' (UTC ' +  &
+                  zone(1:3) + ':' + zone(4:5) + ')'
+      lonlat    = num2char(input%receiver(m_rcvr)%lon, notation='f', width=9,  precision=3) +   &
+                  num2char(input%receiver(m_rcvr)%lat, notation='f', width=9,  precision=3)
+      xy        = num2char(input%receiver(m_rcvr)%x,   notation='f', width=15, precision=1) +   &
+                  num2char(input%receiver(m_rcvr)%y,   notation='f', width=15, precision=1)
+
+      ! WRITE(lu, '(A)', IOSTAT = ok) '# Author: BBTool'
+      ! IF (ok .ne. 0) RETURN
+      !
+      ! WRITE(lu, '(A)', IOSTAT = ok) '# Scenario: ' + num2char(m_iter)
+      ! IF (ok .ne. 0) RETURN
+      !
+      ! WRITE(lu, '(A)', IOSTAT = ok) '# Date: ' + timestamp
+      ! IF (ok .ne. 0) RETURN
+      !
+      ! WRITE(lu, '(A)', IOSTAT = ok) '# Bandwidth (Hz): ' + num2char(input%coda%fmax, notation='f', width=6, precision=1)
+      ! IF (ok .ne. 0) RETURN
+      !
+      ! WRITE(lu, '(A)', IOSTAT = ok) '# Station: ' + TRIM(input%receiver(m_rcvr)%file)
+      ! IF (ok .ne. 0) RETURN
+      !
+      ! WRITE(lu, '(A)', IOSTAT = ok) '# Location (WGS84 longitude, latitude) (deg): ' + lonlat
+      ! IF (ok .ne. 0) RETURN
+      !
+      ! WRITE(lu, '(A)', IOSTAT = ok) '# Location (northing, easting) (m): ' + xy
+      ! IF (ok .ne. 0) RETURN
+      !
+      ! WRITE(lu, '(A)', IOSTAT = ok) '# Ground motion: ' + TRIM(input%output%variable)
+      ! IF (ok .ne. 0) RETURN
+      !
+      ! WRITE(lu, '(A)', IOSTAT = ok) '# nColumns: 4'
+      ! IF (ok .ne. 0) RETURN
+      !
+      ! WRITE(lu, '(A)', IOSTAT = ok) '# Column 1: Time (s)'
+      ! IF (ok .ne. 0) RETURN
+      !
+      ! WRITE(lu, '(A)', IOSTAT = ok) '# Column 2: NS (x)'
+      ! IF (ok .ne. 0) RETURN
+      !
+      ! WRITE(lu, '(A)', IOSTAT = ok) '# Column 3: EW (y)'
+      ! IF (ok .ne. 0) RETURN
+      !
+      ! WRITE(lu, '(A)', IOSTAT = ok) '# Column 4: UD (z)'
+      ! IF (ok .ne. 0) RETURN
+
+      DO lino = 1, SIZE(time)
+#ifdef DOUBLE_PREC
+        WRITE(lu, '(4(ES23.13))', IOSTAT = ok) time(lino), x(lino), y(lino), z(lino)
+#else
+        WRITE(lu, '(4(ES15.5))', IOSTAT = ok) time(lino), x(lino), y(lino), z(lino)
+#endif
+        IF (ok .ne. 0) RETURN
+      ENDDO
+
+    END SUBROUTINE write_sw4
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    SUBROUTINE write_plaintxt(ok, lu, time, x, y, z)
+
+      ! Purpose:
+      !   to read a plain ASCII file and return associated time-series. The file is supposed to have four columns and an arbitrary
+      !   number of rows, where the first column is the time samples and all other columns are the x, y and z component of motion,
+      !   respectively. On exit, "ok" is not zero if an error occurred.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      INTEGER(i32),                              INTENT(OUT) :: ok
+      INTEGER(i32),                              INTENT(IN)  :: lu
+      REAL(r32),    DIMENSION(:),   INTENT(IN)  :: time, x, y, z
+      INTEGER(i32)                                           :: lino
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+
+    END SUBROUTINE write_plaintxt
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
 
 END MODULE m_timeseries
