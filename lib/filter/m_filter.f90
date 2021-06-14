@@ -25,7 +25,7 @@ MODULE m_filter
   !   0.1 -> initial version, only iir filters implemented
   !
 
-  !!$ USE             :: omp_lib
+  !$ USE             :: omp_lib
   USE, NON_INTRINSIC :: m_precisions
   USE, NON_INTRINSIC :: m_llsq_r64        !< double precision
   USE, NON_INTRINSIC :: m_fft_real        !< double precision
@@ -36,7 +36,7 @@ MODULE m_filter
 
   PRIVATE
 
-  PUBLIC :: make_iir_plan, destroy_iir_plan, iir, filter_error, impz, freqz !, get_iir_coefficients, set_iir_coefficients
+  PUBLIC :: make_iir_plan, destroy_iir_plan, iir, filter_error, impz, freqz, get_iir_coefficients, set_iir_coefficients
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -60,7 +60,7 @@ MODULE m_filter
   ! initial conditions for zero-phase filtering
   REAL(r64), ALLOCATABLE, DIMENSION(:) :: zi
 
-  !!$omp threadprivate (iira, iirb, zi)
+  !$omp threadprivate (iira, iirb, zi)
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
@@ -265,21 +265,17 @@ MODULE m_filter
 
       n = COUNT(pole .ne. EMPTY) + 1
 
-      !!$omp parallel default(shared)
+      !$omp parallel default(shared)
       ALLOCATE(iira(n), iirb(n))
 
       ! now convert to filter coefficients
       iirb = gain * poly(zero(1:n-1))             !< numerator
       iira = poly(pole(1:n-1))                    !< denominator
-      !!$omp end parallel
+      !$omp end parallel
 
       ! clean up
       DEALLOCATE(pole, zero)
       DEALLOCATE(w, rip)
-
-      ! print*, ''
-      ! CALL report('b coeff', CMPLX(iirb, 0._r64, r64))
-      ! CALL report('a coeff', CMPLX(iira, 0._r64, r64))
 
       ! compute initial conditions
       IF (PRESENT(zphase)) THEN
@@ -287,11 +283,11 @@ MODULE m_filter
 
           ok = 0
 
-          !!$omp parallel default(shared) reduction(max: ok)
+          !$omp parallel default(shared) reduction(max: ok)
           ALLOCATE(zi(n - 1))
 
           zi = initial_conditions(iirb, iira, ok)
-          !!$omp end parallel
+          !$omp end parallel
 
           IF (ok .ne. 0) RETURN
 
@@ -344,11 +340,11 @@ MODULE m_filter
       !-----------------------------------------------------------------------------------------------------------------------------
 
       ! always check allocation state to avoid run-time problems if one calls "destroy_iir_plan" before "make_iir_plan"
-      !!$omp parallel default(shared)
+      !$omp parallel default(shared)
       IF (ALLOCATED(iira)) DEALLOCATE(iira)
       IF (ALLOCATED(iirb)) DEALLOCATE(iirb)
       IF (ALLOCATED(zi))   DEALLOCATE(zi)
-      !!$omp end parallel
+      !$omp end parallel
 
     END SUBROUTINE destroy_iir_plan
 
@@ -1721,61 +1717,61 @@ MODULE m_filter
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    ! SUBROUTINE get_iir_coefficients(a, b, z)
-    !
-    !   ! Purpose:
-    !   !   to return the filter coefficients created when calling "make_iir_plan".
-    !   !
-    !   ! Revisions:
-    !   !     Date                    Description of change
-    !   !     ====                    =====================
-    !   !   02/09/20                  original version
-    !   !
-    !
-    !   REAL(r64), ALLOCATABLE, DIMENSION(:),           INTENT(OUT) :: a, b
-    !   REAL(r64), ALLOCATABLE, DIMENSION(:), OPTIONAL, INTENT(OUT) :: z
-    !
-    !   !-----------------------------------------------------------------------------------------------------------------------------
-    !
-    !   a = iira
-    !   b = iirb
-    !
-    !   IF (PRESENT(z) .and. ALLOCATED(zi)) z = zi
-    !
-    ! END SUBROUTINE get_iir_coefficients
+    SUBROUTINE get_iir_coefficients(a, b, z)
+
+      ! Purpose:
+      !   to return the filter coefficients created when calling "make_iir_plan".
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   02/09/20                  original version
+      !
+
+      REAL(r64), ALLOCATABLE, DIMENSION(:),           INTENT(OUT) :: a, b
+      REAL(r64), ALLOCATABLE, DIMENSION(:), OPTIONAL, INTENT(OUT) :: z
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      a = iira
+      b = iirb
+
+      IF (PRESENT(z) .and. ALLOCATED(zi)) z = zi
+
+    END SUBROUTINE get_iir_coefficients
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-!     SUBROUTINE set_iir_coefficients(a, b, z)
-!
-!       ! Purpose:
-!       !   to assign filter coefficients (created by calling "make_iir_plan").
-!       !
-!       ! Revisions:
-!       !     Date                    Description of change
-!       !     ====                    =====================
-!       !   02/09/20                  original version
-!       !
-!
-!       REAL(r64), DIMENSION(:),           INTENT(IN) :: a, b
-!       REAL(r64), DIMENSION(:), OPTIONAL, INTENT(IN) :: z
-!
-!       !-----------------------------------------------------------------------------------------------------------------------------
-!
-!       !$omp parallel default(shared)
-!
-!       iira = a
-!       iirb = b
-!
-!       IF (PRESENT(z)) zi = z
-!
-! ! print*, omp_get_thread_num(), size(iira), size(iirb), ALLOCATED(zi)
-!
-!       !$omp end parallel
-!
-!     END SUBROUTINE set_iir_coefficients
+    SUBROUTINE set_iir_coefficients(a, b, z)
+
+      ! Purpose:
+      !   to assign filter coefficients (created by calling "make_iir_plan").
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   02/09/20                  original version
+      !
+
+      REAL(r64), DIMENSION(:),           INTENT(IN) :: a, b
+      REAL(r64), DIMENSION(:), OPTIONAL, INTENT(IN) :: z
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      !$omp parallel default(shared)
+
+      iira = a
+      iirb = b
+
+      IF (PRESENT(z)) zi = z
+
+! print*, omp_get_thread_num(), size(iira), size(iirb), ALLOCATED(zi)
+
+      !$omp end parallel
+
+    END SUBROUTINE set_iir_coefficients
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================

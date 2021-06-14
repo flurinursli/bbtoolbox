@@ -603,7 +603,7 @@ MODULE m_timeseries
     SUBROUTINE write_sw4(ok, lu, time, x, y, z)
 
       ! Purpose:
-      !   to write ASCII sw4/wpp output files. On exit, "ok" is not zero if an error occurred.
+      !   to write ASCII sw4-style output files where timeseries are stored. On exit, "ok" is not zero if an error occurred.
       !
       ! Revisions:
       !     Date                    Description of change
@@ -617,7 +617,7 @@ MODULE m_timeseries
       CHARACTER(5)                                        :: zone
       CHARACTER(8)                                        :: date
       CHARACTER(10)                                       :: hms
-      CHARACTER(:), ALLOCATABLE                           :: timestamp, lonlat, xy
+      CHARACTER(:), ALLOCATABLE                           :: timestamp, lonlat, xy, msg
       INTEGER(i32)                                        :: lino
 
       !-----------------------------------------------------------------------------------------------------------------------------
@@ -631,52 +631,94 @@ MODULE m_timeseries
       xy        = num2char(input%receiver(m_rcvr)%x,   notation='f', width=15, precision=1) +   &
                   num2char(input%receiver(m_rcvr)%y,   notation='f', width=15, precision=1)
 
-      ! WRITE(lu, '(A)', IOSTAT = ok) '# Author: BBTool'
-      ! IF (ok .ne. 0) RETURN
-      !
-      ! WRITE(lu, '(A)', IOSTAT = ok) '# Scenario: ' + num2char(m_iter)
-      ! IF (ok .ne. 0) RETURN
-      !
-      ! WRITE(lu, '(A)', IOSTAT = ok) '# Date: ' + timestamp
-      ! IF (ok .ne. 0) RETURN
-      !
-      ! WRITE(lu, '(A)', IOSTAT = ok) '# Bandwidth (Hz): ' + num2char(input%coda%fmax, notation='f', width=6, precision=1)
-      ! IF (ok .ne. 0) RETURN
-      !
-      ! WRITE(lu, '(A)', IOSTAT = ok) '# Station: ' + TRIM(input%receiver(m_rcvr)%file)
-      ! IF (ok .ne. 0) RETURN
-      !
-      ! WRITE(lu, '(A)', IOSTAT = ok) '# Location (WGS84 longitude, latitude) (deg): ' + lonlat
-      ! IF (ok .ne. 0) RETURN
-      !
-      ! WRITE(lu, '(A)', IOSTAT = ok) '# Location (northing, easting) (m): ' + xy
-      ! IF (ok .ne. 0) RETURN
-      !
-      ! WRITE(lu, '(A)', IOSTAT = ok) '# Ground motion: ' + TRIM(input%output%variable)
-      ! IF (ok .ne. 0) RETURN
-      !
-      ! WRITE(lu, '(A)', IOSTAT = ok) '# nColumns: 4'
-      ! IF (ok .ne. 0) RETURN
-      !
-      ! WRITE(lu, '(A)', IOSTAT = ok) '# Column 1: Time (s)'
-      ! IF (ok .ne. 0) RETURN
-      !
-      ! WRITE(lu, '(A)', IOSTAT = ok) '# Column 2: NS (x)'
-      ! IF (ok .ne. 0) RETURN
-      !
-      ! WRITE(lu, '(A)', IOSTAT = ok) '# Column 3: EW (y)'
-      ! IF (ok .ne. 0) RETURN
-      !
-      ! WRITE(lu, '(A)', IOSTAT = ok) '# Column 4: UD (z)'
-      ! IF (ok .ne. 0) RETURN
+      WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) '# Author: BBTool'
+      IF (ok .ne. 0) THEN
+        CALL report_error('write_sw4 - ERROR: ' + msg)
+        RETURN
+      ENDIF
+
+      WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) '# Scenario: ' + num2char(m_iter)
+      IF (ok .ne. 0) THEN
+        CALL report_error('write_sw4 - ERROR: ' + msg)
+        RETURN
+      ENDIF
+
+      WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) '# Date: ' + timestamp
+      IF (ok .ne. 0) THEN
+        CALL report_error('write_sw4 - ERROR: ' + msg)
+        RETURN
+      ENDIF
+
+      WRITE(lu, '(A)', IOSTAT=ok, IOMSG=msg) '# Bandwidth (Hz): ' + num2char(input%coda%fmax, notation='f', width=6, precision=1)
+      IF (ok .ne. 0) THEN
+        CALL report_error('write_sw4 - ERROR: ' + msg)
+        RETURN
+      ENDIF
+
+      WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) '# Station: ' + TRIM(input%receiver(m_rcvr)%file)
+      IF (ok .ne. 0) THEN
+        CALL report_error('write_sw4 - ERROR: ' + msg)
+        RETURN
+      ENDIF
+
+      WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) '# Location (WGS84 longitude, latitude) (deg): ' + lonlat
+      IF (ok .ne. 0) THEN
+        CALL report_error('write_sw4 - ERROR: ' + msg)
+        RETURN
+      ENDIF
+
+      WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) '# Location (northing, easting) (m): ' + xy
+      IF (ok .ne. 0) THEN
+        CALL report_error('write_sw4 - ERROR: ' + msg)
+        RETURN
+      ENDIF
+
+      WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) '# Ground motion: ' + TRIM(input%output%variable)
+      IF (ok .ne. 0) THEN
+        CALL report_error('write_sw4 - ERROR: ' + msg)
+        RETURN
+      ENDIF
+
+      WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) '# nColumns: 4'
+      IF (ok .ne. 0) THEN
+        CALL report_error('write_sw4 - ERROR: ' + msg)
+        RETURN
+      ENDIF
+
+      WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) '# Column 1: Time (s)'
+      IF (ok .ne. 0) THEN
+        CALL report_error('write_sw4 - ERROR: ' + msg)
+        RETURN
+      ENDIF
+
+      WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) '# Column 2: NS (x)'
+      IF (ok .ne. 0) THEN
+        CALL report_error('write_sw4 - ERROR: ' + msg)
+        RETURN
+      ENDIF
+
+      WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) '# Column 3: EW (y)'
+      IF (ok .ne. 0) THEN
+        CALL report_error('write_sw4 - ERROR: ' + msg)
+        RETURN
+      ENDIF
+
+      WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) '# Column 4: UD (z)'
+      IF (ok .ne. 0) THEN
+        CALL report_error('write_sw4 - ERROR: ' + msg)
+        RETURN
+      ENDIF
 
       DO lino = 1, SIZE(time)
 #ifdef DOUBLE_PREC
-        WRITE(lu, '(4(ES23.13))', IOSTAT = ok) time(lino), x(lino), y(lino), z(lino)
+        WRITE(lu, '(4(ES23.13))', IOSTAT = ok, IOMSG = msg) time(lino), x(lino), y(lino), z(lino)
 #else
-        WRITE(lu, '(4(ES15.5))', IOSTAT = ok) time(lino), x(lino), y(lino), z(lino)
+        WRITE(lu, '(4(ES15.5))', IOSTAT = ok, IOMSG = msg) time(lino), x(lino), y(lino), z(lino)
 #endif
-        IF (ok .ne. 0) RETURN
+        IF (ok .ne. 0) THEN
+          CALL report_error('write_sw4 - ERROR: ' + msg)
+          RETURN
+        ENDIF
       ENDDO
 
     END SUBROUTINE write_sw4
@@ -688,7 +730,7 @@ MODULE m_timeseries
     SUBROUTINE write_plaintxt(ok, lu, time, x, y, z)
 
       ! Purpose:
-      !   to read a plain ASCII file and return associated time-series. The file is supposed to have four columns and an arbitrary
+      !   to write a plain ASCII file where time-series are stored. The file is supposed to have four columns and an arbitrary
       !   number of rows, where the first column is the time samples and all other columns are the x, y and z component of motion,
       !   respectively. On exit, "ok" is not zero if an error occurred.
       !
@@ -698,12 +740,25 @@ MODULE m_timeseries
       !   08/03/21                  original version
       !
 
-      INTEGER(i32),                              INTENT(OUT) :: ok
-      INTEGER(i32),                              INTENT(IN)  :: lu
-      REAL(r32),    DIMENSION(:),   INTENT(IN)  :: time, x, y, z
-      INTEGER(i32)                                           :: lino
+      INTEGER(i32),                           INTENT(OUT) :: ok
+      INTEGER(i32),                           INTENT(IN)  :: lu
+      REAL(r32),                DIMENSION(:), INTENT(IN)  :: time, x, y, z
+      CHARACTER(:), ALLOCATABLE                           :: msg
+      INTEGER(i32)                                        :: lino
 
       !-----------------------------------------------------------------------------------------------------------------------------
+
+      DO lino = 1, SIZE(time)
+#ifdef DOUBLE_PREC
+        WRITE(lu, '(4(ES23.13))', IOSTAT = ok, IOMSG = msg) time(lino), x(lino), y(lino), z(lino)
+#else
+        WRITE(lu, '(4(ES15.5))', IOSTAT = ok, IOMSG = msg) time(lino), x(lino), y(lino), z(lino)
+#endif
+        IF (ok .ne. 0) THEN
+          CALL report_error('write_sw4 - ERROR: ' + msg)
+          RETURN
+        ENDIF
+      ENDDO
 
 
     END SUBROUTINE write_plaintxt

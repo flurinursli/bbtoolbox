@@ -334,8 +334,6 @@ MODULE m_isochron
 
             CALL fft(mrf, tv)                            !< ... and its spectrum
 
-print*, 'X ', any(isnan(mrf)), any(isnan(real(tv))), any(isnan(aimag(tv)))
-
 #ifdef PERF
             CALL watch_stop(tictoc, COMM)
             otimer(3) = otimer(3) + tictoc
@@ -402,7 +400,7 @@ print*, 'X ', any(isnan(mrf)), any(isnan(real(tv))), any(isnan(aimag(tv)))
                   ! ------------------------------------------ time integration limits -------------------------------------------
 
 
-print*, 'r ', rec, wtp, sheet, ' x ', mean(repi), ' - ', path, ' - ', trvt
+! print*, 'r ', rec, wtp, sheet, ' x ', mean(repi), ' - ', path, ' - ', trvt
 
 
 
@@ -421,7 +419,7 @@ print*, 'r ', rec, wtp, sheet, ' x ', mean(repi), ' - ', path, ' - ', trvt
                   it2 = MIN(npts, it2)                        !< limit to max number of time points
 
 
-print*, 't ', rec, wtp, sheet, ' - ', taumin, taumax, ' - ', it1, it2
+! print*, 't ', rec, wtp, sheet, ' - ', taumin, taumax, ' - ', it1, it2
 
 
                   ! jump to next sheet if no isochron is spanned (i.e. no cuts)
@@ -462,7 +460,7 @@ print*, 't ', rec, wtp, sheet, ' - ', taumin, taumax, ' - ', it1, it2
 
                   ncuts(wtp, rec) = ncuts(wtp, rec) + cut
 
-print*, 'c ', rec, wtp, sheet, ' - ', cut, ' - ', ncuts(wtp, rec), ' - ', active(wtp, rec)
+! print*, 'c ', rec, wtp, sheet, ' - ', cut, ' - ', ncuts(wtp, rec), ' - ', active(wtp, rec)
 
 
 #ifdef PERF
@@ -501,9 +499,6 @@ print*, 'c ', rec, wtp, sheet, ' - ', cut, ' - ', ncuts(wtp, rec), ' - ', active
                 CALL fft(rtri(:, ic), tur)
                 CALL fft(itri(:, ic), tui)
 
-print*, 'A0 ', any(isnan(rtri)), any(isnan(itri)) , any(isnan(real(tur))), any(isnan(aimag(tur))),    &
-               any(isnan(real(tui))), any(isnan(aimag(tui))), any(isnan(real(tv))), any(isnan(aimag(tv)))
-
                 ! multiply spectra
                 DO it = 1, npts/2 + 1
                   tur(it) = tur(it) * tv(it)
@@ -512,9 +507,6 @@ print*, 'A0 ', any(isnan(rtri)), any(isnan(itri)) , any(isnan(real(tur))), any(i
 
                 CALL ifft(rtri(:, ic), tur)
                 CALL ifft(itri(:, ic), tui)
-
-print*, 'B0 ', any(isnan(rtri)), any(isnan(itri)) !, any(isnan(tur)), any(isnan(tui))
-
 
               ENDDO
 
@@ -551,8 +543,6 @@ print*, 'B0 ', any(isnan(rtri)), any(isnan(itri)) !, any(isnan(tur)), any(isnan(
 
         CALL destroy_fftw_plan([npts])
 
-print*, 'A ', any(isnan(rseis)), any(isnan(iseis))
-
         ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
         ! ----------------------------------------------- Hilbert transform --------------------------------------------------------
 
@@ -570,9 +560,6 @@ print*, 'A ', any(isnan(rseis)), any(isnan(iseis))
           ENDDO
         ENDDO
         !$omp end parallel do
-
-print*, 'B ', any(isnan(seis))
-
 
 #ifdef PERF
         CALL watch_stop(tictoc, COMM)
@@ -617,12 +604,16 @@ print*, 'B ', any(isnan(seis))
 
         CALL make_iir_plan(ok, 'butter', dt, [model%lcut(band), MIN(model%hcut(band), fmax)], 'pass', 2, zphase = .true.)
 
-print*, ok, [model%lcut(band), MIN(model%hcut(band), fmax)], npts, dt
+        IF (ok .ne. 0) THEN
+          CALL report_error(filter_error(ok))
+          RETURN
+        ENDIF
 
         DO rec = 1, SIZE(input%receiver)
           DO ic = 1, 3
 
-            !seis(:, ic, rec) = iir(seis(:, ic, rec), ok)                       !< filter
+            seis(:, ic, rec) = iir(seis(:, ic, rec), ok)                       !< filter
+
             seis(:, ic, rec) = differentiate(seis(:, ic, rec), dt)             !< move from displacement to velocity
 
             CALL interpolate(time, seis(:, ic, rec), timeseries%sp%time, stack)
@@ -646,12 +637,6 @@ print*, ok, [model%lcut(band), MIN(model%hcut(band), fmax)], npts, dt
       CALL watch_stop(tictoc, COMM)
       timer(5) = timer(5) + tictoc
 #endif
-
-
-print*, 'C ', any(isnan(seis))
-
-
-
 
 
 #ifdef PERF
@@ -1804,9 +1789,9 @@ print*, 'correct4impz ', ok, [model%lcut(1), MIN(model%hcut(band), fmax)], dt
           CALL freqz(freq, amp, phase, dt, SIZE(timeseries%sp%time))
 
           IF (band .eq. 1) THEN
-            respz = amp
+            respz = amp**2
           ELSE
-            respz = respz + amp
+            respz = respz + amp**2
           ENDIF
 
           CALL destroy_iir_plan()
@@ -1868,17 +1853,17 @@ print*, 'correct4impz ', ok, [model%lcut(1), MIN(model%hcut(band), fmax)], dt
           ! apply spectral correction function
           DO rec = 1, SIZE(input%receiver)
 
-            ! CALL fft(timeseries%sp%x(:, rec), spectrum)
-            ! spectrum(:) = spectrum(:) * respz(:)
-            ! CALL ifft(timeseries%sp%x(:, rec), spectrum)
-            !
-            ! CALL fft(timeseries%sp%y(:, rec), spectrum)
-            ! spectrum(:) = spectrum(:) * respz(:)
-            ! CALL ifft(timeseries%sp%y(:, rec), spectrum)
-            !
-            ! CALL fft(timeseries%sp%z(:, rec), spectrum)
-            ! spectrum(:) = spectrum(:) * respz(:)
-            ! CALL ifft(timeseries%sp%z(:, rec), spectrum)
+            CALL fft(timeseries%sp%x(:, rec), spectrum)
+            spectrum(:) = spectrum(:) * respz(:)
+            CALL ifft(timeseries%sp%x(:, rec), spectrum)
+
+            CALL fft(timeseries%sp%y(:, rec), spectrum)
+            spectrum(:) = spectrum(:) * respz(:)
+            CALL ifft(timeseries%sp%y(:, rec), spectrum)
+
+            CALL fft(timeseries%sp%z(:, rec), spectrum)
+            spectrum(:) = spectrum(:) * respz(:)
+            CALL ifft(timeseries%sp%z(:, rec), spectrum)
 
           ENDDO
 
