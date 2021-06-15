@@ -27,7 +27,7 @@ source lon=-116.25 lat=34.50 z=5000 strike=20 dip=70 rake=30 m0=1.0e+19 type='br
 #rupture file = '/home/walter/Software/bbtoolbox/test/s1999HECTOR01JONS.fsp' type='brune' freq=3.14 roughness=-2.3  +
 #rupture file = '/home/walter/Software/bbtoolbox/test/sample.srf' type='brune' freq=3.14 roughness=-2.0  +
 # rik
-#corr=0.7 l0=0.3 aparam=1.0 vrfact=0.85 seed = 74921 samples = 1
+#corr=0.7 l0=0.3 aparam=1.0 vrfact=0.85 seed = 74921
 
 # set position of geographical reference point (needed if we are working with geographical coordinates)
 origin lon=-116.32645 lat=34.68132      # that's station BM52
@@ -53,20 +53,21 @@ layer vp = 3800 vs = 2200 rho = 2700 depth = 2100
 #attenuation gpp = [0.003,0.0015,0.0007,0.0003,0.00015] gps = [0.025,0.012,0.006,0.003,0.0015] gss = [0.01,0.005,0.0025,0.0012,0.006] +
 #            b = [0.01,0.02,0.03,0.02,0.01] frequency = [1,2; 2,4; 4,8; 8,16; 16,32]
 
-#attenuation gpp = [0.] gps = [0.] gss = [0.] +
-#            b = [0.] frequency = [1,8]
-attenuation gpp = [0., 0., 0.] gps = [0., 0., 0.] gss = [0., 0., 0.] +
-            b = [0., 0., 0.] frequency = [1,2; 2,4; 4,8]
+attenuation gpp = [0.] gps = [0.] gss = [0.] +
+            b = [0.] frequency = [1,8]
+#attenuation gpp = [0., 0., 0.] gps = [0., 0., 0.] gss = [0., 0., 0.] +
+#            b = [0., 0., 0.] frequency = [1,2; 2,4; 4,8]
 
 # second model
 #attenuation gpp = [0.003,0.0015,0.0007,0.0003,0.00015] gps = [0.025,0.012,0.006,0.003,0.0015] gss = [0.01,0.005,0.0025,0.0012,0.006] +
 #            b = [0.001,0.002,0.003,0.002,0.001] frequency = [1,2; 2,4; 4,8; 8,16; 16,32]
 
 
-#attenuation gpp = [0.] gps = [0.] gss = [0.] +
-#            b = [0.] frequency = [1,8]
-attenuation gpp = [0., 0., 0.] gps = [0., 0., 0.] gss = [0., 0., 0.] +
-            b = [0., 0., 0.] frequency = [1,2; 2,4; 4,8]
+
+attenuation gpp = [0.] gps = [0.] gss = [0.] +
+            b = [0.] frequency = [1,8]
+#attenuation gpp = [0., 0., 0.] gps = [0., 0., 0.] gss = [0., 0., 0.] +
+#            b = [0., 0., 0.] frequency = [1,2; 2,4; 4,8]
 
 # set receiver-related fields
 # required fields are "x"/"y"/"z" (or "lon"/"lat"/"z"), "file", "velocity" (default=1) and "attenuation" (default=1)

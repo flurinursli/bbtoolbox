@@ -42,7 +42,7 @@ MODULE m_toolbox
   TYPE :: src
     CHARACTER(8)   :: type = "Brune"
     CHARACTER(256) :: file
-    INTEGER(i32)   :: seed, samples
+    INTEGER(i32)   :: seed
     LOGICAL        :: is_point = .false., add_roughness = .true., add_rik = .true.
     REAL(r32)      :: x, y, lon, lat, z, m0, strike, dip, rake
     REAL(r32)      :: freq = 6.28_r32
@@ -614,7 +614,6 @@ MODULE m_toolbox
 
         input%source%add_rik = .false.
         input%source%add_roughness = .false.
-        input%source%samples = 1
 
       ENDIF
 
@@ -694,11 +693,6 @@ MODULE m_toolbox
 
           CALL parse(ok, input%source%seed, lu, 'seed', ['=', ' '], 'rupture', com = '#')     !< seed
           CALL missing_arg(ok, is_empty(input%source%seed), 'Argument "seed" for keyword "rupture" not found')
-
-          IF (ok .ne. 0) RETURN
-
-          CALL parse(ok, input%source%samples, lu, 'samples', ['=', ' '], 'rupture', com = '#')     !< samples
-          CALL missing_arg(ok, is_empty(input%source%samples), 'Argument "samples" for keyword "rupture" not found')
 
           IF (ok .ne. 0) RETURN
 
@@ -1061,15 +1055,13 @@ MODULE m_toolbox
                           num2char('L0', width=15, justify='r')      + '|' + &
                           num2char('Aparam', width=15, justify='r')  + '|' + &
                           num2char('Vrfact', width=15, justify='r')  + '|' + &
-                          num2char('Seed', width=15, justify='r')    + '|' + &
-                          num2char('Samples', width=15, justify='r') + '|')
+                          num2char('Seed', width=15, justify='r')    + '|') 
           CALL update_log(num2char('', width=30) +  &
                           num2char(input%source%correlation, width=15, notation='f', precision=2, justify='r') + '|' + &
                           num2char(input%source%l0, width=15, notation='f', precision=1, justify='r')          + '|' + &
                           num2char(input%source%aparam, width=15, notation='f', precision=1, justify='r')      + '|' + &
                           num2char(input%source%vrfact, width=15, notation='f', precision=2, justify='r')      + '|' + &
-                          num2char(input%source%seed, width=15, justify='r')                                   + '|' + &
-                          num2char(input%source%samples, width=15, justify='r') + '|', blankline = .false.)
+                          num2char(input%source%seed, width=15, justify='r')                             + '|', blankline = .false.)
         ENDIF
 
       ENDIF
@@ -1228,17 +1220,17 @@ MODULE m_toolbox
 
       IF (ALLOCATED(input%receiver)) THEN
         intg = [SIZE(input%velocity), SIZE(input%attenuation), SIZE(input%receiver), input%coda%seed, input%coda%samples,   &
-                input%source%seed, input%source%samples, input%advanced%pmw, input%advanced%avecuts, input%advanced%sheets,  &
+                input%source%seed, input%advanced%pmw, input%advanced%avecuts, input%advanced%sheets,                       &
                 input%advanced%waves, input%advanced%verbose]
       ENDIF
 
-      CALL mpi_bcast(intg, 12, mpi_int, 0, mpi_comm_world, ierr)
+      CALL mpi_bcast(intg, 11, mpi_int, 0, mpi_comm_world, ierr)
 
       IF (.not.ALLOCATED(input%receiver)) THEN
         ALLOCATE(input%velocity(intg(1)), input%attenuation(intg(2)), input%receiver(intg(3)))
-        input%coda%seed = intg(4); input%coda%samples = intg(5); input%source%seed = intg(6); input%source%samples = intg(7)
-        input%advanced%pmw = intg(8); input%advanced%avecuts = intg(9); input%advanced%sheets = intg(10)
-        input%advanced%waves = intg(11); input%advanced%verbose = intg(12)
+        input%coda%seed = intg(4); input%coda%samples = intg(5); input%source%seed = intg(6); input%advanced%pmw = intg(7);
+        input%advanced%avecuts = intg(8); input%advanced%sheets = intg(9); input%advanced%waves = intg(10);
+        input%advanced%verbose = intg(11)
       ENDIF
 
       DO i = 1, SIZE(input%velocity)

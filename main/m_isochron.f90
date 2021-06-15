@@ -139,7 +139,7 @@ MODULE m_isochron
       IF (input%source%is_point) nodefun => ptrsrc_at_nodes
 
       ! set "seed" such that random numbers depend on fault plane number and iteration
-      seed = input%source%seed + (iter - 1) * SIZE(plane) + pl          !< IS THIS NEEDED??????
+      seed = input%source%seed + (iter - 1) * SIZE(plane) + pl
 
       ! arrays to keep track of isochron cuts
       ALLOCATE(ncuts(2, SIZE(input%receiver)), active(2, SIZE(input%receiver)))
@@ -332,7 +332,7 @@ MODULE m_isochron
               CALL mrf_rik(iuc, ivc, dt, rupture, mrf)     !< moment rate function (averaged over corners)
             ENDIF
 
-            CALL fft(mrf, tv)                            !< ... and its spectrum
+            CALL fft(mrf, tv)                              !< ... and its spectrum
 
 #ifdef PERF
             CALL watch_stop(tictoc, COMM)
@@ -400,7 +400,7 @@ MODULE m_isochron
                   ! ------------------------------------------ time integration limits -------------------------------------------
 
 
-! print*, 'r ', rec, wtp, sheet, ' x ', mean(repi), ' - ', path, ' - ', trvt
+print*, 'r ', rec, wtp, sheet, ' x ', mean(repi), ' - ', path, ' - ', trvt
 
 
 
@@ -419,7 +419,7 @@ MODULE m_isochron
                   it2 = MIN(npts, it2)                        !< limit to max number of time points
 
 
-! print*, 't ', rec, wtp, sheet, ' - ', taumin, taumax, ' - ', it1, it2
+print*, 't ', rec, wtp, sheet, ' - ', taumin, taumax, ' - ', it1, it2
 
 
                   ! jump to next sheet if no isochron is spanned (i.e. no cuts)
@@ -587,9 +587,13 @@ MODULE m_isochron
 
         ENDIF
 
+print*, 'area ', dutr(ref) * dvtr(ref) * 0.5_r32
+
       ENDDO        !< end loop over mesh refinements
 
       scale = plane(pl)%targetm0 / moment          !< scaling factor to scale to desired moment
+
+print*, 'scale ', scale
 
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! ------------------------------------- filter, differentiate, scale & stack -------------------------------------------------
@@ -603,6 +607,8 @@ MODULE m_isochron
       ASSOCIATE(model => input%attenuation(1), fmax => input%coda%fmax)
 
         CALL make_iir_plan(ok, 'butter', dt, [model%lcut(band), MIN(model%hcut(band), fmax)], 'pass', 2, zphase = .true.)
+        ! CALL make_iir_plan(ok, 'butter', dt, [MIN(model%hcut(band), fmax)], 'low', 4, zphase = .true.)
+
 
         IF (ok .ne. 0) THEN
           CALL report_error(filter_error(ok))
@@ -630,6 +636,35 @@ MODULE m_isochron
         ENDDO
 
         CALL destroy_iir_plan()
+
+        ! CALL make_iir_plan(ok, 'butter', dt, [model%lcut(band)], 'high', 4, zphase = .true.)
+        !
+        ! IF (ok .ne. 0) THEN
+        !   CALL report_error(filter_error(ok))
+        !   RETURN
+        ! ENDIF
+        !
+        ! DO rec = 1, SIZE(input%receiver)
+        !   DO ic = 1, 3
+        !
+        !     seis(:, ic, rec) = iir(seis(:, ic, rec), ok)                       !< filter
+        !
+        !     seis(:, ic, rec) = differentiate(seis(:, ic, rec), dt)             !< move from displacement to velocity
+        !
+        !     CALL interpolate(time, seis(:, ic, rec), timeseries%sp%time, stack)
+        !
+        !     IF (ic .eq. 1) THEN
+        !       timeseries%sp%x(:, rec) = timeseries%sp%x(:, rec) + stack(:) * scale
+        !     ELSEIF (ic .eq. 2) THEN
+        !       timeseries%sp%y(:, rec) = timeseries%sp%y(:, rec) + stack(:) * scale
+        !     ELSE
+        !       timeseries%sp%z(:, rec) = timeseries%sp%z(:, rec) + stack(:) * scale
+        !     ENDIF
+        !
+        !   ENDDO
+        ! ENDDO
+        !
+        ! CALL destroy_iir_plan()
 
       END ASSOCIATE
 
@@ -1811,6 +1846,7 @@ print*, 'correct4impz ', ok, [model%lcut(1), MIN(model%hcut(band), fmax)], dt
 print*, 'correct4impz ', ok, [model%lcut(1), MIN(model%hcut(band), fmax)], dt
 
           CALL freqz(freq, amp, phase, dt, SIZE(timeseries%sp%time))
+
           CALL destroy_iir_plan()
 
           npts = SIZE(timeseries%sp%time)
@@ -1819,7 +1855,7 @@ print*, 'correct4impz ', ok, [model%lcut(1), MIN(model%hcut(band), fmax)], dt
 
           ! correct filter response for non-negligibile amplitude levels
           DO i = 1, SIZE(respz)
-            IF (respz(i) .gt. 1.E-04) respz(i) = amp(i)**2 / respz(i)    !< **2 is because we used two-pass filters
+            IF (respz(i) .gt. 1.E-20) respz(i) = amp(i)**2 / respz(i)    !< **2 is because we used two-pass filters
           ENDDO
 
 #ifdef DEBUG

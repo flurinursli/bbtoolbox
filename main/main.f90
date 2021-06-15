@@ -35,7 +35,7 @@ PROGRAM main
 
   IMPLICIT none
 
-  INTEGER(i32)              :: ierr, rank, ntasks, ok, i0, i1, iter, irec, pl, vlc, band
+  INTEGER(i32)              :: ierr, rank, ntasks, ok, npts, nrecs, i, i0, i1, iter, pl, vel, band, maxband
   REAL(r64),   DIMENSION(2) :: tictoc
 
   !---------------------------------------------------------------------------------------------------------------------------------
@@ -93,78 +93,97 @@ PROGRAM main
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
   ! ------------------------------------------------------- time stuff -------------------------------------------------------------
 
-  ! timeseries%sp%dt = 0.25_r32 / input%coda%fmax        !< fnyq must be twice fmax
-  timeseries%sp%dt = 0.5_r32 / (input%coda%fmax * 3._r32/2._r32)
+  timeseries%sp%dt = 0.5_r32 / (input%coda%fmax * 1.5_r32)
+  timeseries%cd%dt = 0.5_r32 / (input%coda%fmax * 1.5_r32)
 
+  npts = SIZE(timeseries%lp%time)
 
-  pl = NINT(40. / timeseries%sp%dt)
-  ALLOCATE(timeseries%sp%time(pl))
+  !npts = NINT(timeseries%lp%time(npts) / timeseries%sp%dt) + 1
+  npts = NINT(40._r32 / timeseries%sp%dt) + 1
 
-  do i0 = 1, pl
-    timeseries%sp%time(i0) = (i0 - 1)*timeseries%sp%dt
-  enddo
+  nrecs = SIZE(input%receiver)
 
-  ALLOCATE(timeseries%sp%x(pl, SIZE(input%receiver)), timeseries%sp%y(pl, SIZE(input%receiver)),   &
-           timeseries%sp%z(pl, SIZE(input%receiver)))
+  ALLOCATE(timeseries%sp%x(npts, nrecs), timeseries%sp%y(npts, nrecs), timeseries%sp%z(npts, nrecs))
+  ALLOCATE(timeseries%cd%x(npts, nrecs), timeseries%cd%y(npts, nrecs), timeseries%cd%z(npts, nrecs))
 
-  ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
-  ! --------------------------------------------- generate coda with random phase --------------------------------------------------
+  ALLOCATE(timeseries%sp%time(npts), timeseries%cd%time(npts))
 
-  CALL generate_noise(ok, rank)
-
-#ifdef MPI
-  IF (ok .ne. 0) CALL mpi_abort(mpi_comm_world, ok, ierr)
-#else
-  STOP
-#endif
+  DO i = 1, npts
+    timeseries%sp%time(i) = (i - 1) * timeseries%sp%dt
+    timeseries%cd%time(i) = (i - 1) * timeseries%cd%dt
+  ENDDO
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
   ! ---------------------------------------------------- start simulations ---------------------------------------------------------
 
-  ! CALL split_task(input%source%samples, ntasks, rank, i0, i1)
-  CALL split_task(input%source%samples * input%coda%samples, ntasks, rank, i0, i1)    !< this is a temporary hack
-
+  ! distribute simulations amongst MPI processes
+  CALL split_task(input%coda%samples, ntasks, rank, i0, i1)
 
   DO iter = i0, i1            !< every iteration is characterized by different source properties (rik, roughness)
 
-    ! reset short-period timeseries
-    timeseries%sp%x(:,:) = 0._r32
-    timeseries%sp%y(:,:) = 0._r32
-    timeseries%sp%z(:,:) = 0._r32
+    ! reset timeseries
+    timeseries%sp%x(:,:) = 0._r32; timeseries%sp%y(:,:) = 0._r32; timeseries%sp%z(:,:) = 0._r32
 
-    DO pl = 1, SIZE(plane)
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    ! --------------------------------------------- generate coda with random phase ------------------------------------------------
 
-      DO vlc = 1, SIZE(input%velocity)
+    CALL generate_noise(ok, iter, rank)          !< coda are in the frequency range [0, fmax] in timeseries%cd
 
-        CALL update_log(num2char('Iteration for', width=30, fill='.') + num2char('Source #', width=15, justify='r') + '|' +   &
-                        num2char('Segment #', width=15, justify='r') + '|' + num2char('Velocity #', width=15, justify='r') + '|')
+    DO vel = 1, SIZE(input%velocity)
 
-        CALL update_log(num2char('', width=30) + num2char(iter, width=15, justify='r') + '|' +  &
-                        num2char(pl, width=15, justify='r') + '|' + num2char(vlc, width=15, justify='r') + '|', blankline=.false.)
+      nrecs = COUNT(input%receiver(:)%velocity .eq. vel)
 
-        CALL meshing(pl, vlc)
+      IF (nrecs .eq. 0) CYCLE       !< skip velocity model if no receivers are associated to it
 
-        IF (input%source%add_rik) CALL rik(ok, pl, vlc, iter)
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+      ! --------------------------------------------- sum contribution over planes -------------------------------------------------
 
-#ifdef DEBUG
-        CALL node2disk(ok, pl, vlc, iter)
-#endif
+      DO pl = 1, SIZE(plane)
+
+        ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+        ! --------------------------------------- sum contribution over frequency bands --------------------------------------------
 
         DO band = 1, SIZE(input%attenuation(1)%gss)
-          IF (input%attenuation(1)%lcut(band) .lt. input%coda%fmax) THEN
-            CALL solve_isochron_integral(ok, band, pl, vlc, iter)
-          ENDIF
-        ENDDO
 
-      ENDDO    !< end loop over velocity models
+          IF (input%attenuation(1)%lcut(band) .ge. input%coda%fmax) CYCLE         !< skip band if higher than fmax
 
-    ENDDO   !< end loop over fault planes
+          CALL update_log(num2char('Simulation for', width=30, fill='.') +         &
+                          num2char('Iteration #', width=15, justify='r')   + '|' +   &
+                          num2char('Segment #', width=15, justify='r')  + '|' +   &
+                          num2char('Velocity #', width=15, justify='r') + '|' +   &
+                          num2char('Band #', width=15, justify='r')     + '|')
+
+          CALL update_log(num2char('', width=30) + num2char(iter, width=15, justify='r') + '|' +  &
+                                                   num2char(pl, width=15, justify='r')   + '|' +  &
+                                                   num2char(vel, width=15, justify='r')  + '|' +  &
+                                                   num2char(band, width=15, justify='r') + '|', blankline=.false.)
+
+          ! create mesh for current plane, velocity model and frequency band
+          CALL meshing(pl, vel, band)
+
+          ! add rik rupture model
+          IF (input%source%add_rik) CALL rik(ok, pl, vel, iter)
+
+#ifdef DEBUG
+          CALL node2disk(ok, pl, vel, iter)
+#endif
+
+          CALL solve_isochron_integral(ok, band, pl, vel, iter)
+
+          maxband = band        !< highest active frequency band
+
+        ENDDO     !< end loop over frequency bands
+
+        ! CALL correct4impz(ok, pl, maxband)         !< correct amplitude due to filter bank
+
+      ENDDO    !< end loop over fault planes
+
+    ENDDO   !< end loop over velocity models
 
     CALL correct4impz(ok, iter)
 
     !CALL add_coda(irec)
     !CALL stitch(irec)
-    !CALL save2disk(irec, iter)
 
     CALL seis2disk(ok, iter, 'sp')
 

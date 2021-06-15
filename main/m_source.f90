@@ -113,10 +113,10 @@ MODULE m_source
         plane(1)%strike   = input%source%strike
         plane(1)%dip      = input%source%dip
 
-        ! ALLOCATE(plane(1)%u(3), plane(1)%v(3))
-        ! ALLOCATE(plane(1)%rise(3,3), plane(1)%slip(3,3), plane(1)%rake(3,3), plane(1)%rupture(3,3))
-        ALLOCATE(plane(1)%u(2), plane(1)%v(2))
-        ALLOCATE(plane(1)%rise(2,2), plane(1)%slip(2,2), plane(1)%rake(2,2), plane(1)%rupture(2,2))
+        ALLOCATE(plane(1)%u(3), plane(1)%v(3))
+        ALLOCATE(plane(1)%rise(3,3), plane(1)%slip(3,3), plane(1)%rake(3,3), plane(1)%rupture(3,3))
+        ! ALLOCATE(plane(1)%u(2), plane(1)%v(2))
+        ! ALLOCATE(plane(1)%rise(2,2), plane(1)%slip(2,2), plane(1)%rake(2,2), plane(1)%rupture(2,2))
 
         ! slip in this context does not matter, as we will rescale output according to input "m0"
         ! plane(1)%slip(:,:) = 0._r32
@@ -804,7 +804,7 @@ MODULE m_source
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE meshing(pl, vel)
+    SUBROUTINE meshing(pl, vel, band)
 
       ! Purpose:
       !   to discretize the "pl"-th fault segment for the "vel"-th velocity model using a triangular mesh. Triangle size is
@@ -831,7 +831,7 @@ MODULE m_source
       !   08/03/21                  original version
       !
 
-      INTEGER(i32), INTENT(IN) :: pl, vel
+      INTEGER(i32), INTENT(IN) :: pl, vel, band
       INTEGER(i32)             :: nu, nv, layer, bottom, i
       REAL(r32)                :: du, dv, dt, beta, sd, ztop, zmax, vbottom, vs, eps
 
@@ -850,22 +850,33 @@ MODULE m_source
 
         ! first condition for point-sources: lambda_min >> d, where d is diagonal of a square fault
         ! diagonal = l*sqrt(2) = 2*sqrt(2)*du (l = 2*du)
-        ! du = PTSRC_FACTOR * beta / input%coda%fmax / SQRT(2._r32) / 2._r32
-        du = PTSRC_FACTOR * beta / input%coda%fmax / SQRT(2._r32)
+        du = PTSRC_FACTOR * beta / input%coda%fmax / SQRT(2._r32) / 2._r32
 
-        ! plane(pl)%u = [-du, 0._r32, du]
-        ! plane(pl)%v = [-du, 0._r32, du]
-        plane(pl)%u = [-du, du] / 2._r32
-        plane(pl)%v = [-du, du] / 2._r32
+
+        ! ASSOCIATE(model => input%attenuation(1), fmax => input%coda%fmax)
+        !   du = PTSRC_FACTOR * beta / MIN(model%hcut(band), fmax) / SQRT(2._r32) / 2._r32
+        ! END ASSOCIATE
+
+
+        plane(pl)%u = [-du, 0._r32, du]
+        plane(pl)%v = [-du, 0._r32, du]
+        ! plane(pl)%u = [-du, du] / 2._r32
+        ! plane(pl)%v = [-du, du] / 2._r32
 
         ! second condition for point-source: max(rupture time) << tr, where tr is the shortes period observed (i.e. 1/fmax)
         dt = PTSRC_FACTOR / input%coda%fmax
 
-        ! plane(pl)%rupture(:, 1) = dt * [1._r32, 1._r32/SQRT(2._r32), 1._r32]                   !< proceed along-strike (along u)
-        ! plane(pl)%rupture(:, 2) = dt * [1._r32/SQRT(2._r32), 0._r32, 1._r32/SQRT(2._r32)]
-        ! plane(pl)%rupture(:, 3) = dt * [1._r32, 1._r32/SQRT(2._r32), 1._r32]
-        plane(pl)%rupture(:, 1) = dt * [0._r32, 1._r32]                   !< proceed along-strike (along u)
-        plane(pl)%rupture(:, 2) = dt * [0._r32, 1._r32]
+        ! ASSOCIATE(model => input%attenuation(1), fmax => input%coda%fmax)
+        !   dt = PTSRC_FACTOR / MIN(model%hcut(band), fmax)
+        ! END ASSOCIATE
+
+        plane(pl)%rupture(:, 1) = dt * [1._r32, 1._r32/SQRT(2._r32), 1._r32]                   !< proceed along-strike (along u)
+        plane(pl)%rupture(:, 2) = dt * [1._r32/SQRT(2._r32), 0._r32, 1._r32/SQRT(2._r32)]
+        plane(pl)%rupture(:, 3) = dt * [1._r32, 1._r32/SQRT(2._r32), 1._r32]
+        ! plane(pl)%rupture(:, 1) = dt * [0._r32, 1._r32]                   !< proceed along-strike (along u)
+        ! plane(pl)%rupture(:, 2) = dt * [0._r32, 1._r32]
+
+print*, 'rupture ', maxval(plane(pl)%rupture)
 
         ! make sure uppermost down-dip "edge" point is always slightly (1m) below free-surface
         plane(pl)%z = MAX(1._r32, plane(pl)%z + MAX(0._r32, sd * du - plane(pl)%z))
@@ -873,23 +884,23 @@ MODULE m_source
         IF (ALLOCATED(vmingr)) DEALLOCATE(vmingr, vmaxgr, nutr, nvtr, dutr, dvtr, nugr, nvgr)
 
         ! set mesh parameters
-        ! umingr = -du
-        ! umaxgr = du
-        ! vmingr = [-du]
-        ! vmaxgr = [du]
-        ! nutr = [2]
-        ! nvtr = [2]
-        ! dutr = [du]
-        ! dvtr = [du]
-
-        umingr = -du / 2._r32
-        umaxgr = du / 2._r32
-        vmingr = [-du] / 2._r32
-        vmaxgr = [du] / 2._r32
-        nutr = [1]
-        nvtr = [1]
+        umingr = -du
+        umaxgr = du
+        vmingr = [-du]
+        vmaxgr = [du]
+        nutr = [2]
+        nvtr = [2]
         dutr = [du]
         dvtr = [du]
+
+        ! umingr = -du / 2._r32
+        ! umaxgr = du / 2._r32
+        ! vmingr = [-du] / 2._r32
+        ! vmaxgr = [du] / 2._r32
+        ! nutr = [1]
+        ! nvtr = [1]
+        ! dutr = [du]
+        ! dvtr = [du]
 
       ELSE
 
@@ -931,7 +942,10 @@ MODULE m_source
 
             ENDIF
 
-            du = vs / input%coda%fmax / input%advanced%pmw
+            ASSOCIATE(model => input%attenuation(1), fmax => input%coda%fmax)
+              ! du = vs / input%coda%fmax / input%advanced%pmw
+              du = vs / MIN(model%hcut(band), fmax) / input%advanced%pmw
+            END ASSOCIATE
 
             IF (ALLOCATED(vmingr)) THEN
 

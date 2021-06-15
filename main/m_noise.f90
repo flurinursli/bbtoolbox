@@ -6,7 +6,7 @@ MODULE m_noise
   USE, NON_INTRINSIC :: m_fft_real                        !< note: transform are always in r64
   USE, NON_INTRINSIC :: m_random
   USE, NON_INTRINSIC :: m_toolbox, ONLY: input
-  USE, NON_INTRINSIC :: m_timeseries, ONLY: timeseries
+  USE, NON_INTRINSIC :: m_timeseries, ONLY: timeseries, seis2disk
 
   IMPLICIT none
 
@@ -30,10 +30,10 @@ MODULE m_noise
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE generate_noise(ok, rank)
+    SUBROUTINE generate_noise(ok, iter, rank)
 
       INTEGER(i32), INTENT(OUT) :: ok
-      INTEGER(i32), INTENT(IN)  :: rank
+      INTEGER(i32), INTENT(IN)  :: iter, rank
       INTEGER(i32)              :: i, lu
 
       !-----------------------------------------------------------------------------------------------------------------------------
@@ -45,23 +45,14 @@ MODULE m_noise
           cohfun => vanmarcke
       END SELECT
 
-      ! CALL cpdf(ok, rank)
+      ! CALL cpdf(ok, iter, rank)
 
-      CALL cdra(ok, rank)
+      CALL cdra(ok, iter, rank)
 
 #ifdef DEBUG
-      OPEN(newunit = lu, file = 'noise_dbg.txt', status = 'unknown', form = 'formatted', access = 'sequential', action = 'write', &
-           iostat = ok)
 
-      IF (ok .ne. 0) THEN
-        CALL report_error('generate_noise - ERROR: could not open file "noise_dbg.txt"')
-        RETURN
-      ENDIF
+      CALL seis2disk(ok, iter, 'cd')
 
-      DO i = 1, SIZE(timeseries%sp%time)
-        WRITE(lu, *) timeseries%sp%time(i), timeseries%sp%x(i, :), timeseries%sp%y(i, :), timeseries%sp%z(i, :)
-      ENDDO
-      CLOSE(lu)
 #endif
 
     END SUBROUTINE generate_noise
@@ -122,7 +113,7 @@ MODULE m_noise
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE cpdf(ok, rank)
+    SUBROUTINE cpdf(ok, iter, rank)
 
       ! Purpose:
       !   to compute a set of timeseries as zero-mean, Gaussian white noise being characterized by the desired frequency-dependent
@@ -137,7 +128,7 @@ MODULE m_noise
       !
 
       INTEGER(i32),                             INTENT(OUT) :: ok
-      INTEGER(i32),                             INTENT(IN)  :: rank
+      INTEGER(i32),                             INTENT(IN)  :: iter, rank
       COMPLEX(r32)                                          :: sij
       COMPLEX(r32), ALLOCATABLE, DIMENSION(:)               :: z
       INTEGER(i32)                                          :: i, l, p, comp, fr, rcvr, n, npts, row, col, lu, error
@@ -151,11 +142,11 @@ MODULE m_noise
       ok = 0
       error = 0
 
-      npts = SIZE(timeseries%sp%time)
+      npts = SIZE(timeseries%cd%time)
 
       CALL make_fftw_plan([npts])
 
-      df = 1._r32 / (npts * timeseries%sp%dt)
+      df = 1._r32 / (npts * timeseries%cd%dt)
 
       npts = npts / 2 + 1
 
@@ -166,12 +157,12 @@ MODULE m_noise
       ! ------------------------------------------------- initial time-series  -----------------------------------------------------
 
       ! first time-series is fundamentally white noise with rms amplitude ~ 1
-      CALL setup_rng(ok, 'normal', 0._r32, 1._r32, input%coda%seed)
+      CALL setup_rng(ok, 'normal', 0._r32, 1._r32, input%coda%seed + iter)
 
       ! components for same receiver are not inter-correlated
-      CALL rng(timeseries%sp%x(:, 1), 1)
-      CALL rng(timeseries%sp%y(:, 1), 1)
-      CALL rng(timeseries%sp%z(:, 1), 1)
+      CALL rng(timeseries%cd%x(:, 1), 1)
+      CALL rng(timeseries%cd%y(:, 1), 1)
+      CALL rng(timeseries%cd%z(:, 1), 1)
 
       DO comp = 1, 3
 
@@ -188,11 +179,11 @@ MODULE m_noise
 #endif
 
           IF (comp .eq. 1) THEN
-            CALL fft(timeseries%sp%x(:, rcvr-1), z)
+            CALL fft(timeseries%cd%x(:, rcvr-1), z)
           ELSEIF (comp .eq. 2) THEN
-            CALL fft(timeseries%sp%y(:, rcvr-1), z)
+            CALL fft(timeseries%cd%y(:, rcvr-1), z)
           ELSE
-            CALL fft(timeseries%sp%z(:, rcvr-1), z)
+            CALL fft(timeseries%cd%z(:, rcvr-1), z)
           ENDIF
 
           ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
@@ -331,11 +322,11 @@ MODULE m_noise
           ENDDO
 
           IF (comp .eq. 1) THEN
-            CALL ifft(timeseries%sp%x(:, rcvr), z)
+            CALL ifft(timeseries%cd%x(:, rcvr), z)
           ELSEIF (comp .eq. 2) THEN
-            CALL ifft(timeseries%sp%y(:, rcvr), z)
+            CALL ifft(timeseries%cd%y(:, rcvr), z)
           ELSEIF (comp .eq. 3) THEN
-            CALL ifft(timeseries%sp%z(:, rcvr), z)
+            CALL ifft(timeseries%cd%z(:, rcvr), z)
           ENDIF
 
           DEALLOCATE(c, v)
@@ -344,7 +335,7 @@ MODULE m_noise
 
       ENDDO  !< end loop over components
 
-      npts = SIZE(timeseries%sp%time)
+      npts = SIZE(timeseries%cd%time)
 
       CALL destroy_fftw_plan([npts])
 
@@ -428,7 +419,7 @@ MODULE m_noise
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE cdra(ok, rank)
+    SUBROUTINE cdra(ok, iter, rank)
 
       ! Purpose:
       !   to compute a set of timeseries as zero-mean, Gaussian white noise being characterized by the desired frequency-dependent
@@ -441,7 +432,7 @@ MODULE m_noise
       !
 
       INTEGER(i32),                             INTENT(OUT) :: ok
-      INTEGER(i32),                             INTENT(IN)  :: rank
+      INTEGER(i32),                             INTENT(IN)  :: iter, rank
       COMPLEX(r32), ALLOCATABLE, DIMENSION(:)               :: z
       INTEGER(i32)                                          :: i, comp, fr, rcvr, n, npts, row, col, lu, warning
       REAL(r32)                                             :: freq, df, eta, var
@@ -453,11 +444,11 @@ MODULE m_noise
       ok = 0
       warning = 0
 
-      npts = SIZE(timeseries%sp%time)
+      npts = SIZE(timeseries%cd%time)
 
       CALL make_fftw_plan([npts])
 
-      df = 1._r32 / (npts * timeseries%sp%dt)
+      df = 1._r32 / (npts * timeseries%cd%dt)
 
       npts = npts / 2 + 1
 
@@ -470,7 +461,7 @@ MODULE m_noise
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! ------------------------------------------------- initial time-series  -----------------------------------------------------
 
-      CALL setup_rng(ok, 'normal', 0._r32, 1._r32, input%coda%seed)
+      CALL setup_rng(ok, 'normal', 0._r32, 1._r32, input%coda%seed + iter)
 
       DO comp = 1, 3
 
@@ -532,23 +523,23 @@ MODULE m_noise
             var   = var + ABS(z(fr))**2
           ENDDO
 
-          var = 2._r32 * var / SIZE(timeseries%sp%time)**2
+          var = 2._r32 * var / SIZE(timeseries%cd%time)**2
 
           z = z / SQRT(var)
 
           IF (comp .eq. 1) THEN
-            CALL ifft(timeseries%sp%x(:, rcvr), z)
+            CALL ifft(timeseries%cd%x(:, rcvr), z)
           ELSEIF (comp .eq. 2) THEN
-            CALL ifft(timeseries%sp%y(:, rcvr), z)
+            CALL ifft(timeseries%cd%y(:, rcvr), z)
           ELSEIF (comp .eq. 3) THEN
-            CALL ifft(timeseries%sp%z(:, rcvr), z)
+            CALL ifft(timeseries%cd%z(:, rcvr), z)
           ENDIF
 
         ENDDO     !< end loop over receivers
 
-      ENDDO  !< end loop over components
+      ENDDO   !< end loop over components
 
-      npts = SIZE(timeseries%sp%time)
+      npts = SIZE(timeseries%cd%time)
 
       CALL destroy_fftw_plan([npts])
 

@@ -33,7 +33,7 @@ MODULE m_timeseries
   END TYPE cmp
 
   TYPE :: tsr
-    TYPE(cmp) :: lp, sp, bb
+    TYPE(cmp) :: lp, sp, bb, cd
   END TYPE tsr
 
   TYPE(tsr) :: timeseries            !< timeseries%lp%x(npts, nrec), timeseries%lp%time(npts), timeseries%lp%dt
@@ -502,7 +502,7 @@ MODULE m_timeseries
 
       ENDIF
 
-      IF ( (seis .ne. 'lp') .and. (seis .ne. 'sp') .and. (seis .ne. 'bb') ) THEN
+      IF ( (seis .ne. 'lp') .and. (seis .ne. 'sp') .and. (seis .ne. 'bb') .and. (seis .ne. 'cd') ) THEN
         CALL report_error('seis2disk - ERROR: ' + seis + ' is an invalid descriptor for timeseries')
         ok = 1
       ENDIF
@@ -524,8 +524,8 @@ MODULE m_timeseries
 
         IF (seis .eq. 'lp') THEN
 
-          ASSOCIATE(x => timeseries%bb%x(:, rcvr), y => timeseries%bb%y(:, rcvr), z => timeseries%bb%z(:, rcvr),      &
-                    time => timeseries%bb%time, dt => timeseries%bb%dt)
+          ASSOCIATE(x => timeseries%lp%x(:, rcvr), y => timeseries%lp%y(:, rcvr), z => timeseries%lp%z(:, rcvr),      &
+                    time => timeseries%lp%time, dt => timeseries%lp%dt)
 
             IF (ASSOCIATED(pfun)) THEN
               x = pfun(x, dt)
@@ -562,6 +562,24 @@ MODULE m_timeseries
 
           ASSOCIATE(x => timeseries%bb%x(:, rcvr), y => timeseries%bb%y(:, rcvr), z => timeseries%bb%z(:, rcvr),      &
                     time => timeseries%bb%time, dt => timeseries%bb%dt)
+
+            IF (ASSOCIATED(pfun)) THEN
+              x = pfun(x, dt)
+              y = pfun(y, dt)
+              z = pfun(z, dt)
+            ENDIF
+
+            m_iter = iter         !< pass values to module aliases
+            m_rcvr = rcvr
+
+            CALL wsubr(ok, lu, time, x, y, z)
+
+          END ASSOCIATE
+
+        ELSEIF (seis .eq. 'cd') THEN
+
+          ASSOCIATE(x => timeseries%cd%x(:, rcvr), y => timeseries%cd%y(:, rcvr), z => timeseries%cd%z(:, rcvr),      &
+                    time => timeseries%cd%time, dt => timeseries%cd%dt)
 
             IF (ASSOCIATED(pfun)) THEN
               x = pfun(x, dt)
