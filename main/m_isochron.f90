@@ -80,7 +80,7 @@ MODULE m_isochron
       INTEGER(i32),              DIMENSION(3)               :: iuc, ivc, abv, blw, shot
       ! INTEGER(i32), ALLOCATABLE, DIMENSION(:,:)             :: ncuts, active
       REAL(r32)                                             :: m0, moment, strike, dip, urec, vrec, wrec, taumin, taumax, sd, cd, dt
-      REAL(r32)                                             :: srfvel, c, scale
+      REAL(r32)                                             :: srfvel, c, scale, trapz
       REAL(r32)                                             :: avepath, avetrvt, scattering, attenuation, t, direct
       REAL(r32),                 DIMENSION(3)               :: u, v, w, x, y, z, slip, rupture, rake, nrl, rho, alpha, beta, mu
       REAL(r32),                 DIMENSION(3)               :: p, q, path, trvt, repi, tau, sr, cr, velloc
@@ -220,7 +220,7 @@ MODULE m_isochron
         !$omp parallel do default(shared) private(i, j, iuc, ivc, icr, slip, u, v, w, x, y, z, nrl, strike, dip, rake, sd, cd)   &
         !$omp private(sr, cr, tictoc, rupture, alpha, beta, rho, mu, ic, src, shot, mrf, rec, urec, vrec, wrec, repi, model)     &
         !$omp private(rtri, itri, wtp, abv, blw, velloc, srfvel, scattering, sheet, p, path, trvt, q, tau, taumin, taumax, it1)   &
-        !$omp private(it2, g, attenuation, cut, c, it, tur, tui, tv)   &
+        !$omp private(it2, g, attenuation, cut, c, it, tur, tui, tv, trapz)   &
         !$omp reduction(+: m0, rseis, iseis, otimer, ncuts, active, noslip)
         DO j = 1, nvtr(ref)
           DO i = 1, totnutr
@@ -328,6 +328,20 @@ MODULE m_isochron
 
             IF (input%source%is_point) THEN
               mrf = dbrune(time, input%source%freq)
+
+              trapz = 0.5_r32 * mrf(1)
+
+              DO it = 2, SIZE(mrf) - 1
+                trapz = trapz + mrf(it)
+              ENDDO
+
+              trapz = trapz + 0.5_r32 * mrf(SIZE(mrf))
+              trapz = trapz * dt
+
+              DO it = 1, SIZE(mrf)
+                mrf(it) = mrf(it) / trapz
+              ENDDO
+
             ELSE
               CALL mrf_rik(iuc, ivc, dt, rupture, mrf)     !< moment rate function (averaged over corners)
             ENDIF
