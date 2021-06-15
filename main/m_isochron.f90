@@ -555,7 +555,7 @@ print*, 't ', rec, wtp, sheet, ' - ', taumin, taumax, ' - ', it1, it2
           DO ic = 1, 3
             CALL hilbert(iseis(:, ic, rec))
             DO it = 1, npts
-              seis(it, ic, rec) = seis(it, ic, rec) + (rseis(it, ic, rec) - iseis(it, ic, rec))
+              seis(it, ic, rec) = seis(it, ic, rec) + (rseis(it, ic, rec) - iseis(it, ic, rec)) * dt     !< dt is from convolution
             ENDDO
           ENDDO
         ENDDO
