@@ -429,7 +429,7 @@ MODULE m_timeseries
     FUNCTION integrate(x, dt) RESULT(y)
 
       ! Purpose:
-      !   to compute the cumulative integration of timeseries "x" having time-step "dt" based on the trapezoidal rule.
+      !   to compute the cumulative integral of timeseries "x" having time-step "dt".
       !
       ! Revisions:
       !     Date                    Description of change
@@ -449,10 +449,8 @@ MODULE m_timeseries
 
       y(1) = 0._r32
 
-      step = dt * 0.5_r32
-
       DO i = 2, n
-        y(i) = y(i - 1) + step * (x(i) - x(i - 1))
+        y(i) = y(i - 1) + x(i) * dt
       ENDDO
 
     END FUNCTION integrate
