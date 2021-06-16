@@ -1833,7 +1833,7 @@ print*, 'scale ', scale
 
           CALL make_iir_plan(ok, 'butter', dt, [model%lcut(band), MIN(model%hcut(band), fmax)], 'pass', 2, zphase = .true.)
 
-print*, 'correct4impz ', ok, [model%lcut(1), MIN(model%hcut(band), fmax)], dt
+! print*, 'correct4impz ', ok, [model%lcut(1), MIN(model%hcut(band), fmax)], dt
 
           CALL freqz(freq, amp, phase, dt, SIZE(timeseries%sp%time))
 
@@ -1857,7 +1857,7 @@ print*, 'correct4impz ', ok, [model%lcut(1), MIN(model%hcut(band), fmax)], dt
           ! we want the composite filter reponse to look identical to that of a filter between lowest fcut and highest fcut(/fmax)
           CALL make_iir_plan(ok, 'butter', dt, [model%lcut(1), MIN(model%hcut(band), fmax)], 'pass', 2, zphase = .true.)
 
-print*, 'correct4impz ', ok, [model%lcut(1), MIN(model%hcut(band), fmax)], dt
+! print*, 'correct4impz ', ok, [model%lcut(1), MIN(model%hcut(band), fmax)], dt
 
           CALL freqz(freq, amp, phase, dt, SIZE(timeseries%sp%time))
 

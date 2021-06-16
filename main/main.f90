@@ -35,7 +35,7 @@ PROGRAM main
 
   IMPLICIT none
 
-  INTEGER(i32)              :: ierr, rank, ntasks, ok, npts, nrecs, i, i0, i1, iter, pl, vel, band, maxband
+  INTEGER(i32)              :: ierr, rank, ntasks, ok, npts, nrecs, i, i0, i1, iter, pl, vel, band !, maxband
   REAL(r64),   DIMENSION(2) :: tictoc
 
   !---------------------------------------------------------------------------------------------------------------------------------
@@ -170,7 +170,7 @@ PROGRAM main
 
           CALL solve_isochron_integral(ok, band, pl, vel, iter)
 
-          maxband = band        !< highest active frequency band
+          ! maxband = band        !< highest active frequency band
 
         ENDDO     !< end loop over frequency bands
 

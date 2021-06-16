@@ -510,7 +510,7 @@ MODULE m_toolbox
 
       input%output%folder = TRIM(str)     !< folder
 
-      CALL parse(ok, str, lu, 'format', ["'", "'"], 'input', com = '#')
+      CALL parse(ok, str, lu, 'format', ["'", "'"], 'output', com = '#')
       CALL missing_arg(ok, is_empty(str), 'Argument "format" for keyword "output" not found')
 
       IF (ok .ne. 0) RETURN
@@ -1055,7 +1055,7 @@ MODULE m_toolbox
                           num2char('L0', width=15, justify='r')      + '|' + &
                           num2char('Aparam', width=15, justify='r')  + '|' + &
                           num2char('Vrfact', width=15, justify='r')  + '|' + &
-                          num2char('Seed', width=15, justify='r')    + '|') 
+                          num2char('Seed', width=15, justify='r')    + '|')
           CALL update_log(num2char('', width=30) +  &
                           num2char(input%source%correlation, width=15, notation='f', precision=2, justify='r') + '|' + &
                           num2char(input%source%l0, width=15, notation='f', precision=1, justify='r')          + '|' + &
