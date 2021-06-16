@@ -22,7 +22,7 @@ MODULE m_source
   PUBLIC :: hypocenter, plane, dutr, dvtr, nutr, nvtr, nugr, nvgr, umingr, vmingr, umaxgr, vmaxgr, nodes
   PUBLIC :: MIN_DEPTH
   PUBLIC :: setup_source, meshing, missing_rupture, dealloc_nodes, cornr, cornr2uv, uvw2xyz, vinterp, ptrsrc_at_nodes, time_stepping
-  PUBLIC :: dbrune
+  PUBLIC :: dbrune, normalize
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -1917,6 +1917,40 @@ print*, 'rupture ', maxval(plane(pl)%rupture)
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
+    SUBROUTINE normalize(mrf, dt)
+
+      ! Purpose:
+      !   to normalize input moment rate function "mrf" with sampling interval "dt" to unity.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      REAL(r32),   DIMENSION(:), INTENT(INOUT) :: mrf
+      REAL(r32),                 INTENT(IN)    :: dt
+      INTEGER(i32)                             :: npts, i
+      REAL(r32)                                :: trapz
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      npts = SIZE(mrf)
+
+      trapz = 0.5_r32 * mrf(1)
+
+      DO i = 2, npts - 1
+        trapz = trapz + mrf(i)
+      ENDDO
+
+      trapz = trapz + 0.5_r32 * mrf(npts)
+      trapz = trapz * dt
+
+      DO i = 1, npts
+        mrf(i) = mrf(i) / trapz
+      ENDDO
+
+    END SUBROUTINE normalize
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================

@@ -80,7 +80,7 @@ MODULE m_isochron
       INTEGER(i32),              DIMENSION(3)               :: iuc, ivc, abv, blw, shot
       ! INTEGER(i32), ALLOCATABLE, DIMENSION(:,:)             :: ncuts, active
       REAL(r32)                                             :: m0, moment, strike, dip, urec, vrec, wrec, taumin, taumax, sd, cd, dt
-      REAL(r32)                                             :: srfvel, c, scale, trapz
+      REAL(r32)                                             :: srfvel, c, scale
       REAL(r32)                                             :: avepath, avetrvt, scattering, attenuation, t, direct
       REAL(r32),                 DIMENSION(3)               :: u, v, w, x, y, z, slip, rupture, rake, nrl, rho, alpha, beta, mu
       REAL(r32),                 DIMENSION(3)               :: p, q, path, trvt, repi, tau, sr, cr, velloc
@@ -212,6 +212,19 @@ MODULE m_isochron
         timer(3) = timer(3) + tictoc
 #endif
 
+! #ifdef PERF
+!         CALL watch_start(tictoc, COMM)
+! #endif
+!
+!         ! shoot rays between receivers and a set of sources spanning (vertically) current mesh
+!         CALL lookup_coda(ok, ref, pl, vel)
+!
+! #ifdef PERF
+!         CALL watch_stop(tictoc, COMM)
+!         timer(3) = timer(3) + tictoc
+! #endif
+
+
         ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
         ! ------------------------------------------- allocate memory for FFT/IFFT -------------------------------------------------
 
@@ -220,7 +233,7 @@ MODULE m_isochron
         !$omp parallel do default(shared) private(i, j, iuc, ivc, icr, slip, u, v, w, x, y, z, nrl, strike, dip, rake, sd, cd)   &
         !$omp private(sr, cr, tictoc, rupture, alpha, beta, rho, mu, ic, src, shot, mrf, rec, urec, vrec, wrec, repi, model)     &
         !$omp private(rtri, itri, wtp, abv, blw, velloc, srfvel, scattering, sheet, p, path, trvt, q, tau, taumin, taumax, it1)   &
-        !$omp private(it2, g, attenuation, cut, c, it, tur, tui, tv, trapz)   &
+        !$omp private(it2, g, attenuation, cut, c, it, tur, tui, tv)   &
         !$omp reduction(+: m0, rseis, iseis, otimer, ncuts, active, noslip)
         DO j = 1, nvtr(ref)
           DO i = 1, totnutr
@@ -328,23 +341,11 @@ MODULE m_isochron
 
             IF (input%source%is_point) THEN
               mrf = dbrune(time, input%source%freq)
-
-              trapz = 0.5_r32 * mrf(1)
-
-              DO it = 2, SIZE(mrf) - 1
-                trapz = trapz + mrf(it)
-              ENDDO
-
-              trapz = trapz + 0.5_r32 * mrf(SIZE(mrf))
-              trapz = trapz * dt
-
-              DO it = 1, SIZE(mrf)
-                mrf(it) = mrf(it) / trapz
-              ENDDO
-
             ELSE
               CALL mrf_rik(iuc, ivc, dt, rupture, mrf)     !< moment rate function (averaged over corners)
             ENDIF
+
+            CALL normalize(mrf, dt)
 
             CALL fft(mrf, tv)                              !< ... and its spectrum
 
@@ -1640,7 +1641,7 @@ print*, 'scale ', scale
         DO i = 1, totnutr
 
           CALL cornr(j, i, iuc, ivc)                 !< corner indices for current triangle
-          CALL cornr2uv(iuc, ivc, ref, u, v)        !< on-fault coordinates
+          CALL cornr2uv(iuc, ivc, ref, u, v)         !< on-fault coordinates
 
           DO icr = 1, 3
             w(icr) = roughness(iuc(icr), ivc(icr))
@@ -1930,6 +1931,105 @@ print*, 'scale ', scale
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
+    SUBROUTINE lookup_coda(ok, ref, vel)
+
+      INTEGER(i32), INTENT(OUT) :: ok
+      INTEGER(i32), INTENT(IN)  :: ref, vel
+
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+      !
+      ! ok = 0
+      !
+      ! ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+      ! ! -------------------------------------------------- max s/r distance --------------------------------------------------------
+      !
+      ! totnutr = 2 * nutr(ref) - 1                     !< total triangles in a row
+      !
+      ! rmax = 0._r32
+      !
+      ! !$omp parallel do default(shared) private(i, j, iuc, ivc, u, v, w, x, y, z, rec) reduction(max: rmax)
+      ! DO j = 1, nvtr(ref)
+      !   DO i = 1, totnutr
+      !
+      !     CALL cornr(j, i, iuc, ivc)                 !< corner indices for current triangle
+      !     CALL cornr2uv(iuc, ivc, ref, u, v)         !< on-fault coordinates
+      !
+      !     DO icr = 1, 3
+      !       w(icr) = roughness(iuc(icr), ivc(icr))
+      !     ENDDO
+      !
+      !     CALL uvw2xyz(pl, u, v, w, x, y, z)            !< get cartesian coordinates
+      !
+      !     DO icr = 1, 3
+      !       z(icr) = MAX(MIN_DEPTH, z(icr))             !< make sure we never breach the free-surface (clip roughness)
+      !     ENDDO
+      !
+      !     ! find shooting points above/below
+      !     DO icr = 1, 3
+      !       DO src = 1, SIZE(shooting) - 1
+      !         IF ( (z(icr) .ge. shooting(src)) .and. (z(icr) .le. shooting(src + 1)) ) shot(icr) = src
+      !       ENDDO
+      !     ENDDO
+      !
+      !     ! loop over receivers
+      !     DO rec = 1, SIZE(input%receiver)
+      !
+      !       DO icr = 1, 3
+      !         repi(icr) = HYPOT(input%receiver(rec)%x - x(icr), input%receiver(rec)%y - y(icr)) / 1000._r32        !< epicentral distance (corner-receiver)
+      !       ENDDO
+      !
+      !       ! loop over wave types
+      !       DO wtp = 1, 2
+      !
+      !         abv(:) = 1       !< reset sheet-related index
+      !         blw(:) = 1
+      !
+      !         DO sheet = 1, maxsheets(wtp)
+      !
+      !           CALL raypar_at_corners(abv, blw, shooting, repi, z, shot, wtp, p, path, trvt, q)
+      !
+      !           x = mean(path)
+      !
+      !           IF (x .lt. pathmin(sheet, rec)) THEN
+      !             path0(sheet, rec) = x
+      !             trvt0(sheet, rec) = mean(trvt)
+      !
+      !           pathmax(sheet, wtp, rec) = MAX(pathmax(sheet, wtp, rec), x)
+      !           pathmin(sheet, wtp, rec) = MIN(pathmin(sheet, wtp, rec), x)
+      !
+      !           x = mean(trvt)
+      !
+      !           trvtmax(rec) = MAX()
+      !
+      !
+      !         ENDDO
+      !
+      !       ENDDO   !< end loop over wave types
+      !
+      !     ENDDO   !< end loop over receivers
+      !
+      !   ENDDO
+      ! ENDDO  !< end loop over triangles
+      !
+      !
+      !
+      !
+      !
+      !
+      !     ! compute max source-receiver distance
+      !     DO icr = 1, 3
+      !       DO rec = 1, SIZE(input%receiver)
+      !         rmax = MAX(rmax, HYPOT(x(icr) - input%receiver(rec)%x, y(icr) - input%receiver(rec)%y))
+      !       ENDDO
+      !     ENDDO
+      !
+      !   ENDDO
+      ! ENDDO
+      ! !$omp end parallel do
+
+
+    END SUBROUTINE lookup_coda
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================

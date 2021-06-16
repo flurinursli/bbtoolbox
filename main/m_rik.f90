@@ -742,22 +742,6 @@ MODULE m_rik
 
       ENDDO
 
-      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
-      ! -------------------------------------------- normalize integral to unity ---------------------------------------------------
-
-      trapz = 0.5_r32 * mrf(1)
-
-      DO it = 2, imax - 1
-        trapz = trapz + mrf(it)
-      ENDDO
-
-      trapz = trapz + 0.5_r32 * mrf(imax)
-      trapz = trapz * dt
-
-      DO it = 1, imax
-        mrf(it) = mrf(it) / trapz
-      ENDDO
-
     END SUBROUTINE mrf_rik
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
