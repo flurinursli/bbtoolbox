@@ -22,7 +22,7 @@ MODULE m_wkbj
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
   TYPE :: ray
-    REAL(r64), ALLOCATABLE, DIMENSION(:) :: pn, x, t, q, r
+    REAL(r64), ALLOCATABLE, DIMENSION(:) :: pn, x, t, q, r, sheet
   END TYPE ray
 
   TYPE(ray), ALLOCATABLE, DIMENSION(:,:) :: wkbj
@@ -572,6 +572,7 @@ MODULE m_wkbj
           vtt(nrays) = travtm
           vqp(nrays) = qp
           vr(nrays)  = r
+          vsheet(nrays) = isheet
 
 #ifdef DEBUG
           WRITE(lu, 105) pn, xx, r, travtm, qp, isheet, itypef, itypeo
@@ -598,7 +599,7 @@ MODULE m_wkbj
       ENDIF
 
       ALLOCATE(wkbj(src, wtp)%pn(nrays), wkbj(src, wtp)%x(nrays), wkbj(src, wtp)%t(nrays), wkbj(src, wtp)%q(nrays))
-      ALLOCATE(wkbj(src, wtp)%r(nrays))
+      ALLOCATE(wkbj(src, wtp)%r(nrays), wkbj(src, wtp)%sheet(nrays))
 
       DO i = 1, nrays
         wkbj(src, wtp)%pn(i) = vpn(i)
@@ -606,8 +607,8 @@ MODULE m_wkbj
         wkbj(src, wtp)%t(i)  = vtt(i)
         wkbj(src, wtp)%q(i)  = vqp(i)
         wkbj(src, wtp)%r(i)  = vr(i)
+        wkbj(src, wtp)%sheet(i) = vsheet(i)
       ENDDO
-
 
     END SUBROUTINE spred
 
@@ -963,9 +964,9 @@ MODULE m_wkbj
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE interpray(is, sr, src, wtp, po, ro, to, qo)
+    SUBROUTINE interpray(isheet, sr, src, wtp, po, ro, to, qo)
 
-      INTEGER(i32),  INTENT(INOUT) :: is
+      INTEGER(i32),  INTENT(IN)    :: isheet
       REAL(r32),     INTENT(IN)    :: sr
       INTEGER(i32),  INTENT(IN)    :: src, wtp
       REAL(r32),     INTENT(OUT)   :: po, ro, to, qo
@@ -974,31 +975,32 @@ MODULE m_wkbj
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
-      ASSOCIATE(p => wkbj(src, wtp)%pn, q => wkbj(src, wtp)%q, t => wkbj(src, wtp)%t, x => wkbj(src, wtp)%x, r => wkbj(src, wtp)%r)
+      ASSOCIATE(p => wkbj(src, wtp)%pn, q => wkbj(src, wtp)%q, t => wkbj(src, wtp)%t, x => wkbj(src, wtp)%x,    &
+                r => wkbj(src, wtp)%r, sheet => wkbj(src, wtp)%sheet)
 
         po = 0._r32; ro = 0._r32; to = 0._r32; qo = 0._r32
 
-        DO i = is, SIZE(p) - 1
+        DO i = 1, SIZE(p) - 1
 
-          IF ( ((sr .ge. x(i)) .and. (sr .lt. x(i + 1))) .or. ((sr .le. x(i)) .and. (sr .gt. x(i + 1))) ) THEN
+          IF (sheet(i) .eq. isheet) THEN
 
-            delta = (sr - x(i)) / (x(i + 1) - x(i))
+            IF ( ((sr .ge. x(i)) .and. (sr .lt. x(i + 1))) .or. ((sr .le. x(i)) .and. (sr .gt. x(i + 1))) ) THEN
 
-            po = p(i) + (p(i + 1) - p(i)) * delta
-            ! xo = x(i) + (x(i + 1) - x(i)) * delta
-            ro = r(i) + (r(i + 1) - r(i)) * delta
-            to = t(i) + (t(i + 1) - t(i)) * delta
-            qo = q(i) + (q(i + 1) - q(i)) * delta
+              delta = (sr - x(i)) / (x(i + 1) - x(i))
 
-            is = i + 1       !< update index for next call in order to skip current branch
+              po = p(i) + (p(i + 1) - p(i)) * delta
+              ! xo = x(i) + (x(i + 1) - x(i)) * delta
+              ro = r(i) + (r(i + 1) - r(i)) * delta
+              to = t(i) + (t(i + 1) - t(i)) * delta
+              qo = q(i) + (q(i + 1) - q(i)) * delta
 
-            EXIT
+              EXIT
+
+            ENDIF
 
           ENDIF
 
         ENDDO
-
-        is = MIN(is, SIZE(p))
 
       END ASSOCIATE
 

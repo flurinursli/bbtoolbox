@@ -55,7 +55,7 @@ MODULE m_isochron
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE solve_isochron_integral(ok, band, pl, vel, iter)
+    SUBROUTINE solve_isochron_integral(ok, rec, band, pl, vel, iter)
 
       ! Purpose:
       !   to evaluate the isochron integral for plane "pl" embedded in velocity model "vel" and iteration "iter". Integration occurs
@@ -71,27 +71,46 @@ MODULE m_isochron
       USE, NON_INTRINSIC :: m_fft_real
 
       INTEGER(i32),                             INTENT(OUT) :: ok
-      INTEGER(i32),                             INTENT(IN)  :: band, pl, vel, iter
+      INTEGER(i32),                             INTENT(IN)  :: rec, band, pl, vel, iter
       COMPLEX(r32)                                          :: fxpfzs, fzpfxs, g31, g21, g23, ga, gb
       COMPLEX(r32),              DIMENSION(3,3)             :: fp, fs, g
       COMPLEX(r32), ALLOCATABLE, DIMENSION(:)               :: fxp, fzp, tur, tui, tv
-      INTEGER(i32)                                          :: n, i, j, ref, icr, totnutr, seed, src, rec, sheet, wtp, it1, it2, ic
+      INTEGER(i32)                                          :: n, i, j, ref, icr, totnutr, seed, src, sheet, wtp, it1, it2, ic
       INTEGER(i32)                                          :: it, cut, model, npts, noslip
       INTEGER(i32),              DIMENSION(3)               :: iuc, ivc, abv, blw, shot
       ! INTEGER(i32), ALLOCATABLE, DIMENSION(:,:)             :: ncuts, active
       REAL(r32)                                             :: m0, moment, strike, dip, urec, vrec, wrec, taumin, taumax, sd, cd, dt
       REAL(r32)                                             :: srfvel, c, scale
       REAL(r32)                                             :: avepath, avetrvt, scattering, attenuation, t, direct
+      REAL(r32),                 DIMENSION(2)               :: ncuts, active
       REAL(r32),                 DIMENSION(3)               :: u, v, w, x, y, z, slip, rupture, rake, nrl, rho, alpha, beta, mu
       REAL(r32),                 DIMENSION(3)               :: p, q, path, trvt, repi, tau, sr, cr, velloc
       REAL(r32),    ALLOCATABLE, DIMENSION(:)               :: fsp, mrf, envelope, stack, time
-      REAL(r32),    ALLOCATABLE, DIMENSION(:,:)             :: rtri, itri, ncuts, active
-      REAL(r32),    ALLOCATABLE, DIMENSION(:,:,:)           :: rseis, iseis, seis
+      REAL(r32),    ALLOCATABLE, DIMENSION(:,:)             :: rtri, itri, rseis, iseis, seis
       REAL(r64)                                             :: tictoc
       REAL(r64),                 DIMENSION(5)               :: timer
       REAL(r64),                 DIMENSION(10)              :: otimer
 
       !-----------------------------------------------------------------------------------------------------------------------------
+
+      ok = 0
+
+      ! don't do anything if velocity model is not the right one for current receiver
+      IF (input%receiver(rec)%velocity .ne. vel) RETURN         !< consider only receivers for current velocity model "vel"
+
+      ASSOCIATE(model => input%attenuation(1), fmax => input%coda%fmax, dt => timeseries%sp%dt)
+
+        IF (input%advanced%verbose .eq. 2) THEN
+          CALL update_log(num2char('Integration for recv', width=30, fill='.') + num2char(rec, width=15, justify='r') + '|')
+          CALL update_log(num2char('<freq band>', width=30, justify='c') +   &
+                          num2char(num2char(model%lcut(band), notation='f', width=6, precision=1) + ', ' +   &
+                                   num2char(MIN(model%hcut(band), fmax), notation='f', width=6, precision=1),           &
+                          width=15, justify='r') + '|')
+        ENDIF
+
+      END ASSOCIATE
+
+      model = input%receiver(rec)%attenuation      !< attenuation model
 
 #ifdef PERF
       timer(:)  = 0._r64
@@ -105,7 +124,7 @@ MODULE m_isochron
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! ---------------------------------------- lookup table free-surface coefficients --------------------------------------------
 
-      CALL lookup_fs(ok, fsp, fxp, fzp)
+      CALL lookup_fs(ok, rec, fsp, fxp, fzp)
 
       IF (ok .ne. 0) RETURN
 
@@ -118,15 +137,20 @@ MODULE m_isochron
 
       npts = NINT(timeseries%sp%time(SIZE(timeseries%sp%time)) / dt) + 2
 
-      ALLOCATE(seis(npts, 3, SIZE(input%receiver)), rseis(npts, 3, SIZE(input%receiver)), iseis(npts, 3, SIZE(input%receiver)))
+      ALLOCATE(seis(npts, 3), rseis(npts, 3), iseis(npts, 3))
       ALLOCATE(rtri(npts, 3), itri(npts, 3))
       ALLOCATE(time(npts), mrf(npts), envelope(npts), tur(npts/2+1), tui(npts/2+1), tv(npts/2+1))
 
-      seis(:, :, :) = 0._r32
+      seis(:, :) = 0._r32
 
       DO it = 1, npts
         time(it) = (it - 1) * dt
       ENDDO
+
+      IF (input%advanced%verbose .eq. 2) THEN
+        CALL update_log(num2char('<time step>', width=30, justify='c') +    &
+                        num2char(dt, notation='f', width=15, precision=4, justify='r') + '|')
+      ENDIF
 
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! --------------------------------------- solve integral for each mesh refinement --------------------------------------------
@@ -141,32 +165,24 @@ MODULE m_isochron
       ! set "seed" such that random numbers depend on fault plane number and iteration
       seed = input%source%seed + (iter - 1) * SIZE(plane) + pl
 
-      ! arrays to keep track of isochron cuts
-      ALLOCATE(ncuts(2, SIZE(input%receiver)), active(2, SIZE(input%receiver)))
-
       ! loop over mesh refinements
       DO ref = 1, SIZE(nvtr)
 
         IF (input%advanced%verbose .eq. 2) THEN
-          CALL update_log(num2char('Integration on mesh', width=30, fill='.') + num2char(ref, width=15, justify='r') + '|')
-          CALL update_log(num2char('<freq band>', width=30, justify='c') +   &
-                          num2char(num2char(input%attenuation(1)%lcut(band), notation='f', width=6, precision=1) + ', ' +   &
-                                   num2char(input%attenuation(1)%hcut(band), notation='f', width=6, precision=1),           &
-                          width=15, justify='r') + '|', blankline=.false.)
+          CALL update_log(num2char('<mesh refinement>', width=30, justify='c') + num2char(ref, width=15, justify='r') + '|')
         ENDIF
 
-        ! these contain contribution for all receivers for each mesh refinement
-        rseis(:, :, :) = 0._r32
-        iseis(:, :, :) = 0._r32
+        ! these stack contributions from each mesh refinement
+        DO ic = 1, 3
+          DO it = 1, npts
+            rseis(it, ic) = 0._r32
+            iseis(it, ic) = 0._r32
+          ENDDO
+        ENDDO
 
-        noslip      = 0       !< total triangles having zero slip
-        ncuts(:,:)  = 0       !< total isochron cuts for each wave type and receiver
-        active(:,:) = 0       !< total triangles that were cut
-
-        IF (input%advanced%verbose .eq. 2) THEN
-          CALL update_log(num2char('<time step>', width=30, justify='c') +    &
-                          num2char(dt, notation='f', width=15, precision=4, justify='r') + '|')
-        ENDIF
+        noslip    = 0       !< total triangles having zero slip
+        ncuts(:)  = 0       !< total isochron cuts for each wave type
+        active(:) = 0       !< total triangles that were cut
 
         ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
         ! ------------------------------------------ define RIK model on mesh nodes ------------------------------------------------
@@ -217,7 +233,7 @@ MODULE m_isochron
 #endif
 
         ! shoot rays between receivers and a set of sources spanning (vertically) current mesh
-        CALL lookup_coda(ok, ref, pl, vel)
+        CALL lookup_coda(ok, ref, rec, pl, vel)
 
 #ifdef PERF
         CALL watch_stop(tictoc, COMM)
@@ -231,7 +247,7 @@ MODULE m_isochron
         CALL make_fftw_plan([npts])
 
         !$omp parallel do default(shared) private(i, j, iuc, ivc, icr, slip, u, v, w, x, y, z, nrl, strike, dip, rake, sd, cd)   &
-        !$omp private(sr, cr, tictoc, rupture, alpha, beta, rho, mu, ic, src, shot, mrf, rec, urec, vrec, wrec, repi, model)     &
+        !$omp private(sr, cr, tictoc, rupture, alpha, beta, rho, mu, ic, src, shot, mrf, urec, vrec, wrec, repi)     &
         !$omp private(rtri, itri, wtp, abv, blw, velloc, srfvel, scattering, sheet, p, path, trvt, q, tau, taumin, taumax, it1)   &
         !$omp private(it2, g, attenuation, cut, c, it, tur, tui, tv)   &
         !$omp reduction(+: m0, rseis, iseis, otimer, ncuts, active, noslip)
@@ -357,194 +373,183 @@ MODULE m_isochron
             ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
             ! -------------------------------------- triangle contribution to ground motion ----------------------------------------
 
-            ! loop over receivers
-            DO rec = 1, SIZE(input%receiver)
+            urec = input%receiver(rec)%x
+            vrec = input%receiver(rec)%y
+            wrec = 0._r32
 
-              IF (input%receiver(rec)%velocity .ne. vel) CYCLE         !< consider only receivers for current velocity model "vel"
+            CALL rotate(urec, vrec, wrec, 0._r32, 0._r32, -strike)       !< move to "u-t" coordinates for receiver
 
-              urec = input%receiver(rec)%x
-              vrec = input%receiver(rec)%y
-              wrec = 0._r32
+            DO icr = 1, 3
+              repi(icr) = HYPOT(urec - u(icr), vrec - v(icr)) / 1000._r32        !< epicentral distance (corner-receiver)
+            ENDDO
 
-              CALL rotate(urec, vrec, wrec, 0._r32, 0._r32, -strike)       !< move to "u-t" coordinates for receiver
-
-              DO icr = 1, 3
-                repi(icr) = HYPOT(urec - u(icr), vrec - v(icr)) / 1000._r32        !< epicentral distance (corner-receiver)
+            ! initialize arrays with triangle contribution
+            DO ic = 1, 3
+              DO it = 1, npts
+                rtri(it, ic) = 0._r32
+                itri(it, ic) = 0._r32
               ENDDO
+            ENDDO
 
-              model = input%receiver(rec)%attenuation      !< attenuation model
+            ! loop over wave types
+            DO wtp = 1, 2
 
-              ! initialize arrays with triangle contribution
-              DO ic = 1, 3
-                DO it = 1, npts
-                  rtri(it, ic) = 0._r32
-                  itri(it, ic) = 0._r32
-                ENDDO
-              ENDDO
+              ! abv(:) = 1       !< reset sheet-related index
+              ! blw(:) = 1
 
-              ! loop over wave types
-              DO wtp = 1, 2
+              IF (wtp .eq. 1) THEN
+                velloc(:)  = alpha(:) / 1000._r32
+                srfvel     = input%velocity(input%receiver(rec)%velocity)%vp(1) / 1000._r32
+                scattering = input%attenuation(model)%gpp(band) + input%attenuation(model)%gps(band)             !< P
+              ELSE
+                velloc(:)  = beta(:) / 1000._r32
+                srfvel     = input%velocity(input%receiver(rec)%velocity)%vs(1) / 1000._r32
+                scattering = input%attenuation(model)%gss(band) + input%attenuation(model)%gps(band) / 6._r32    !< S
+              ENDIF
 
-                abv(:) = 1       !< reset sheet-related index
-                blw(:) = 1
-
-                IF (wtp .eq. 1) THEN
-                  velloc(:)  = alpha(:) / 1000._r32
-                  srfvel     = input%velocity(input%receiver(rec)%velocity)%vp(1) / 1000._r32
-                  scattering = input%attenuation(model)%gpp(band) + input%attenuation(model)%gps(band)             !< P
-                ELSE
-                  velloc(:)  = beta(:) / 1000._r32
-                  srfvel     = input%velocity(input%receiver(rec)%velocity)%vs(1) / 1000._r32
-                  scattering = input%attenuation(model)%gss(band) + input%attenuation(model)%gps(band) / 6._r32    !< S
-                ENDIF
-
-                DO sheet = 1, maxsheets(wtp)
+              DO sheet = 1, maxsheets(wtp)
 
 #ifdef PERF
-                  CALL watch_start(tictoc, COMM)
+                CALL watch_start(tictoc, COMM)
 #endif
 
-                  CALL raypar_at_corners(abv, blw, shooting, repi, z, shot, wtp, p, path, trvt, q)
+                CALL raypar_at_corners(sheet, shooting, repi, z, shot, wtp, p, path, trvt, q)
 
 #ifdef PERF
-                  CALL watch_stop(tictoc, COMM)
-                  otimer(4) = otimer(4) + tictoc
+                CALL watch_stop(tictoc, COMM)
+                otimer(4) = otimer(4) + tictoc
 #endif
 
-                  ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
-                  ! ------------------------------------------ time integration limits -------------------------------------------
+                ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+                ! ------------------------------------------ time integration limits -----------------------------------------------
 
 
 ! print*, 'r ', rec, wtp, sheet, ' x ', mean(repi), ' - ', path, ' - ', trvt
 
 
+                IF (ANY(trvt .eq. 0._r32)) CYCLE       !< all corners must belong to same sheet
 
+                tau(:) = trvt(:) + rupture(:)          !< sum travel-time and rupture time
 
-                  IF (ANY(trvt .eq. 0._r32)) CYCLE       !< all corners must belong to same sheet
+                taumax = MAXVAL(tau)
+                taumin = MINVAL(tau)
 
-                  tau(:) = trvt(:) + rupture(:)          !< sum travel-time and rupture time
+                it1 = NINT(taumin / dt) + 1
 
-                  taumax = MAXVAL(tau)
-                  taumin = MINVAL(tau)
+                it2 = it1 + (taumax - taumin) / dt - 1      !< when (taumax-taumin) < dt, it2 < it1
 
-                  it1 = NINT(taumin / dt) + 1
-
-                  it2 = it1 + (taumax - taumin) / dt - 1      !< when (taumax-taumin) < dt, it2 < it1
-
-                  it2 = MIN(npts, it2)                        !< limit to max number of time points
+                it2 = MIN(npts, it2)                        !< limit to max number of time points
 
 
 ! print*, 't ', rec, wtp, sheet, ' - ', taumin, taumax, ' - ', it1, it2
 
 
-                  ! jump to next sheet if no isochron is spanned (i.e. no cuts)
-                  IF (it2 .lt. it1) CYCLE
+                ! jump to next sheet if no isochron is spanned (i.e. no cuts)
+                IF (it2 .lt. it1) CYCLE
 
-                  active(wtp, rec) = active(wtp, rec) + 1
+                active(wtp) = active(wtp) + 1
 
-                  ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
-                  ! ------------------------------------------ evaluate integral kernel ------------------------------------------
-
-#ifdef PERF
-                  CALL watch_start(tictoc, COMM)
-#endif
-
-                  CALL integral_kernel(wtp, urec, vrec, u, v, velloc, srfvel, sd, cd, sr, cr, p, fsp, fxp, fzp, g)
-
-                  ! complete integral kernel
-                  DO icr = 1, 3
-                    g(1, icr) = g(1, icr) * slip(icr) * mu(icr) * q(icr)
-                    g(2, icr) = g(2, icr) * slip(icr) * mu(icr) * q(icr)
-                    g(3, icr) = g(3, icr) * slip(icr) * mu(icr) * q(icr)
-                  ENDDO
+                ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+                ! ------------------------------------------ evaluate integral kernel ----------------------------------------------
 
 #ifdef PERF
-                  CALL watch_stop(tictoc, COMM)
-                  otimer(5) = otimer(5) + tictoc
+                CALL watch_start(tictoc, COMM)
 #endif
 
-                  ! term for direct wave amplitude attenuation
-                  attenuation = EXP(-(mean(path) * scattering + input%attenuation(model)%b(band) * mean(trvt)) / 2._r32)
+                CALL integral_kernel(wtp, urec, vrec, u, v, velloc, srfvel, sd, cd, sr, cr, p, fsp, fxp, fzp, g)
 
-#ifdef PERF
-                  CALL watch_start(tictoc, COMM)
-#endif
-
-                  ! "rtri" and "itri" contain direct wave contribution for current triangle and receiver
-                  CALL time_integration(ref, it1, it2, dt, attenuation, tau, g, c, cut, rtri, itri)
-
-                  ncuts(wtp, rec) = ncuts(wtp, rec) + cut
-
-! print*, 'c ', rec, wtp, sheet, ' - ', cut, ' - ', ncuts(wtp, rec), ' - ', active(wtp, rec)
-
-
-#ifdef PERF
-                  CALL watch_stop(tictoc, COMM)
-                  otimer(6) = otimer(6) + tictoc
-#endif
-
-                  ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
-                  ! ------------------------------------------ add coda contribution -----------------------------------------------
-
-                  ! (averaged) amplitude of direct wave for isotropic radiation (0.63) at free-surface (2)
-                  ! direct = (2._r32 * ABS(mean(q)) * mean(mu) * mean(slip) * c) * 0.63_r32 * 2._r32
-                  !
-                  ! avepath = mean(path)
-                  ! avetrvt = mean(trvt)
-
-                  ! DO ic = 1, 3
-                  !   DO it = it1, it2
-                  !     rtri(it, ic) = rtri(it, ic) !+ envelope(it) * noise(it, ic)
-                  !   ENDDO
-                  ! ENDDO
-
-                ENDDO     !< end loop over sheets
-
-              ENDDO    !< end loop over wave types
-
-              ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
-              ! --------------------------------------------- convolution with MRF -------------------------------------------------
-
-#ifdef PERF
-              CALL watch_start(tictoc, COMM)
-#endif
-
-              DO ic = 1, 3
-
-                CALL fft(rtri(:, ic), tur)
-                CALL fft(itri(:, ic), tui)
-
-                ! multiply spectra
-                DO it = 1, npts/2 + 1
-                  tur(it) = tur(it) * tv(it)
-                  tui(it) = tui(it) * tv(it)
+                ! complete integral kernel
+                DO icr = 1, 3
+                  g(1, icr) = g(1, icr) * slip(icr) * mu(icr) * q(icr)
+                  g(2, icr) = g(2, icr) * slip(icr) * mu(icr) * q(icr)
+                  g(3, icr) = g(3, icr) * slip(icr) * mu(icr) * q(icr)
                 ENDDO
 
-                CALL ifft(rtri(:, ic), tur)
-                CALL ifft(itri(:, ic), tui)
-
-              ENDDO
-
 #ifdef PERF
-              CALL watch_stop(tictoc, COMM)
-              otimer(9) = otimer(9) + tictoc
+                CALL watch_stop(tictoc, COMM)
+                otimer(5) = otimer(5) + tictoc
 #endif
 
-              ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
-              ! -------------------------------------------- rotate & stack --------------------------------------------------------
+                ! term for direct wave amplitude attenuation
+                attenuation = EXP(-(mean(path) * scattering + input%attenuation(model)%b(band) * mean(trvt)) / 2._r32)
 
-              ! move back from "u/t" (fault-parallel/fault-normal) to "x/y" coordinates
-              CALL rotate(rtri(:, 1), rtri(:, 2), rtri(:, 3), 0._r32, 0._r32, strike)
-              CALL rotate(itri(:, 1), itri(:, 2), itri(:, 3), 0._r32, 0._r32, strike)
+#ifdef PERF
+                CALL watch_start(tictoc, COMM)
+#endif
 
-              DO ic = 1, 3
-                DO it = 1, npts
-                  rseis(it, ic, rec) = rseis(it, ic, rec) + rtri(it, ic)
-                  iseis(it, ic, rec) = iseis(it, ic, rec) + itri(it, ic)
-                ENDDO
+                ! "rtri" and "itri" contain direct wave contribution for current triangle and receiver
+                CALL time_integration(ref, it1, it2, dt, attenuation, tau, g, c, cut, rtri, itri)
+
+                ncuts(wtp) = ncuts(wtp) + cut
+
+! print*, 'c ', rec, wtp, sheet, ' - ', cut, ' - ', ncuts(wtp), ' - ', active(wtp)
+
+
+#ifdef PERF
+                CALL watch_stop(tictoc, COMM)
+                otimer(6) = otimer(6) + tictoc
+#endif
+
+                ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+                ! ------------------------------------------ add coda contribution -----------------------------------------------
+
+                ! (averaged) amplitude of direct wave for isotropic radiation (0.63) at free-surface (2)
+                ! direct = (2._r32 * ABS(mean(q)) * mean(mu) * mean(slip) * c) * 0.63_r32 * 2._r32
+                !
+                ! avepath = mean(path)
+                ! avetrvt = mean(trvt)
+
+                ! DO ic = 1, 3
+                !   DO it = it1, it2
+                !     rtri(it, ic) = rtri(it, ic) !+ envelope(it) * noise(it, ic)
+                !   ENDDO
+                ! ENDDO
+
+              ENDDO     !< end loop over sheets
+
+            ENDDO    !< end loop over wave types
+
+            ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+            ! --------------------------------------------- convolution with MRF -------------------------------------------------
+
+#ifdef PERF
+            CALL watch_start(tictoc, COMM)
+#endif
+
+            DO ic = 1, 3
+
+              CALL fft(rtri(:, ic), tur)
+              CALL fft(itri(:, ic), tui)
+
+              ! multiply spectra
+              DO it = 1, npts/2 + 1
+                tur(it) = tur(it) * tv(it)
+                tui(it) = tui(it) * tv(it)
               ENDDO
 
-            ENDDO   !< end loop over receivers
+              CALL ifft(rtri(:, ic), tur)
+              CALL ifft(itri(:, ic), tui)
+
+            ENDDO
+
+#ifdef PERF
+            CALL watch_stop(tictoc, COMM)
+            otimer(9) = otimer(9) + tictoc
+#endif
+
+            ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+            ! -------------------------------------------- rotate & stack --------------------------------------------------------
+
+            ! move back from "u/t" (fault-parallel/fault-normal) to "x/y" coordinates
+            CALL rotate(rtri(:, 1), rtri(:, 2), rtri(:, 3), 0._r32, 0._r32, strike)
+            CALL rotate(itri(:, 1), itri(:, 2), itri(:, 3), 0._r32, 0._r32, strike)
+
+            DO ic = 1, 3
+              DO it = 1, npts
+                rseis(it, ic) = rseis(it, ic) + rtri(it, ic)
+                iseis(it, ic) = iseis(it, ic) + itri(it, ic)
+              ENDDO
+            ENDDO
 
             m0 = m0 + mean(mu * slip)        !< average moment contribution (area is included later)
 
@@ -565,16 +570,13 @@ MODULE m_isochron
         CALL watch_start(tictoc, COMM)
 #endif
 
-        !$omp parallel do default(shared) private(rec, ic, it)
-        DO rec = 1, SIZE(input%receiver)
-          DO ic = 1, 3
-            CALL hilbert(iseis(:, ic, rec))
-            DO it = 1, npts
-              seis(it, ic, rec) = seis(it, ic, rec) + (rseis(it, ic, rec) - iseis(it, ic, rec)) * dt     !< dt is from convolution
-            ENDDO
+        DO ic = 1, 3
+          CALL hilbert(iseis(:, ic))
+          DO it = 1, npts
+            seis(it, ic) = seis(it, ic) + (rseis(it, ic) - iseis(it, ic)) * dt         !< dt is from convolution
           ENDDO
         ENDDO
-        !$omp end parallel do
+
 
 #ifdef PERF
         CALL watch_stop(tictoc, COMM)
@@ -583,20 +585,13 @@ MODULE m_isochron
 
         IF (input%advanced%verbose .eq. 2) THEN
 
-          CALL update_log(num2char('<avg cuts>', justify='c', width=30) +           &
-                          num2char('Min P', width=15, justify='r') + '|' +  num2char('Max P', width=15, justify='r') + '|' +  &
-                          num2char('Min S', width=15, justify='r') + '|' +  num2char('Max S', width=15, justify='r') + '|' +  &
+          CALL update_log(num2char('<cuts>', justify='c', width=30) +           &
+                          num2char('P', width=15, justify='r') + '|' +  num2char('S', width=15, justify='r') + '|' +  &
                           num2char('Skipped', width=15, justify='r') + '|')
 
           CALL update_log(num2char('', width=30)  +  &
-                          num2char(num2char(MINVAL(ncuts(1,:)/active(1,:)), notation='f', width=6, precision=1) + ' (' +   &
-                                   num2char(MINLOC(ncuts(1,:)/active(1,:),dim=1)) + ')', width=15, justify='r') + '|'  +   &
-                          num2char(num2char(MAXVAL(ncuts(1,:)/active(1,:)), notation='f', width=6, precision=1) + ' (' +   &
-                                   num2char(MAXLOC(ncuts(1,:)/active(1,:),dim=1)) + ')', width=15, justify='r') + '|'  +   &
-                          num2char(num2char(MINVAL(ncuts(2,:)/active(2,:)), notation='f', width=6, precision=1) + ' (' +   &
-                                   num2char(MINLOC(ncuts(2,:)/active(2,:),dim=1)) + ')', width=15, justify='r') + '|'  +   &
-                          num2char(num2char(MAXVAL(ncuts(2,:)/active(2,:)), notation='f', width=6, precision=1) + ' (' +   &
-                                   num2char(MAXLOC(ncuts(2,:)/active(2,:),dim=1)) + ')', width=15, justify='r') + '|'  +   &
+                          num2char(ncuts(1)/active(1), notation='f', width=15, precision=1, justify='r') + '|'  +   &
+                          num2char(ncuts(2)/active(2), notation='f', width=15, precision=1, justify='r') + '|'  +   &
                           num2char(num2char(noslip) + ' (' +  &
                                    num2char(100*noslip/(totnutr*nvtr(ref))) + '%)', width=15, justify='r') + '|', blankline=.false.)
 
@@ -622,64 +617,31 @@ print*, 'scale ', scale
       ASSOCIATE(model => input%attenuation(1), fmax => input%coda%fmax)
 
         CALL make_iir_plan(ok, 'butter', dt, [model%lcut(band), MIN(model%hcut(band), fmax)], 'pass', 2, zphase = .true.)
-        ! CALL make_iir_plan(ok, 'butter', dt, [MIN(model%hcut(band), fmax)], 'low', 4, zphase = .true.)
-
 
         IF (ok .ne. 0) THEN
           CALL report_error(filter_error(ok))
           RETURN
         ENDIF
 
-        DO rec = 1, SIZE(input%receiver)
-          DO ic = 1, 3
+        DO ic = 1, 3
 
-            seis(:, ic, rec) = iir(seis(:, ic, rec), ok)                       !< filter
+          seis(:, ic) = iir(seis(:, ic), ok)                       !< filter
 
-            seis(:, ic, rec) = differentiate(seis(:, ic, rec), dt)             !< move from displacement to velocity
+          seis(:, ic) = differentiate(seis(:, ic), dt)             !< move from displacement to velocity
 
-            CALL interpolate(time, seis(:, ic, rec), timeseries%sp%time, stack)
+          CALL interpolate(time, seis(:, ic), timeseries%sp%time, stack)
 
-            IF (ic .eq. 1) THEN
-              timeseries%sp%x(:, rec) = timeseries%sp%x(:, rec) + stack(:) * scale
-            ELSEIF (ic .eq. 2) THEN
-              timeseries%sp%y(:, rec) = timeseries%sp%y(:, rec) + stack(:) * scale
-            ELSE
-              timeseries%sp%z(:, rec) = timeseries%sp%z(:, rec) + stack(:) * scale
-            ENDIF
+          IF (ic .eq. 1) THEN
+            timeseries%sp%x(:, rec) = timeseries%sp%x(:, rec) + stack(:) * scale
+          ELSEIF (ic .eq. 2) THEN
+            timeseries%sp%y(:, rec) = timeseries%sp%y(:, rec) + stack(:) * scale
+          ELSE
+            timeseries%sp%z(:, rec) = timeseries%sp%z(:, rec) + stack(:) * scale
+          ENDIF
 
-          ENDDO
         ENDDO
 
         CALL destroy_iir_plan()
-
-        ! CALL make_iir_plan(ok, 'butter', dt, [model%lcut(band)], 'high', 4, zphase = .true.)
-        !
-        ! IF (ok .ne. 0) THEN
-        !   CALL report_error(filter_error(ok))
-        !   RETURN
-        ! ENDIF
-        !
-        ! DO rec = 1, SIZE(input%receiver)
-        !   DO ic = 1, 3
-        !
-        !     seis(:, ic, rec) = iir(seis(:, ic, rec), ok)                       !< filter
-        !
-        !     seis(:, ic, rec) = differentiate(seis(:, ic, rec), dt)             !< move from displacement to velocity
-        !
-        !     CALL interpolate(time, seis(:, ic, rec), timeseries%sp%time, stack)
-        !
-        !     IF (ic .eq. 1) THEN
-        !       timeseries%sp%x(:, rec) = timeseries%sp%x(:, rec) + stack(:) * scale
-        !     ELSEIF (ic .eq. 2) THEN
-        !       timeseries%sp%y(:, rec) = timeseries%sp%y(:, rec) + stack(:) * scale
-        !     ELSE
-        !       timeseries%sp%z(:, rec) = timeseries%sp%z(:, rec) + stack(:) * scale
-        !     ENDIF
-        !
-        !   ENDDO
-        ! ENDDO
-        !
-        ! CALL destroy_iir_plan()
 
       END ASSOCIATE
 
@@ -959,9 +921,9 @@ print*, 'scale ', scale
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE raypar_at_corners(abv, blw, shooting, repi, z, shot, wtp, p, path, trvt, q)
+    SUBROUTINE raypar_at_corners(sheet, shooting, repi, z, shot, wtp, p, path, trvt, q)
 
-      INTEGER(i32), DIMENSION(3), INTENT(INOUT) :: abv, blw
+      INTEGER(i32),               INTENT(IN)    :: sheet
       REAL(r32),    DIMENSION(:), INTENT(IN)    :: shooting
       REAL(r32),    DIMENSION(3), INTENT(IN)    :: repi, z
       INTEGER(i32), DIMENSION(3), INTENT(IN)    :: shot
@@ -976,8 +938,8 @@ print*, 'scale ', scale
 
       DO icr = 1, 3
 
-        CALL interpray(abv(icr), repi(icr), shot(icr), wtp, po(1), ro(1), to(1), qo(1))        !< shot-point above
-        CALL interpray(blw(icr), repi(icr), shot(icr) + 1, wtp, po(2), ro(2), to(2), qo(2))    !< shot-point below
+        CALL interpray(sheet, repi(icr), shot(icr), wtp, po(1), ro(1), to(1), qo(1))        !< shot-point above
+        CALL interpray(sheet, repi(icr), shot(icr) + 1, wtp, po(2), ro(2), to(2), qo(2))    !< shot-point below
 
         ! interpolate values at depth "z(icr)" only if corner is fully inside sheet
         IF (ALL(to .ne. 0._r32)) THEN
@@ -999,7 +961,7 @@ print*, 'scale ', scale
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE lookup_fs(ok, fsp, fxp, fzp)
+    SUBROUTINE lookup_fs(ok, rec, fsp, fxp, fzp)
 
       ! Purpose:
       !   to compute a lookup table for free-surface coefficients "fxp" and "fzp" at "fsp" points.
@@ -1011,24 +973,16 @@ print*, 'scale ', scale
       !
 
       INTEGER(i32),                            INTENT(OUT) :: ok
+      INTEGER(i32),                            INTENT(IN)  :: rec
       REAL(r32),    ALLOCATABLE, DIMENSION(:), INTENT(OUT) :: fsp
       COMPLEX(r32), ALLOCATABLE, DIMENSION(:), INTENT(OUT) :: fxp, fzp
-      INTEGER(i32)                                         :: rec, n
+      INTEGER(i32)                                         :: n
       REAL(r32)                                            :: alpha, beta
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
-      alpha = BIG
-      beta  = BIG
-
-      ! find minimum velocities amongst all receivers
-      DO rec = 1, SIZE(input%receiver)
-        alpha = MIN(alpha, input%velocity(input%receiver(rec)%velocity)%vp(1))
-        beta  = MIN(beta, input%velocity(input%receiver(rec)%velocity)%vs(1))
-      ENDDO
-
-      alpha = alpha / 1000._r32
-      beta  = beta / 1000._r32
+      alpha = input%velocity(input%receiver(rec)%velocity)%vp(1) / 1000._r32
+      beta  = input%velocity(input%receiver(rec)%velocity)%vs(1) / 1000._r32
 
       n = (1._r32 / beta) / DP + 1      !< coefficients are computed at "n" slowness points
 
@@ -1786,8 +1740,8 @@ print*, 'scale ', scale
 
       IF (input%advanced%verbose .eq. 2) THEN
 
-        CALL update_log(num2char('<sheets>', justify='c', width=30) + num2char('P-wave', width=15, justify='r') + '|' +  &
-                        num2char('S-wave', width=15, justify='r') + '|')
+        CALL update_log(num2char('<sheets (min, max)>', justify='c', width=30) +       &
+                        num2char('P-wave', width=15, justify='r') + '|' + num2char('S-wave', width=15, justify='r') + '|')
 
         CALL update_log(num2char('', width=30, justify='c')  +  &
                         num2char(num2char(minsheets(1), width=2) + ', ' +   &
@@ -1931,28 +1885,28 @@ print*, 'scale ', scale
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE lookup_coda(ok, ref, pl, vel)
+    SUBROUTINE lookup_coda(ok, ref, rec, pl, vel)
 
       INTEGER(i32), INTENT(OUT) :: ok
-      INTEGER(i32), INTENT(IN)  :: ref, vel, pl
+      INTEGER(i32), INTENT(IN)  :: ref, rec, vel, pl
 
-      INTEGER(i32)               :: totnutr, i, j, icr, src, rec, wtp, sheet
+      INTEGER(i32)               :: totnutr, i, j, icr, src, wtp, sheet
       INTEGER(i32), DIMENSION(3) :: abv, blw
       INTEGER(i32), DIMENSION(3) :: iuc, ivc, shot
       REAL(r32)                  :: m
       REAL(r32),    DIMENSION(3) :: p, path, trvt, q
       REAL(r32),    DIMENSION(3) :: u, v, w, x, y, z, repi
-      REAL(r32),    ALLOCATABLE, DIMENSION(:,:,:) :: path0, path1, trvt0, trvt1
+      REAL(r32),    ALLOCATABLE, DIMENSION(:,:) :: path0, path1, trvt0, trvt1
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
       ok = 0
 
-      ALLOCATE(path0(MAXVAL(maxsheets), 2, SIZE(input%receiver)), path1(MAXVAL(maxsheets), 2, SIZE(input%receiver)))
-      ALLOCATE(trvt0(MAXVAL(maxsheets), 2, SIZE(input%receiver)), trvt1(MAXVAL(maxsheets), 2, SIZE(input%receiver)))
+      ALLOCATE(path0(MAXVAL(maxsheets), 2), path1(MAXVAL(maxsheets), 2))
+      ALLOCATE(trvt0(MAXVAL(maxsheets), 2), trvt1(MAXVAL(maxsheets), 2))
 
-      path0(:,:,:) = BIG
-      path1(:,:,:) = -BIG
+      path0(:,:) = BIG
+      path1(:,:) = -BIG
 
       totnutr = 2 * nutr(ref) - 1                     !< total triangles in a row
 
@@ -1980,70 +1934,63 @@ print*, 'scale ', scale
             ENDDO
           ENDDO
 
-          ! loop over receivers
-          DO rec = 1, SIZE(input%receiver)
+          DO icr = 1, 3
+            repi(icr) = HYPOT(input%receiver(rec)%x - x(icr), input%receiver(rec)%y - y(icr)) / 1000._r32        !< epicentral distance (corner-receiver)
+          ENDDO
 
-            DO icr = 1, 3
-              repi(icr) = HYPOT(input%receiver(rec)%x - x(icr), input%receiver(rec)%y - y(icr)) / 1000._r32        !< epicentral distance (corner-receiver)
+          ! loop over wave types
+          DO wtp = 1, 2
+
+            ! abv(:) = 1       !< reset sheet-related index
+            ! blw(:) = 1
+
+            DO sheet = 1, maxsheets(wtp)
+
+              CALL raypar_at_corners(sheet, shooting, repi, z, shot, wtp, p, path, trvt, q)
+
+              IF (ANY(trvt .eq. 0._r32)) CYCLE       !< all corners must belong to same sheet
+
+              m = mean(path)
+
+! if (wtp == 2) print*, z, shot, ' -- ', trvt
+
+              IF (m .lt. path0(sheet, wtp)) THEN
+                path0(sheet, wtp) = m
+                trvt0(sheet, wtp) = mean(trvt)
+              ENDIF
+
+              IF (m .gt. path1(sheet, wtp)) THEN
+                path1(sheet, wtp) = m
+                trvt1(sheet, wtp) = mean(trvt)
+              ENDIF
+
             ENDDO
 
-            ! loop over wave types
-            DO wtp = 1, 2
-
-              abv(:) = 1       !< reset sheet-related index
-              blw(:) = 1
-
-              DO sheet = 1, maxsheets(wtp)
-
-                CALL raypar_at_corners(abv, blw, shooting, repi, z, shot, wtp, p, path, trvt, q)
-
-                IF (ANY(trvt .eq. 0._r32)) CYCLE       !< all corners must belong to same sheet
-
-                m = mean(path)
-
-                IF (m .lt. path0(sheet, wtp, rec)) THEN
-                  path0(sheet, wtp, rec) = m
-                  trvt0(sheet, wtp, rec) = mean(trvt)
-                ENDIF
-
-                IF (m .gt. path1(sheet, wtp, rec)) THEN
-                  path1(sheet, wtp, rec) = m
-                  trvt1(sheet, wtp, rec) = mean(trvt)
-                ENDIF
-
-              ENDDO
-
-            ENDDO   !< end loop over wave types
-
-          ENDDO   !< end loop over receivers
+          ENDDO   !< end loop over wave types
 
         ENDDO
       ENDDO  !< end loop over triangles
 !     !$omp end parallel do
 
       print*, 'ref ', ref, vel
-      print*, 'REC ', ' SHEET ', ' MIN P PATH ', ' TRVT ', ' MAX P PATH ', ' TRVT ', ' P VEL0 ', ' P VEL1 '
-      do rec = 1, SIZE(input%receiver)
-        do sheet = 1, MAXVAL(maxsheets)
-          print*, rec, sheet, path0(sheet, 1, rec), trvt0(sheet, 1, rec), path1(sheet, 1, rec), trvt1(sheet, 1, rec),    &
-                  path0(sheet, 1, rec)/trvt0(sheet, 1, rec), path1(sheet, 1, rec)/trvt1(sheet, 1, rec)
-        enddo
+      print*, ' SHEET ', ' MIN P PATH ', ' TRVT ', ' MAX P PATH ', ' TRVT ', ' P VEL0 ', ' P VEL1 '
+      do sheet = 1, MAXVAL(maxsheets)
+        print*, sheet, path0(sheet, 1), trvt0(sheet, 1), path1(sheet, 1), trvt1(sheet, 1),    &
+                path0(sheet, 1)/trvt0(sheet, 1), path1(sheet, 1)/trvt1(sheet, 1)
       enddo
 
-      print*, 'REC ', ' SHEET ', ' MIN S PATH ', ' TRVT ', ' MAX S PATH ', ' TRVT ', ' S VEL0 ', ' S VEL1 '
-      do rec = 1, SIZE(input%receiver)
-        do sheet = 1, MAXVAL(maxsheets)
-          print*, rec, sheet, path0(sheet, 2, rec), trvt0(sheet, 2, rec), path1(sheet, 2, rec), trvt1(sheet, 2, rec),    &
-                  path0(sheet, 2, rec)/trvt0(sheet, 2, rec), path1(sheet, 2, rec)/trvt1(sheet, 2, rec)
-        enddo
+
+      print*, ' SHEET ', ' MIN S PATH ', ' TRVT ', ' MAX S PATH ', ' TRVT ', ' S VEL0 ', ' S VEL1 '
+      do sheet = 1, MAXVAL(maxsheets)
+        print*, sheet, path0(sheet, 2), trvt0(sheet, 2), path1(sheet, 2), trvt1(sheet, 2),    &
+                path0(sheet, 2)/trvt0(sheet, 2), path1(sheet, 2)/trvt1(sheet, 2)
       enddo
 
-      print*, 'REC ', ' SHEET ', ' MIN TRVT(S/P) ', ' MAX TRVT(S/P) '
-      do rec = 1, SIZE(input%receiver)
-        do sheet = 1, MAXVAL(maxsheets)
-          print*, rec, sheet, (path0(sheet, 1, rec)/trvt0(sheet, 1, rec))/(path0(sheet, 2, rec)/trvt0(sheet, 2, rec)),     &
-                              (path1(sheet, 1, rec)/trvt1(sheet, 1, rec))/(path1(sheet, 2, rec)/trvt1(sheet, 2, rec))
-        enddo
+
+      print*, ' SHEET ', ' MIN TRVT(S/P) ', ' MAX TRVT(S/P) '
+      do sheet = 1, MAXVAL(maxsheets)
+        print*, sheet, (path0(sheet, 1)/trvt0(sheet, 1))/(path0(sheet, 2)/trvt0(sheet, 2)),     &
+                            (path1(sheet, 1)/trvt1(sheet, 1))/(path1(sheet, 2)/trvt1(sheet, 2))
       enddo
 
       print*, ''

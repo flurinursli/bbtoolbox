@@ -35,7 +35,7 @@ PROGRAM main
 
   IMPLICIT none
 
-  INTEGER(i32)              :: ierr, rank, ntasks, ok, npts, nrecs, i, i0, i1, iter, pl, vel, band !, maxband
+  INTEGER(i32)              :: ierr, rank, ntasks, ok, npts, nrecs, i, i0, i1, iter, pl, vel, band, rec
   REAL(r64),   DIMENSION(2) :: tictoc
 
   !---------------------------------------------------------------------------------------------------------------------------------
@@ -168,7 +168,9 @@ PROGRAM main
           CALL node2disk(ok, pl, vel, iter)
 #endif
 
-          CALL solve_isochron_integral(ok, band, pl, vel, iter)
+          DO rec = 1, SIZE(input%receiver)
+            CALL solve_isochron_integral(ok, rec, band, pl, vel, iter)
+          ENDDO
 
           ! maxband = band        !< highest active frequency band
 
