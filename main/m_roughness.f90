@@ -19,7 +19,9 @@ MODULE m_roughness
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
-  REAL(r32), ALLOCATABLE, DIMENSION(:,:), TARGET :: roughness        !< "target" attribute used only inside this module
+  INTEGER(i32), ALLOCATABLE, DIMENSION(:)           :: npts
+  REAL(r32),    ALLOCATABLE, DIMENSION(:)           :: avg, var
+  REAL(r32),    ALLOCATABLE, DIMENSION(:,:), TARGET :: roughness        !< "target" attribute used only inside this module
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -36,14 +38,12 @@ MODULE m_roughness
       CHARACTER(:), ALLOCATABLE                              :: fo
       INTEGER(i32)                                           :: i, j, seed, lu, icr, totnutr
       INTEGER(i32),              DIMENSION(3)                :: iuc, ivc
-      INTEGER(i32), ALLOCATABLE, DIMENSION(:)                :: npts
       REAL(r32)                                              :: dh, du, rms, sigma, mu
       REAL(r32),                 DIMENSION(2)                :: nc, fc
       REAL(r32),                 DIMENSION(3)                :: uc, vc
       REAL(r32),                 DIMENSION(8)                :: stats
       REAL(r32),                 DIMENSION(2),   PARAMETER   :: cl = [1._r32, 1._r32]
       REAL(r32),                 DIMENSION(:),   POINTER     :: u1 => NULL(), v1 => NULL(), r1 => NULL()
-      REAL(r32),    ALLOCATABLE, DIMENSION(:)                :: avg, var
       REAL(r32),    ALLOCATABLE, DIMENSION(:,:), TARGET      :: u, v
 
       !-----------------------------------------------------------------------------------------------------------------------------
