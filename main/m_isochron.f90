@@ -4,6 +4,7 @@ MODULE m_isochron
   USE, NON_INTRINSIC :: m_interpolation_r32
   USE, NON_INTRINSIC :: m_compgeo
   USE, NON_INTRINSIC :: m_filter
+  USE, NON_INTRINSIC :: m_llsq_r32
   USE, NON_INTRINSIC :: m_stat
   USE, NON_INTRINSIC :: m_source
   USE, NON_INTRINSIC :: m_rik
@@ -37,11 +38,13 @@ MODULE m_isochron
   REAL(r32), PARAMETER :: DEG_TO_RAD = PI / 180._r32
   REAL(r32), PARAMETER :: BIG = HUGE(0._r32)
   REAL(r32), PARAMETER :: DP = 0.002_r32, DPSM = 0.07_r32         !< free-surface smoothing parameters
+  REAL(r32), PARAMETER :: DC = 0.2_r32                            !< resolution coda tablau (traveltime)
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
-  INTEGER(i32),              DIMENSION(2) :: minsheets, maxsheets
-  REAL(r32),    ALLOCATABLE, DIMENSION(:) :: shooting                 !< depth of shooting points
+  INTEGER(i32),              DIMENSION(2)     :: minsheets, maxsheets
+  REAL(r32),    ALLOCATABLE, DIMENSION(:)     :: shooting                 !< depth of shooting points
+  REAL(r32),    ALLOCATABLE, DIMENSION(:,:,:) :: coda
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -137,9 +140,7 @@ MODULE m_isochron
 
       npts = NINT(timeseries%sp%time(SIZE(timeseries%sp%time)) / dt) + 2
 
-      ALLOCATE(seis(npts, 3), rseis(npts, 3), iseis(npts, 3))
-      ALLOCATE(rtri(npts, 3), itri(npts, 3))
-      ALLOCATE(time(npts), mrf(npts), envelope(npts), tur(npts/2+1), tui(npts/2+1), tv(npts/2+1))
+      ALLOCATE(seis(npts, 3), time(npts))
 
       seis(:, :) = 0._r32
 
@@ -164,6 +165,9 @@ MODULE m_isochron
 
       ! set "seed" such that random numbers depend on fault plane number and iteration
       seed = input%source%seed + (iter - 1) * SIZE(plane) + pl
+
+      ALLOCATE(rseis(npts, 3), iseis(npts, 3), rtri(npts, 3), itri(npts, 3))
+      ALLOCATE(mrf(npts), tur(npts/2+1), tui(npts/2+1), tv(npts/2+1))
 
       ! loop over mesh refinements
       DO ref = 1, SIZE(nvtr)
@@ -1543,8 +1547,8 @@ print*, 'scale ', scale
 
         vs = MIN(vtop, vbottom)     !< min shear wave speed over current mesh
 
-        ! dz = vs / input%coda%fmax / input%advanced%pmw        !< desired spacing between shooting points
-        dz = vs / input%coda%fmax
+        dz = vs / input%coda%fmax / input%advanced%pmw        !< desired spacing between shooting points
+        ! dz = vs / input%coda%fmax
 
         ! add max deviation from planarity
         zmin = MAX(MIN_DEPTH, zmin - delta)                   !< don't go too close free-surface (i.e. above MIN_DEPTH)
@@ -1887,113 +1891,177 @@ print*, 'scale ', scale
 
     SUBROUTINE lookup_coda(ok, ref, rec, pl, vel)
 
-      INTEGER(i32), INTENT(OUT) :: ok
-      INTEGER(i32), INTENT(IN)  :: ref, rec, vel, pl
-
-      INTEGER(i32)               :: totnutr, i, j, icr, src, wtp, sheet
-      INTEGER(i32), DIMENSION(3) :: abv, blw
-      INTEGER(i32), DIMENSION(3) :: iuc, ivc, shot
-      REAL(r32)                  :: m
-      REAL(r32),    DIMENSION(3) :: p, path, trvt, q
-      REAL(r32),    DIMENSION(3) :: u, v, w, x, y, z, repi
-      REAL(r32),    ALLOCATABLE, DIMENSION(:,:) :: path0, path1, trvt0, trvt1
+      INTEGER(i32),                               INTENT(OUT) :: ok
+      INTEGER(i32),                               INTENT(IN)  :: ref, rec, vel, pl
+      CHARACTER(:), ALLOCATABLE                               :: fo
+      INTEGER(i32)                                            :: totnutr, i, j, icr, src, wave, sheet, c, lu
+      INTEGER(i32),              DIMENSION(3)                 :: iuc, ivc, shot
+      REAL(r32)                                               :: avg, weight
+      REAL(r32),                 DIMENSION(2)                 :: bounds
+      REAL(r32),                 DIMENSION(3)                 :: p, dist, tau, q, u, v, w, x, y, z, repi
+      REAL(r32),    ALLOCATABLE, DIMENSION(:)                 :: b
+      REAL(r32),    ALLOCATABLE, DIMENSION(:,:)               :: a
+      REAL(r32),    ALLOCATABLE, DIMENSION(:,:,:)             :: path, trvt
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
       ok = 0
 
-      ALLOCATE(path0(MAXVAL(maxsheets), 2), path1(MAXVAL(maxsheets), 2))
-      ALLOCATE(trvt0(MAXVAL(maxsheets), 2), trvt1(MAXVAL(maxsheets), 2))
+      bounds(1) = BIG
+      bounds(2) = -BIG
 
-      path0(:,:) = BIG
-      path1(:,:) = -BIG
+      ! ALLOCATE(path(2, MAXVAL(maxsheets), 2), trvt(2, MAXVAL(maxsheets), 2))
+      !
+      ! path(1,:,:) = BIG
+      ! path(2,:,:) = -BIG
 
       totnutr = 2 * nutr(ref) - 1                     !< total triangles in a row
 
-!      !$omp parallel do default(shared) private(i, j, iuc, ivc, u, v, w, x, y, z, rec) reduction(max: rmax)
-      DO j = 1, nvtr(ref)
-        DO i = 1, totnutr
+      ALLOCATE(a(nvtr(ref)*totnutr, 2), b(nvtr(ref)*totnutr))
 
-          CALL cornr(j, i, iuc, ivc)                 !< corner indices for current triangle
-          CALL cornr2uv(iuc, ivc, ref, u, v)         !< on-fault coordinates
+#ifdef DEBUG
 
-          DO icr = 1, 3
-            w(icr) = roughness(iuc(icr), ivc(icr))
-          ENDDO
+      fo = 'traveltime_' + num2char(ref) + '_' + num2char(pl) + '_' + num2char(vel) + '_' + num2char(rec) + '.txt'
 
-          CALL uvw2xyz(pl, u, v, w, x, y, z)            !< get cartesian coordinates
+      OPEN(newunit = lu, file = TRIM(fo), status = 'unknown', form = 'formatted', access = 'sequential', action = 'write',  &
+           iostat = ok)
 
-          DO icr = 1, 3
-            z(icr) = MAX(MIN_DEPTH, z(icr))             !< make sure we never breach the free-surface (clip roughness)
-          ENDDO
+#endif
 
-          ! find shooting points above/below
-          DO icr = 1, 3
-            DO src = 1, SIZE(shooting) - 1
-              IF ( (z(icr) .ge. shooting(src)) .and. (z(icr) .le. shooting(src + 1)) ) shot(icr) = src
+      DO wave = 1, 2           !< loop over wave types
+
+        DO sheet = 1, MAXVAL(maxsheets)    !< loop over sheets
+
+!         !$omp parallel do default(shared) private(i, j, iuc, ivc, u, v, w, x, y, z, rec) reduction(max: rmax)
+          DO j = 1, nvtr(ref)
+            DO i = 1, totnutr
+
+              CALL cornr(j, i, iuc, ivc)                 !< corner indices for current triangle
+              CALL cornr2uv(iuc, ivc, ref, u, v)         !< on-fault coordinates
+
+              DO icr = 1, 3
+                w(icr) = roughness(iuc(icr), ivc(icr))
+              ENDDO
+
+              CALL uvw2xyz(pl, u, v, w, x, y, z)            !< get cartesian coordinates
+
+              DO icr = 1, 3
+                z(icr) = MAX(MIN_DEPTH, z(icr))             !< make sure we never breach the free-surface (clip roughness)
+              ENDDO
+
+              ! find shooting points above/below
+              DO icr = 1, 3
+                DO src = 1, SIZE(shooting) - 1
+                  IF ( (z(icr) .ge. shooting(src)) .and. (z(icr) .le. shooting(src + 1)) ) shot(icr) = src
+                ENDDO
+              ENDDO
+
+              DO icr = 1, 3
+                repi(icr) = HYPOT(input%receiver(rec)%x - x(icr), input%receiver(rec)%y - y(icr)) / 1000._r32        !< epicentral distance (corner-receiver)
+              ENDDO
+
+              CALL raypar_at_corners(sheet, shooting, repi, z, shot, wave, p, dist, tau, q)
+
+              weight = 1._r32
+
+              IF (ANY(tau .eq. 0._r32)) weight = 0._r32
+
+              c = (j - 1) * totnutr + i
+
+              avg = mean(dist)
+
+              b(c)    = mean(tau) * weight
+              a(c, 1) = avg * weight
+              a(c, 2) = weight
+
+              bounds(1) = MIN(bounds(1), avg)
+              bounds(2) = MAX(bounds(2), avg)
+
+!               avg = mean(tau)
+!
+! IF (any(tau .eq. 0.)) CYCLE
+!
+!               IF (avg .lt. path(1, sheet, wave)) THEN
+!                 path(1, sheet, wave) = avg
+!                 trvt(1, sheet, wave) = mean(tau)
+!               ENDIF
+!
+!               IF (avg .gt. path(2, sheet, wave)) THEN
+!                 path(2, sheet, wave) = avg
+!                 trvt(2, sheet, wave) = mean(tau)
+!               ENDIF
+! !
+!
+! ! IF (path(2, sheet, wave) .lt. path(1, sheet, wave)) print*, wave, sheet, z, ' - ', mean(dist), ' x ', mean(tau)
+! IF (ALL(tau .ne. 0)) write(1, *) mean(dist), avg, wave, sheet
+
             ENDDO
+          ENDDO  !< end loop over triangles
+!         !$omp end parallel do
+
+#ifdef DEBUG
+          DO i = 1, nvtr(ref) * totnutr
+            IF (b(i) .ne. 0._r32) WRITE(lu, *) a(i, 1), b(i), sheet, wave
           ENDDO
+#endif
 
-          DO icr = 1, 3
-            repi(icr) = HYPOT(input%receiver(rec)%x - x(icr), input%receiver(rec)%y - y(icr)) / 1000._r32        !< epicentral distance (corner-receiver)
-          ENDDO
+          CALL llsq_solver(a, b, ok)
 
-          ! loop over wave types
-          DO wtp = 1, 2
+        ENDDO         !< end loop over sheets
 
-            ! abv(:) = 1       !< reset sheet-related index
-            ! blw(:) = 1
-
-            DO sheet = 1, maxsheets(wtp)
-
-              CALL raypar_at_corners(sheet, shooting, repi, z, shot, wtp, p, path, trvt, q)
-
-              IF (ANY(trvt .eq. 0._r32)) CYCLE       !< all corners must belong to same sheet
-
-              m = mean(path)
-
-! if (wtp == 2) print*, z, shot, ' -- ', trvt
-
-              IF (m .lt. path0(sheet, wtp)) THEN
-                path0(sheet, wtp) = m
-                trvt0(sheet, wtp) = mean(trvt)
-              ENDIF
-
-              IF (m .gt. path1(sheet, wtp)) THEN
-                path1(sheet, wtp) = m
-                trvt1(sheet, wtp) = mean(trvt)
-              ENDIF
-
-            ENDDO
-
-          ENDDO   !< end loop over wave types
-
-        ENDDO
-      ENDDO  !< end loop over triangles
-!     !$omp end parallel do
-
-      print*, 'ref ', ref, vel
-      print*, ' SHEET ', ' MIN P PATH ', ' TRVT ', ' MAX P PATH ', ' TRVT ', ' P VEL0 ', ' P VEL1 '
-      do sheet = 1, MAXVAL(maxsheets)
-        print*, sheet, path0(sheet, 1), trvt0(sheet, 1), path1(sheet, 1), trvt1(sheet, 1),    &
-                path0(sheet, 1)/trvt0(sheet, 1), path1(sheet, 1)/trvt1(sheet, 1)
-      enddo
+      ENDDO    !< end loop over wave types
 
 
-      print*, ' SHEET ', ' MIN S PATH ', ' TRVT ', ' MAX S PATH ', ' TRVT ', ' S VEL0 ', ' S VEL1 '
-      do sheet = 1, MAXVAL(maxsheets)
-        print*, sheet, path0(sheet, 2), trvt0(sheet, 2), path1(sheet, 2), trvt1(sheet, 2),    &
-                path0(sheet, 2)/trvt0(sheet, 2), path1(sheet, 2)/trvt1(sheet, 2)
-      enddo
+!      !$omp parallel do default(shared) private(wave, sheet, i) collapse(3)
+      ! DO wave = 1, 2
+      !   DO sheet = 1, MAXVAL(maxsheets)
+      !     DO i = 1, DC
+      !
+      !       IF (trvt(wave, sheet, 1)) CYCLE
+      !
+      !       tp = trvt(1, sheet, 1) + (i - 1) * step
+      !
+      !       vs =
+      !
+      !       IF (wave .eq. 1) THEN
+      !         wp = 1._r32
+      !         ws = 0._r32
+      !       ELSE
+      !         wp = 0._r32
+      !         ws = 1._r32
+      !       ENDIF
+      !
+      !       CALL rtt(time, tp, ts, pp, p2s, s2p, ss, si, beta, wp, ws, 0.25_r32, direct(sheet, wtp), coda(:, sheet, wtp), ok)
+      !
+      !     ENDDO
+      !   ENDDO
+      ! ENDDO
+!      !$omp end parallel do
 
 
-      print*, ' SHEET ', ' MIN TRVT(S/P) ', ' MAX TRVT(S/P) '
-      do sheet = 1, MAXVAL(maxsheets)
-        print*, sheet, (path0(sheet, 1)/trvt0(sheet, 1))/(path0(sheet, 2)/trvt0(sheet, 2)),     &
-                            (path1(sheet, 1)/trvt1(sheet, 1))/(path1(sheet, 2)/trvt1(sheet, 2))
-      enddo
 
-      print*, ''
+      ! print*, 'ref ', ref, vel
+      ! print*, ' SHEET ', ' MIN P PATH ', ' TRVT ', ' MAX P PATH ', ' TRVT ', ' P VEL0 ', ' P VEL1 '
+      ! do sheet = 1, MAXVAL(maxsheets)
+      !   print*, sheet, path(1, sheet, 1), trvt(1, sheet, 1), path(2, sheet, 1), trvt(2, sheet, 1),    &
+      !           path(1, sheet, 1)/trvt(1, sheet, 1), path(2, sheet, 1)/trvt(2, sheet, 1)
+      ! enddo
+      !
+      !
+      ! print*, ' SHEET ', ' MIN S PATH ', ' TRVT ', ' MAX S PATH ', ' TRVT ', ' S VEL0 ', ' S VEL1 '
+      ! do sheet = 1, MAXVAL(maxsheets)
+      !   print*, sheet, path(1, sheet, 2), trvt(1, sheet, 2), path(2, sheet, 2), trvt(2, sheet, 2),    &
+      !           path(1, sheet, 2)/trvt(1, sheet, 2), path(2, sheet, 2)/trvt(2, sheet, 2)
+      ! enddo
+      !
+      !
+      ! print*, ' SHEET ', ' MIN TRVT(S/P) ', ' MAX TRVT(S/P) '
+      ! do sheet = 1, MAXVAL(maxsheets)
+      !   print*, sheet, (path(1, sheet, 1)/trvt(1, sheet, 1))/(path(1, sheet, 2)/trvt(1, sheet, 2)),     &
+      !                  (path(2, sheet, 1)/trvt(2, sheet, 1))/(path(2, sheet, 2)/trvt(2, sheet, 2))
+      ! enddo
+      !
+      ! print*, ''
 
 
 
