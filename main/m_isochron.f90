@@ -8,6 +8,7 @@ MODULE m_isochron
   USE, NON_INTRINSIC :: m_stat
   USE, NON_INTRINSIC :: m_source
   USE, NON_INTRINSIC :: m_rik
+  USE, NON_INTRINSIC :: m_rtt
   USE, NON_INTRINSIC :: m_roughness
   USE, NON_INTRINSIC :: m_toolbox
   USE, NON_INTRINSIC :: m_strings
@@ -38,13 +39,21 @@ MODULE m_isochron
   REAL(r32), PARAMETER :: DEG_TO_RAD = PI / 180._r32
   REAL(r32), PARAMETER :: BIG = HUGE(0._r32)
   REAL(r32), PARAMETER :: DP = 0.002_r32, DPSM = 0.07_r32         !< free-surface smoothing parameters
-  REAL(r32), PARAMETER :: DC = 0.2_r32                            !< resolution coda tablau (traveltime)
+  REAL(r32), PARAMETER :: DC = 0.5_r32                            !< resolution coda tablau (traveltime)
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
-  INTEGER(i32),              DIMENSION(2)     :: minsheets, maxsheets
-  REAL(r32),    ALLOCATABLE, DIMENSION(:)     :: shooting                 !< depth of shooting points
-  REAL(r32),    ALLOCATABLE, DIMENSION(:,:,:) :: coda
+  INTEGER(i32),              DIMENSION(2)       :: minsheets, maxsheets
+  REAL(r32),    ALLOCATABLE, DIMENSION(:)       :: shooting                 !< depth of shooting points
+
+  TYPE :: co
+    INTEGER(i32), ALLOCATABLE, DIMENSION(:,:) :: displs, counts
+    REAL(r32),    ALLOCATABLE, DIMENSION(:)   :: direct
+    REAL(r32),    ALLOCATABLE, DIMENSION(:,:) :: lotrvt, uptrvt
+    REAL(r32),    ALLOCATABLE, DIMENSION(:,:) :: envelope
+  END TYPE
+
+  TYPE(co) :: coda
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -84,7 +93,7 @@ MODULE m_isochron
       ! INTEGER(i32), ALLOCATABLE, DIMENSION(:,:)             :: ncuts, active
       REAL(r32)                                             :: m0, moment, strike, dip, urec, vrec, wrec, taumin, taumax, sd, cd, dt
       REAL(r32)                                             :: srfvel, c, scale
-      REAL(r32)                                             :: avepath, avetrvt, scattering, attenuation, t, direct
+      REAL(r32)                                             :: avepath, avetrvt, scattering, attenuation, t, a0
       REAL(r32),                 DIMENSION(2)               :: ncuts, active
       REAL(r32),                 DIMENSION(3)               :: u, v, w, x, y, z, slip, rupture, rake, nrl, rho, alpha, beta, mu
       REAL(r32),                 DIMENSION(3)               :: p, q, path, trvt, repi, tau, sr, cr, velloc
@@ -236,8 +245,8 @@ MODULE m_isochron
         CALL watch_start(tictoc, COMM)
 #endif
 
-        ! shoot rays between receivers and a set of sources spanning (vertically) current mesh
-        CALL lookup_coda(ok, ref, rec, pl, vel)
+        ! fill lookup table for envelopes
+        CALL lookup_coda(ok, ref, rec, band, pl, vel, time)
 
 #ifdef PERF
         CALL watch_stop(tictoc, COMM)
@@ -253,7 +262,7 @@ MODULE m_isochron
         !$omp parallel do default(shared) private(i, j, iuc, ivc, icr, slip, u, v, w, x, y, z, nrl, strike, dip, rake, sd, cd)   &
         !$omp private(sr, cr, tictoc, rupture, alpha, beta, rho, mu, ic, src, shot, mrf, urec, vrec, wrec, repi)     &
         !$omp private(rtri, itri, wtp, abv, blw, velloc, srfvel, scattering, sheet, p, path, trvt, q, tau, taumin, taumax, it1)   &
-        !$omp private(it2, g, attenuation, cut, c, it, tur, tui, tv)   &
+        !$omp private(it2, g, attenuation, cut, c, it, tur, tui, tv, a0)   &
         !$omp reduction(+: m0, rseis, iseis, otimer, ncuts, active, noslip)
         DO j = 1, nvtr(ref)
           DO i = 1, totnutr
@@ -498,16 +507,18 @@ MODULE m_isochron
                 ! ------------------------------------------ add coda contribution -----------------------------------------------
 
                 ! (averaged) amplitude of direct wave for isotropic radiation (0.63) at free-surface (2)
-                ! direct = (2._r32 * ABS(mean(q)) * mean(mu) * mean(slip) * c) * 0.63_r32 * 2._r32
+                ! a0 = (2._r32 * ABS(mean(q)) * mean(mu) * mean(slip) * c) * 0.63_r32 * 2._r32
                 !
                 ! avepath = mean(path)
                 ! avetrvt = mean(trvt)
 
-                ! DO ic = 1, 3
-                !   DO it = it1, it2
-                !     rtri(it, ic) = rtri(it, ic) !+ envelope(it) * noise(it, ic)
+                ! a0 = a0 / direct(, sheet, wtp)
+
+                !   DO it = 1, npts
+                !     rtri(it, 1) = rtri(it, 1) + envelope(it) * timeseries%cd%x(it, rec)
+                !     rtri(it, 2) = rtri(it, 2) + envelope(it) * timeseries%cd%y(it, rec)
+                !     rtri(it, 3) = rtri(it, 3) + envelope(it) * timeseries%cd%z(it, rec)
                 !   ENDDO
-                ! ENDDO
 
               ENDDO     !< end loop over sheets
 
@@ -1889,35 +1900,36 @@ print*, 'scale ', scale
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE lookup_coda(ok, ref, rec, pl, vel)
+    SUBROUTINE lookup_coda(ok, ref, rec, band, pl, vel, time)
 
-      INTEGER(i32),                               INTENT(OUT) :: ok
-      INTEGER(i32),                               INTENT(IN)  :: ref, rec, vel, pl
-      CHARACTER(:), ALLOCATABLE                               :: fo
-      INTEGER(i32)                                            :: totnutr, i, j, icr, src, wave, sheet, c, lu
-      INTEGER(i32),              DIMENSION(3)                 :: iuc, ivc, shot
-      REAL(r32)                                               :: avg, weight
-      REAL(r32),                 DIMENSION(2)                 :: bounds
-      REAL(r32),                 DIMENSION(3)                 :: p, dist, tau, q, u, v, w, x, y, z, repi
-      REAL(r32),    ALLOCATABLE, DIMENSION(:)                 :: b
-      REAL(r32),    ALLOCATABLE, DIMENSION(:,:)               :: a
-      REAL(r32),    ALLOCATABLE, DIMENSION(:,:,:)             :: path, trvt
+      INTEGER(i32),                             INTENT(OUT) :: ok
+      INTEGER(i32),                             INTENT(IN)  :: ref, rec, band, vel, pl
+      REAL(r32),                 DIMENSION(:),  INTENT(IN)  :: time
+      CHARACTER(:), ALLOCATABLE                             :: fo
+      INTEGER(i32)                                          :: totnutr, i, j, icr, src, wave, sheet, c, lu, n
+      INTEGER(i32),              DIMENSION(3)               :: iuc, ivc, shot
+      REAL(r32)                                             :: avg, weight, r, tp, ts, vs, wp, ws, gsp, t
+      REAL(r32),                 DIMENSION(2)               :: bounds, d0
+      REAL(r32),                 DIMENSION(3)               :: p, path, trvt, q, u, v, w, x, y, z, repi
+      REAL(r32),    ALLOCATABLE, DIMENSION(:)               :: b
+      REAL(r32),    ALLOCATABLE, DIMENSION(:,:)             :: a, a0, b0
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
       ok = 0
 
-      bounds(1) = BIG
-      bounds(2) = -BIG
-
-      ! ALLOCATE(path(2, MAXVAL(maxsheets), 2), trvt(2, MAXVAL(maxsheets), 2))
-      !
-      ! path(1,:,:) = BIG
-      ! path(2,:,:) = -BIG
+      IF (ALLOCATED(coda%displs)) DEALLOCATE(coda%displs, coda%counts, coda%lotrvt, coda%uptrvt)
 
       totnutr = 2 * nutr(ref) - 1                     !< total triangles in a row
 
       ALLOCATE(a(nvtr(ref)*totnutr, 2), b(nvtr(ref)*totnutr))
+
+      ALLOCATE(a0(MAXVAL(maxsheets), 2), b0(MAXVAL(maxsheets), 2))
+
+      ALLOCATE(coda%displs(MAXVAL(maxsheets), 2), coda%counts(MAXVAL(maxsheets), 2))
+      ALLOCATE(coda%lotrvt(MAXVAL(maxsheets), 2), coda%uptrvt(MAXVAL(maxsheets), 2))
+
+      coda%counts(:,:) = 0
 
 #ifdef DEBUG
 
@@ -1932,7 +1944,11 @@ print*, 'scale ', scale
 
         DO sheet = 1, MAXVAL(maxsheets)    !< loop over sheets
 
-!         !$omp parallel do default(shared) private(i, j, iuc, ivc, u, v, w, x, y, z, rec) reduction(max: rmax)
+          bounds(1) = BIG
+          bounds(2) = -BIG
+
+!         !$omp parallel do default(shared) private(i, j, iuc, ivc, u, v, w, icr, src, x, y, z, rec, shot, repi, p, path, trvt)  &
+!          !$omp private(q, weight, c, avg) reduction(max: bounds(2)) reduction(min: bounds(1))
           DO j = 1, nvtr(ref)
             DO i = 1, totnutr
 
@@ -1960,44 +1976,35 @@ print*, 'scale ', scale
                 repi(icr) = HYPOT(input%receiver(rec)%x - x(icr), input%receiver(rec)%y - y(icr)) / 1000._r32        !< epicentral distance (corner-receiver)
               ENDDO
 
-              CALL raypar_at_corners(sheet, shooting, repi, z, shot, wave, p, dist, tau, q)
+              CALL raypar_at_corners(sheet, shooting, repi, z, shot, wave, p, path, trvt, q)
 
               weight = 1._r32
 
-              IF (ANY(tau .eq. 0._r32)) weight = 0._r32
+              IF (ANY(trvt .eq. 0._r32)) weight = 0._r32
 
               c = (j - 1) * totnutr + i
 
-              avg = mean(dist)
+! if (j .ne. 200) weight=0
 
-              b(c)    = mean(tau) * weight
+              avg = mean(path)
+
+              b(c)    = mean(trvt) * weight
               a(c, 1) = avg * weight
               a(c, 2) = weight
 
-              bounds(1) = MIN(bounds(1), avg)
-              bounds(2) = MAX(bounds(2), avg)
-
-!               avg = mean(tau)
-!
-! IF (any(tau .eq. 0.)) CYCLE
-!
-!               IF (avg .lt. path(1, sheet, wave)) THEN
-!                 path(1, sheet, wave) = avg
-!                 trvt(1, sheet, wave) = mean(tau)
-!               ENDIF
-!
-!               IF (avg .gt. path(2, sheet, wave)) THEN
-!                 path(2, sheet, wave) = avg
-!                 trvt(2, sheet, wave) = mean(tau)
-!               ENDIF
-! !
-!
-! ! IF (path(2, sheet, wave) .lt. path(1, sheet, wave)) print*, wave, sheet, z, ' - ', mean(dist), ' x ', mean(tau)
-! IF (ALL(tau .ne. 0)) write(1, *) mean(dist), avg, wave, sheet
+              IF (ALL(trvt .ne. 0._r32)) THEN
+                bounds(1) = MIN(bounds(1), mean(trvt))        !< smallest average trvt
+                bounds(2) = MAX(bounds(2), mean(trvt))        !< largest average trvt
+              ENDIF
 
             ENDDO
           ENDDO  !< end loop over triangles
 !         !$omp end parallel do
+
+          IF (bounds(1) .eq. BIG) THEN
+            bounds(1) = DC
+            bounds(2) = 0._r32
+          ENDIF
 
 #ifdef DEBUG
           DO i = 1, nvtr(ref) * totnutr
@@ -2007,63 +2014,106 @@ print*, 'scale ', scale
 
           CALL llsq_solver(a, b, ok)
 
+          ! copy llsq parameters for "trvt(path) = path * a0 + b0"
+          a0(sheet, wave) = b(1)
+          b0(sheet, wave) = b(2)
+
+          ! envelopes to be computed for current sheet and wave type
+          coda%counts(sheet, wave) = NINT( (bounds(2) - bounds(1)) / DC ) + 1
+
+          ! number of envelopes to be skipped at current sheet and wave type
+          coda%displs(sheet, wave) = SUM(coda%counts) - coda%counts(sheet, wave)
+
+          coda%lotrvt(sheet, wave) = bounds(1)        !< minimum traveltime
+          coda%uptrvt(sheet, wave) = bounds(2)
+
         ENDDO         !< end loop over sheets
 
       ENDDO    !< end loop over wave types
 
 
-!      !$omp parallel do default(shared) private(wave, sheet, i) collapse(3)
-      ! DO wave = 1, 2
-      !   DO sheet = 1, MAXVAL(maxsheets)
-      !     DO i = 1, DC
-      !
-      !       IF (trvt(wave, sheet, 1)) CYCLE
-      !
-      !       tp = trvt(1, sheet, 1) + (i - 1) * step
-      !
-      !       vs =
-      !
-      !       IF (wave .eq. 1) THEN
-      !         wp = 1._r32
-      !         ws = 0._r32
-      !       ELSE
-      !         wp = 0._r32
-      !         ws = 1._r32
-      !       ENDIF
-      !
-      !       CALL rtt(time, tp, ts, pp, p2s, s2p, ss, si, beta, wp, ws, 0.25_r32, direct(sheet, wtp), coda(:, sheet, wtp), ok)
-      !
-      !     ENDDO
-      !   ENDDO
-      ! ENDDO
-!      !$omp end parallel do
+      IF (input%advanced%verbose .eq. 2) THEN
+        CALL update_log(num2char('<coda P>', justify='c', width=30) + num2char('Sheet', width=15, justify='r') + '|' + &
+                        num2char('Min trvt', width=15, justify='r') + '|' + num2char('Max trvt', width=15, justify='r') + '|' + &
+                        num2char('Envelopes', width=15, justify='r') + '|')
+
+        DO sheet = 1, maxsheets(1)
+          CALL update_log(num2char('', width=30) + num2char(sheet, width=15, justify='r')   + '|' +    &
+                          num2char(coda%lotrvt(sheet, 1), width=15, justify='r', notation='f', precision=2) + '|' +    &
+                          num2char(coda%uptrvt(sheet, 1), width=15, justify='r', notation='f', precision=2) + '|' +    &
+                          num2char(coda%counts(sheet, 1), width=15, justify='r') + '|', blankline=.false.)
+        ENDDO
+
+        CALL update_log(num2char('<coda S>', justify='c', width=30) + num2char('Sheet', width=15, justify='r') + '|' + &
+                        num2char('Min trvt', width=15, justify='r') + '|' + num2char('Max trvt', width=15, justify='r') + '|' + &
+                        num2char('Envelopes', width=15, justify='r') + '|')
+
+        DO sheet = 1, maxsheets(2)
+          CALL update_log(num2char('', width=30) + num2char(sheet, width=15, justify='r')   + '|' +    &
+                          num2char(coda%lotrvt(sheet, 2), width=15, justify='r', notation='f', precision=2) + '|' +    &
+                          num2char(coda%uptrvt(sheet, 2), width=15, justify='r', notation='f', precision=2) + '|' +    &
+                          num2char(coda%counts(sheet, 2), width=15, justify='r') + '|', blankline=.false.)
+        ENDDO
+
+      ENDIF
 
 
+print*, 'a0 ', 1./a0
+print*, 'b0 ', b0
+print*, SUM(coda%counts)
+!
 
-      ! print*, 'ref ', ref, vel
-      ! print*, ' SHEET ', ' MIN P PATH ', ' TRVT ', ' MAX P PATH ', ' TRVT ', ' P VEL0 ', ' P VEL1 '
-      ! do sheet = 1, MAXVAL(maxsheets)
-      !   print*, sheet, path(1, sheet, 1), trvt(1, sheet, 1), path(2, sheet, 1), trvt(2, sheet, 1),    &
-      !           path(1, sheet, 1)/trvt(1, sheet, 1), path(2, sheet, 1)/trvt(2, sheet, 1)
-      ! enddo
-      !
-      !
-      ! print*, ' SHEET ', ' MIN S PATH ', ' TRVT ', ' MAX S PATH ', ' TRVT ', ' S VEL0 ', ' S VEL1 '
-      ! do sheet = 1, MAXVAL(maxsheets)
-      !   print*, sheet, path(1, sheet, 2), trvt(1, sheet, 2), path(2, sheet, 2), trvt(2, sheet, 2),    &
-      !           path(1, sheet, 2)/trvt(1, sheet, 2), path(2, sheet, 2)/trvt(2, sheet, 2)
-      ! enddo
-      !
-      !
-      ! print*, ' SHEET ', ' MIN TRVT(S/P) ', ' MAX TRVT(S/P) '
-      ! do sheet = 1, MAXVAL(maxsheets)
-      !   print*, sheet, (path(1, sheet, 1)/trvt(1, sheet, 1))/(path(1, sheet, 2)/trvt(1, sheet, 2)),     &
-      !                  (path(2, sheet, 1)/trvt(2, sheet, 1))/(path(2, sheet, 2)/trvt(2, sheet, 2))
-      ! enddo
-      !
-      ! print*, ''
+      IF (ALLOCATED(coda%envelope)) DEALLOCATE(coda%envelope, coda%direct)
 
+      ALLOCATE(coda%envelope(SIZE(time), SUM(coda%counts)), coda%direct(SUM(coda%counts)))
 
+      ASSOCIATE(model => input%attenuation(input%receiver(rec)%attenuation))
+
+        gsp = model%gps(band) / 6._r32
+
+!       !$omp parallel do default(shared) private(wave, sheet, i, r, t, tp, ts, vs, wp, ws, d0) reduction(max: ok) collapse(3)
+        DO wave = 1, 2
+          DO sheet = 1, MAXVAL(maxsheets)
+            DO i = 1, coda%counts(sheet, wave)
+
+              t = coda%lotrvt(sheet, wave) + (i - 1) * DC
+              r = (t - b0(sheet, wave)) / a0(sheet, wave)
+
+              IF (wave .eq. 1) THEN
+                tp = t
+                ts = a0(sheet, 2) * r + b0(sheet, 2)
+              ELSE
+                ts = t
+                tp = a0(sheet, 1) * r + b0(sheet, 1)
+              ENDIF
+
+              vs = r / ts
+
+              IF (wave .eq. 1) THEN
+                wp = 1._r32
+                ws = 0._r32
+              ELSE
+                wp = 0._r32
+                ws = 1._r32
+              ENDIF
+
+              c = coda%displs(sheet, wave) + i
+
+              ! CALL rtt(time, tp, ts, model%gpp(band), model%gps(band), gsp, model%gss(band), model%b(band), vs, wp, ws,   &
+              !           0.25_r32, d0, coda%envelope(:, c), ok)
+
+              coda%direct(c) = d0(wave)
+
+print*, i, sheet, wave, ' x ', c, ' -- ', tp, ts, ' - ', t, NINT( (t-coda%lotrvt(sheet, wave)) / DC ) + 1
+
+            ENDDO
+          ENDDO
+        ENDDO
+!        !$omp end parallel do
+
+      END ASSOCIATE
+
+print*, 'ok coda ', ok
 
     END SUBROUTINE lookup_coda
 
