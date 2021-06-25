@@ -99,7 +99,7 @@ MODULE m_isochron
       REAL(r32),    ALLOCATABLE, DIMENSION(:)               :: fsp, mrf, envelope, stack, time
       REAL(r32),    ALLOCATABLE, DIMENSION(:,:)             :: rtri, itri, rseis, iseis, seis
       REAL(r64)                                             :: tictoc
-      REAL(r64),                 DIMENSION(5)               :: timer
+      REAL(r64),                 DIMENSION(6)               :: timer
       REAL(r64),                 DIMENSION(10)              :: otimer
 
       !-----------------------------------------------------------------------------------------------------------------------------
@@ -249,7 +249,7 @@ MODULE m_isochron
 
 #ifdef PERF
         CALL watch_stop(tictoc, COMM)
-        timer(3) = timer(3) + tictoc
+        timer(4) = timer(4) + tictoc
 #endif
 
 
@@ -594,7 +594,7 @@ MODULE m_isochron
 
 #ifdef PERF
         CALL watch_stop(tictoc, COMM)
-        timer(4) = timer(4) + tictoc
+        timer(5) = timer(5) + tictoc
 #endif
 
         IF (input%advanced%verbose .eq. 2) THEN
@@ -661,7 +661,7 @@ print*, 'scale ', scale
 
 #ifdef PERF
       CALL watch_stop(tictoc, COMM)
-      timer(5) = timer(5) + tictoc
+      timer(6) = timer(6) + tictoc
 #endif
 
 
@@ -669,6 +669,7 @@ print*, 'scale ', scale
       print*, 'Time RIK nodes: ', real(timer(1))
       print*, 'Time roughness: ', real(timer(2))
       print*, 'Time shooting: ', real(timer(3))
+      print*, 'Time coda: ', real(timer(4))
 
       print*, 'Time mechanism: ', real(otimer(1))
       print*, 'Time corners: ', real(otimer(2))
@@ -680,8 +681,8 @@ print*, 'scale ', scale
       print*, 'Time iir: ', real(otimer(8))
       print*, 'Time conv MRF: ', real(otimer(9))
 
-      print*, 'Time Hilbert: ', real(timer(4))
-      print*, 'Time Filter: ', real(timer(5))
+      print*, 'Time Hilbert: ', real(timer(5))
+      print*, 'Time Filter: ', real(timer(6))
 #endif
 
     END SUBROUTINE solve_isochron_integral
@@ -2029,8 +2030,6 @@ print*, 'scale ', scale
 
       ENDIF
 
-
-
       IF (ALLOCATED(coda%penvelope)) DEALLOCATE(coda%penvelope, coda%pdirect)
 
       np = NINT( (coda%uppath(1) - coda%lopath(1)) / DCP ) + 1
@@ -2061,7 +2060,7 @@ print*, 'scale ', scale
 
             coda%pdirect(i, j) = d0(1)
 
-            print*, 'P ', tp, r, ts, vs, ok, SIZE(time)
+            ! print*, 'P ', tp, r, ts, vs, ok, SIZE(time)
 
           ENDDO
         ENDDO
@@ -2093,7 +2092,7 @@ print*, 'scale ', scale
 
             coda%sdirect(i, j) = d0(2)
 
-            print*, 'S ', ts, r, tp, vs, ok
+            ! print*, 'S ', ts, r, tp, vs, ok
 
           ENDDO
         ENDDO
