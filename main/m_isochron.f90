@@ -1974,7 +1974,6 @@ print*, 'scale ', scale
 
             IF (ALL(trvt .ne. 0._r32)) THEN
               vratio = vratio + mean(path(:, 1)) / mean(trvt(:, 1)) * mean(trvt(:, 2)) / mean(path(:, 2))   !< alpha/beta
-              ! vratio = vratio + mean(path(:, 2)) / mean(path(:, 1))   !< alpha/beta
               n      = n + 1
             ENDIF
 
