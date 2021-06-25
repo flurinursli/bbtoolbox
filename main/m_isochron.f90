@@ -43,13 +43,13 @@ MODULE m_isochron
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
-  INTEGER(i32),              DIMENSION(2)       :: minsheets, maxsheets
-  REAL(r32),    ALLOCATABLE, DIMENSION(:)       :: shooting                 !< depth of shooting points
+  INTEGER(i32),              DIMENSION(2) :: minsheets, maxsheets
+  REAL(r32),    ALLOCATABLE, DIMENSION(:) :: shooting                 !< depth of shooting points
 
   TYPE :: co
-    REAL(r32),                 DIMENSION(2)     :: lotrvt, uptrvt, lopath, uppath
-    REAL(r32),    ALLOCATABLE, DIMENSION(:,:)   :: pdirect, sdirect
-    REAL(r32),    ALLOCATABLE, DIMENSION(:,:,:) :: penvelope, senvelope
+    REAL(r32),              DIMENSION(2)     :: lotrvt, uptrvt, lopath, uppath
+    REAL(r32), ALLOCATABLE, DIMENSION(:,:)   :: pdirect, sdirect
+    REAL(r32), ALLOCATABLE, DIMENSION(:,:,:) :: penvelope, senvelope
   END TYPE
 
   TYPE(co) :: coda
@@ -1902,18 +1902,16 @@ print*, 'scale ', scale
 
     SUBROUTINE lookup_coda(ok, ref, rec, band, pl, vel, time)
 
-      INTEGER(i32),                             INTENT(OUT) :: ok
-      INTEGER(i32),                             INTENT(IN)  :: ref, rec, band, vel, pl
-      REAL(r32),                 DIMENSION(:),  INTENT(IN)  :: time
-      CHARACTER(:), ALLOCATABLE                             :: fo
-      INTEGER(i32)                                          :: totnutr, i, j, icr, src, wave, sheet, lu, n, np, nt
-      INTEGER(i32),              DIMENSION(2)               :: nevlp
-      INTEGER(i32),              DIMENSION(3)               :: iuc, ivc, shot
-      REAL(r32)                                             :: avg, weight, r, tp, ts, vs, wp, ws, gsp, t, vratio
-      REAL(r32),                 DIMENSION(2)               :: d0
-      REAL(r32),                 DIMENSION(3)               :: u, v, w, x, y, z, repi
-      REAL(r32),                 DIMENSION(2,2)             :: pbounds, tbounds
-      REAL(r32),                 DIMENSION(3,2)             :: p, path, trvt, q
+      INTEGER(i32),                INTENT(OUT) :: ok
+      INTEGER(i32),                INTENT(IN)  :: ref, rec, band, vel, pl
+      REAL(r32),    DIMENSION(:),  INTENT(IN)  :: time
+      INTEGER(i32)                             :: totnutr, i, j, icr, src, wave, sheet, n, np, nt
+      INTEGER(i32), DIMENSION(3)               :: iuc, ivc, shot
+      REAL(r32)                                :: r, tp, ts, vs, wp, ws, gsp, vratio, pmin, pmax, tmin, tmax
+      REAL(r32),    DIMENSION(2)               :: d0
+      REAL(r32),    DIMENSION(3)               :: u, v, w, x, y, z, repi
+      REAL(r32),    DIMENSION(2,2)             :: minbounds, maxbounds
+      REAL(r32),    DIMENSION(3,2)             :: p, path, trvt, q
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
@@ -1921,18 +1919,14 @@ print*, 'scale ', scale
 
       totnutr = 2 * nutr(ref) - 1                     !< total triangles in a row
 
-      pbounds(1,:) = BIG
-      pbounds(2,:) = -BIG
-
-      tbounds(1,:) = BIG
-      tbounds(2,:) = -BIG
+      minbounds(:,:) = BIG
+      maxbounds(:,:) = -BIG
 
       vratio = 0._r32
       n = 0
 
-!     !$omp parallel do default(shared) private(i, j, iuc, ivc, u, v, w, icr, src, x, y, z, rec, shot, repi, p, path, trvt)  &
-!     !$omp private(q, weight, c, avg) reduction(max: pbounds(2), tbounds(2)) reduction(min: pbounds(1), tbounds(1)) &
-!     !$omp reduction(sum: vratio, n)
+     !$omp parallel do default(shared) private(i, j, iuc, ivc, u, v, w, icr, src, x, y, z, shot, repi, sheet, wave, p, path)   &
+     !$omp private(trvt, q) reduction(max: maxbounds) reduction(min: minbounds) reduction(+: vratio, n)
       DO j = 1, nvtr(ref)
         DO i = 1, totnutr
 
@@ -1967,10 +1961,10 @@ print*, 'scale ', scale
               CALL raypar_at_corners(sheet, shooting, repi, z, shot, wave, p(:, wave), path(:, wave), trvt(:, wave), q(:, wave))
 
               IF (ALL(trvt(:, wave) .ne. 0._r32)) THEN
-                pbounds(1, wave) = MIN(pbounds(1, wave), mean(path(:, wave)))
-                pbounds(2, wave) = MAX(pbounds(2, wave), mean(path(:, wave)))
-                tbounds(1, wave) = MIN(tbounds(1, wave), mean(trvt(:, wave)))
-                tbounds(2, wave) = MAX(tbounds(2, wave), mean(trvt(:, wave)))
+                minbounds(1, wave) = MIN(minbounds(1, wave), mean(path(:, wave)))
+                maxbounds(1, wave) = MAX(maxbounds(1, wave), mean(path(:, wave)))
+                minbounds(2, wave) = MIN(minbounds(2, wave), mean(trvt(:, wave)))
+                maxbounds(2, wave) = MAX(maxbounds(2, wave), mean(trvt(:, wave)))
               ENDIF
 
             ENDDO
@@ -1984,15 +1978,15 @@ print*, 'scale ', scale
 
         ENDDO
       ENDDO  !< end loop over triangles
-!     !$omp end parallel do
+     !$omp end parallel do
 
       vratio = vratio / n         !< average alpha/beta ratio
 
-      coda%lopath = pbounds(1, :)
-      coda%uppath = pbounds(2, :)
+      coda%lopath = minbounds(1, :)
+      coda%uppath = maxbounds(1, :)
 
-      coda%lotrvt = tbounds(1, :)
-      coda%uptrvt = tbounds(2, :)
+      coda%lotrvt = minbounds(2, :)
+      coda%uptrvt = maxbounds(2, :)
 
       IF (input%advanced%verbose .eq. 2) THEN
 
