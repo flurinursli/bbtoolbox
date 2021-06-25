@@ -47,10 +47,9 @@ MODULE m_isochron
   REAL(r32),    ALLOCATABLE, DIMENSION(:)       :: shooting                 !< depth of shooting points
 
   TYPE :: co
-    INTEGER(i32), ALLOCATABLE, DIMENSION(:,:) :: displs, counts
-    REAL(r32),    ALLOCATABLE, DIMENSION(:)   :: direct
-    REAL(r32),    ALLOCATABLE, DIMENSION(:,:) :: lotrvt, uptrvt
-    REAL(r32),    ALLOCATABLE, DIMENSION(:,:) :: envelope
+    REAL(r32),                 DIMENSION(2)     :: lotrvt, uptrvt, lopath, uppath
+    REAL(r32),    ALLOCATABLE, DIMENSION(:,:)   :: direct
+    REAL(r32),    ALLOCATABLE, DIMENSION(:,:,:) :: envelope
   END TYPE
 
   TYPE(co) :: coda
@@ -1909,8 +1908,9 @@ print*, 'scale ', scale
       INTEGER(i32)                                          :: totnutr, i, j, icr, src, wave, sheet, c, lu, n
       INTEGER(i32),              DIMENSION(3)               :: iuc, ivc, shot
       REAL(r32)                                             :: avg, weight, r, tp, ts, vs, wp, ws, gsp, t, vratio
+      REAL(r32),                 DIMENSION(3)               :: u, v, w, x, y, z, repi
       REAL(r32),                 DIMENSION(2,2)             :: pbounds, tbounds
-      REAL(r32),                 DIMENSION(3)               :: p, path, trvt, q, u, v, w, x, y, z, repi
+      REAL(r32),                 DIMENSION(3,2)             :: p, path, trvt, q
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
@@ -1972,10 +1972,11 @@ print*, 'scale ', scale
 
             ENDDO
 
-            IF (ALL(trvt) .ne. 0._r32) THEN
+            IF (ALL(trvt .ne. 0._r32)) THEN
               vratio = vratio + mean(path(:, 1)) / mean(trvt(:, 1)) * mean(trvt(:, 2)) / mean(path(:, 2))   !< alpha/beta
+              ! vratio = vratio + mean(path(:, 2)) / mean(path(:, 1))   !< alpha/beta
               n      = n + 1
-            ENDDO
+            ENDIF
 
           ENDDO
 
@@ -1992,100 +1993,84 @@ print*, 'scale ', scale
       coda%uptrvt = tbounds(2, :)
 
       IF (input%advanced%verbose .eq. 2) THEN
-        CALL update_log(num2char('<coda tableau>', justify='c', width=30) +    &
+
+        CALL update_log(num2char('<coda P>', justify='c', width=30) +    &
                         num2char('Min trvt', width=15, justify='r') + '|' + num2char('Max trvt', width=15, justify='r') + '|' + &
                         num2char('Min path', width=15, justify='r') + '|' + num2char('Max path', width=15, justify='r') + '|' + &
                         num2char('<vp/vs>', width=15, justify='r')  + '|')
 
         CALL update_log(num2char('', width=30) +  &
-                        num2char(coda%lotrvt(sheet, 1), width=15, justify='r', notation='f', precision=2) + '|' +    &
-                        num2char(coda%uptrvt(sheet, 1), width=15, justify='r', notation='f', precision=2) + '|' +    &
-                        num2char(coda%counts(sheet, 1), width=15, justify='r') + '|', blankline=.false.)
+                        num2char(coda%lotrvt(1), width=15, justify='r', notation='f', precision=2) + '|' +    &
+                        num2char(coda%uptrvt(1), width=15, justify='r', notation='f', precision=2) + '|' +    &
+                        num2char(coda%lopath(1), width=15, justify='r', notation='f', precision=2) + '|' +    &
+                        num2char(coda%uppath(1), width=15, justify='r', notation='f', precision=2) + '|' +    &
+                        num2char(vratio, width=15, justify='r') + '|', blankline=.false.)
 
-
-
-
-
-      IF (input%advanced%verbose .eq. 2) THEN
-        CALL update_log(num2char('<coda P>', justify='c', width=30) + num2char('Sheet', width=15, justify='r') + '|' + &
+        CALL update_log(num2char('<coda P>', justify='c', width=30) +    &
                         num2char('Min trvt', width=15, justify='r') + '|' + num2char('Max trvt', width=15, justify='r') + '|' + &
-                        num2char('Envelopes', width=15, justify='r') + '|')
+                        num2char('Min path', width=15, justify='r') + '|' + num2char('Max path', width=15, justify='r') + '|' + &
+                        num2char('<vp/vs>', width=15, justify='r')  + '|')
 
-        DO sheet = 1, maxsheets(1)
-          CALL update_log(num2char('', width=30) + num2char(sheet, width=15, justify='r')   + '|' +    &
-                          num2char(coda%lotrvt(sheet, 1), width=15, justify='r', notation='f', precision=2) + '|' +    &
-                          num2char(coda%uptrvt(sheet, 1), width=15, justify='r', notation='f', precision=2) + '|' +    &
-                          num2char(coda%counts(sheet, 1), width=15, justify='r') + '|', blankline=.false.)
-        ENDDO
-
-        CALL update_log(num2char('<coda S>', justify='c', width=30) + num2char('Sheet', width=15, justify='r') + '|' + &
-                        num2char('Min trvt', width=15, justify='r') + '|' + num2char('Max trvt', width=15, justify='r') + '|' + &
-                        num2char('Envelopes', width=15, justify='r') + '|')
-
-        DO sheet = 1, maxsheets(2)
-          CALL update_log(num2char('', width=30) + num2char(sheet, width=15, justify='r')   + '|' +    &
-                          num2char(coda%lotrvt(sheet, 2), width=15, justify='r', notation='f', precision=2) + '|' +    &
-                          num2char(coda%uptrvt(sheet, 2), width=15, justify='r', notation='f', precision=2) + '|' +    &
-                          num2char(coda%counts(sheet, 2), width=15, justify='r') + '|', blankline=.false.)
-        ENDDO
+        CALL update_log(num2char('', width=30) +  &
+                        num2char(coda%lotrvt(2), width=15, justify='r', notation='f', precision=2) + '|' +    &
+                        num2char(coda%uptrvt(2), width=15, justify='r', notation='f', precision=2) + '|' +    &
+                        num2char(coda%lopath(2), width=15, justify='r', notation='f', precision=2) + '|' +    &
+                        num2char(coda%uppath(2), width=15, justify='r', notation='f', precision=2) + '|' +    &
+                        num2char(vratio, width=15, justify='r') + '|', blankline=.false.)
 
       ENDIF
 
 
-print*, 'a0 ', 1./a0
-print*, 'b0 ', b0
-print*, SUM(coda%counts)
 !
-
-      IF (ALLOCATED(coda%envelope)) DEALLOCATE(coda%envelope, coda%direct)
-
-      ALLOCATE(coda%envelope(SIZE(time), SUM(coda%counts)), coda%direct(SUM(coda%counts)))
-
-      ASSOCIATE(model => input%attenuation(input%receiver(rec)%attenuation))
-
-        gsp = model%gps(band) / 6._r32
-
-!       !$omp parallel do default(shared) private(wave, sheet, i, r, t, tp, ts, vs, wp, ws, d0) reduction(max: ok) collapse(3)
-        DO wave = 1, 2
-          DO sheet = 1, MAXVAL(maxsheets)
-            DO i = 1, coda%counts(sheet, wave)
-
-              t = coda%lotrvt(sheet, wave) + (i - 1) * DC
-              r = (t - b0(sheet, wave)) / a0(sheet, wave)
-
-              IF (wave .eq. 1) THEN
-                tp = t
-                ts = a0(sheet, 2) * r + b0(sheet, 2)
-              ELSE
-                ts = t
-                tp = a0(sheet, 1) * r + b0(sheet, 1)
-              ENDIF
-
-              vs = r / ts
-
-              IF (wave .eq. 1) THEN
-                wp = 1._r32
-                ws = 0._r32
-              ELSE
-                wp = 0._r32
-                ws = 1._r32
-              ENDIF
-
-              c = coda%displs(sheet, wave) + i
-
-              ! CALL rtt(time, tp, ts, model%gpp(band), model%gps(band), gsp, model%gss(band), model%b(band), vs, wp, ws,   &
-              !           0.25_r32, d0, coda%envelope(:, c), ok)
-
-              coda%direct(c) = d0(wave)
-
-print*, i, sheet, wave, ' x ', c, ' -- ', tp, ts, ' - ', t, NINT( (t-coda%lotrvt(sheet, wave)) / DC ) + 1
-
-            ENDDO
-          ENDDO
-        ENDDO
-!        !$omp end parallel do
-
-      END ASSOCIATE
+!       IF (ALLOCATED(coda%envelope)) DEALLOCATE(coda%envelope, coda%direct)
+!
+!       ALLOCATE(coda%envelope(SIZE(time), SUM(coda%counts)), coda%direct(SUM(coda%counts)))
+!
+!       ASSOCIATE(model => input%attenuation(input%receiver(rec)%attenuation))
+!
+!         gsp = model%gps(band) / 6._r32
+!
+! !       !$omp parallel do default(shared) private(wave, sheet, i, r, t, tp, ts, vs, wp, ws, d0) reduction(max: ok) collapse(3)
+!         DO wave = 1, 2
+!           DO sheet = 1, MAXVAL(maxsheets)
+!             DO i = 1, coda%counts(sheet, wave)
+!
+!               t = coda%lotrvt(sheet, wave) + (i - 1) * DC
+!               r = (t - b0(sheet, wave)) / a0(sheet, wave)
+!
+!               IF (wave .eq. 1) THEN
+!                 tp = t
+!                 ts = a0(sheet, 2) * r + b0(sheet, 2)
+!               ELSE
+!                 ts = t
+!                 tp = a0(sheet, 1) * r + b0(sheet, 1)
+!               ENDIF
+!
+!               vs = r / ts
+!
+!               IF (wave .eq. 1) THEN
+!                 wp = 1._r32
+!                 ws = 0._r32
+!               ELSE
+!                 wp = 0._r32
+!                 ws = 1._r32
+!               ENDIF
+!
+!               c = coda%displs(sheet, wave) + i
+!
+!               ! CALL rtt(time, tp, ts, model%gpp(band), model%gps(band), gsp, model%gss(band), model%b(band), vs, wp, ws,   &
+!               !           0.25_r32, d0, coda%envelope(:, c), ok)
+!
+!               coda%direct(c) = d0(wave)
+!
+! print*, i, sheet, wave, ' x ', c, ' -- ', tp, ts, ' - ', t, NINT( (t-coda%lotrvt(sheet, wave)) / DC ) + 1
+!
+!             ENDDO
+!           ENDDO
+!         ENDDO
+! !        !$omp end parallel do
+!
+!       END ASSOCIATE
 
 print*, 'ok coda ', ok
 
