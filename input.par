@@ -35,9 +35,9 @@ origin lon=-116.32645 lat=34.68132      # that's station BM52
 # define velocity model(s)
 # fields are "vp", "vs", "rho", "depth" (default=0), "vpgrad" (default=0), "vsgrad" (default=0)
 # first model
-layer vp = 1400 vs = 800  rho = 2000 vpgrad=0.7 vsgrad=0.4 rhograd=0.4
-#layer vp = 2400 vs = 1400 rho = 2400 depth = 500 vpgrad=0.4 vsgrad=0.4 rhograd=0.4
-#layer vp = 3800 vs = 2200 rho = 2700 depth = 2100
+layer vp = 1400 vs = 800  rho = 2000 #vpgrad=0.7 vsgrad=0.4 rhograd=0.4
+layer vp = 2400 vs = 1400 rho = 2400 depth = 500 vpgrad=0.7 vsgrad=0.4 rhograd=0.4
+layer vp = 3800 vs = 2200 rho = 2700 depth = 2100
 #layer vp=4000 vs=3500 rho=2800
 
 # second model
@@ -53,8 +53,8 @@ layer vp = 1400 vs = 800  rho = 2000 vpgrad=0.7 vsgrad=0.4 rhograd=0.4
 #attenuation gpp = [0.003,0.0015,0.0007,0.0003,0.00015] gps = [0.025,0.012,0.006,0.003,0.0015] gss = [0.01,0.005,0.0025,0.0012,0.006] +
 #            b = [0.01,0.02,0.03,0.02,0.01] frequency = [1,2; 2,4; 4,8; 8,16; 16,32]
 
-attenuation gpp = [0.] gps = [0.] gss = [0.] +
-            b = [0.] frequency = [1,8]
+attenuation gpp = [0.0015] gps = [0.012] gss = [0.005] +
+            b = [0.002] frequency = [1,8]
 #attenuation gpp = [0., 0., 0.] gps = [0., 0., 0.] gss = [0., 0., 0.] +
 #            b = [0., 0., 0.] frequency = [1,2; 2,4; 4,8]
 
@@ -64,8 +64,8 @@ attenuation gpp = [0.] gps = [0.] gss = [0.] +
 
 
 
-attenuation gpp = [0.] gps = [0.] gss = [0.] +
-            b = [0.] frequency = [1,8]
+attenuation gpp = [0.0015] gps = [0.012] gss = [0.005] +
+            b = [0.002] frequency = [1,8]
 #attenuation gpp = [0., 0., 0.] gps = [0., 0., 0.] gss = [0., 0., 0.] +
 #            b = [0., 0., 0.] frequency = [1,2; 2,4; 4,8]
 
