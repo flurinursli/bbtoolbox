@@ -1908,128 +1908,102 @@ print*, 'scale ', scale
       CHARACTER(:), ALLOCATABLE                             :: fo
       INTEGER(i32)                                          :: totnutr, i, j, icr, src, wave, sheet, c, lu, n
       INTEGER(i32),              DIMENSION(3)               :: iuc, ivc, shot
-      REAL(r32)                                             :: avg, weight, r, tp, ts, vs, wp, ws, gsp, t
-      REAL(r32),                 DIMENSION(2)               :: bounds, d0
+      REAL(r32)                                             :: avg, weight, r, tp, ts, vs, wp, ws, gsp, t, vratio
+      REAL(r32),                 DIMENSION(2,2)             :: pbounds, tbounds
       REAL(r32),                 DIMENSION(3)               :: p, path, trvt, q, u, v, w, x, y, z, repi
-      REAL(r32),    ALLOCATABLE, DIMENSION(:)               :: b
-      REAL(r32),    ALLOCATABLE, DIMENSION(:,:)             :: a, a0, b0
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
       ok = 0
 
-      IF (ALLOCATED(coda%displs)) DEALLOCATE(coda%displs, coda%counts, coda%lotrvt, coda%uptrvt)
-
       totnutr = 2 * nutr(ref) - 1                     !< total triangles in a row
 
-      ALLOCATE(a(nvtr(ref)*totnutr, 2), b(nvtr(ref)*totnutr))
+      pbounds(1,:) = BIG
+      pbounds(2,:) = -BIG
 
-      ALLOCATE(a0(MAXVAL(maxsheets), 2), b0(MAXVAL(maxsheets), 2))
+      tbounds(1,:) = BIG
+      tbounds(2,:) = -BIG
 
-      ALLOCATE(coda%displs(MAXVAL(maxsheets), 2), coda%counts(MAXVAL(maxsheets), 2))
-      ALLOCATE(coda%lotrvt(MAXVAL(maxsheets), 2), coda%uptrvt(MAXVAL(maxsheets), 2))
+      vratio = 0._r32
+      n = 0
 
-      coda%counts(:,:) = 0
+!     !$omp parallel do default(shared) private(i, j, iuc, ivc, u, v, w, icr, src, x, y, z, rec, shot, repi, p, path, trvt)  &
+!     !$omp private(q, weight, c, avg) reduction(max: pbounds(2), tbounds(2)) reduction(min: pbounds(1), tbounds(1)) &
+!     !$omp reduction(sum: vratio, n)
+      DO j = 1, nvtr(ref)
+        DO i = 1, totnutr
 
-#ifdef DEBUG
+          CALL cornr(j, i, iuc, ivc)                 !< corner indices for current triangle
+          CALL cornr2uv(iuc, ivc, ref, u, v)         !< on-fault coordinates
 
-      fo = 'traveltime_' + num2char(ref) + '_' + num2char(pl) + '_' + num2char(vel) + '_' + num2char(rec) + '.txt'
+          DO icr = 1, 3
+            w(icr) = roughness(iuc(icr), ivc(icr))
+          ENDDO
 
-      OPEN(newunit = lu, file = TRIM(fo), status = 'unknown', form = 'formatted', access = 'sequential', action = 'write',  &
-           iostat = ok)
+          CALL uvw2xyz(pl, u, v, w, x, y, z)            !< get cartesian coordinates
 
-#endif
+          DO icr = 1, 3
+            z(icr) = MAX(MIN_DEPTH, z(icr))             !< make sure we never breach the free-surface (clip roughness)
+          ENDDO
 
-      DO wave = 1, 2           !< loop over wave types
+          ! find shooting points above/below
+          DO icr = 1, 3
+            DO src = 1, SIZE(shooting) - 1
+              IF ( (z(icr) .ge. shooting(src)) .and. (z(icr) .le. shooting(src + 1)) ) shot(icr) = src
+            ENDDO
+          ENDDO
 
-        DO sheet = 1, MAXVAL(maxsheets)    !< loop over sheets
+          DO icr = 1, 3
+            repi(icr) = HYPOT(input%receiver(rec)%x - x(icr), input%receiver(rec)%y - y(icr)) / 1000._r32        !< epicentral distance (corner-receiver)
+          ENDDO
 
-          bounds(1) = BIG
-          bounds(2) = -BIG
+          DO sheet = 1, MAXVAL(maxsheets)
 
-!         !$omp parallel do default(shared) private(i, j, iuc, ivc, u, v, w, icr, src, x, y, z, rec, shot, repi, p, path, trvt)  &
-!          !$omp private(q, weight, c, avg) reduction(max: bounds(2)) reduction(min: bounds(1))
-          DO j = 1, nvtr(ref)
-            DO i = 1, totnutr
+            DO wave = 1, 2
 
-              CALL cornr(j, i, iuc, ivc)                 !< corner indices for current triangle
-              CALL cornr2uv(iuc, ivc, ref, u, v)         !< on-fault coordinates
+              CALL raypar_at_corners(sheet, shooting, repi, z, shot, wave, p(:, wave), path(:, wave), trvt(:, wave), q(:, wave))
 
-              DO icr = 1, 3
-                w(icr) = roughness(iuc(icr), ivc(icr))
-              ENDDO
-
-              CALL uvw2xyz(pl, u, v, w, x, y, z)            !< get cartesian coordinates
-
-              DO icr = 1, 3
-                z(icr) = MAX(MIN_DEPTH, z(icr))             !< make sure we never breach the free-surface (clip roughness)
-              ENDDO
-
-              ! find shooting points above/below
-              DO icr = 1, 3
-                DO src = 1, SIZE(shooting) - 1
-                  IF ( (z(icr) .ge. shooting(src)) .and. (z(icr) .le. shooting(src + 1)) ) shot(icr) = src
-                ENDDO
-              ENDDO
-
-              DO icr = 1, 3
-                repi(icr) = HYPOT(input%receiver(rec)%x - x(icr), input%receiver(rec)%y - y(icr)) / 1000._r32        !< epicentral distance (corner-receiver)
-              ENDDO
-
-              CALL raypar_at_corners(sheet, shooting, repi, z, shot, wave, p, path, trvt, q)
-
-              weight = 1._r32
-
-              IF (ANY(trvt .eq. 0._r32)) weight = 0._r32
-
-              c = (j - 1) * totnutr + i
-
-! if (j .ne. 200) weight=0
-
-              avg = mean(path)
-
-              b(c)    = mean(trvt) * weight
-              a(c, 1) = avg * weight
-              a(c, 2) = weight
-
-              IF (ALL(trvt .ne. 0._r32)) THEN
-                bounds(1) = MIN(bounds(1), mean(trvt))        !< smallest average trvt
-                bounds(2) = MAX(bounds(2), mean(trvt))        !< largest average trvt
+              IF (ALL(trvt(:, wave) .ne. 0._r32)) THEN
+                pbounds(1, wave) = MIN(pbounds(1, wave), mean(path(:, wave)))
+                pbounds(2, wave) = MAX(pbounds(2, wave), mean(path(:, wave)))
+                tbounds(1, wave) = MIN(tbounds(1, wave), mean(trvt(:, wave)))
+                tbounds(2, wave) = MAX(tbounds(2, wave), mean(trvt(:, wave)))
               ENDIF
 
             ENDDO
-          ENDDO  !< end loop over triangles
-!         !$omp end parallel do
 
-          IF (bounds(1) .eq. BIG) THEN
-            bounds(1) = DC
-            bounds(2) = 0._r32
-          ENDIF
+            IF (ALL(trvt) .ne. 0._r32) THEN
+              vratio = vratio + mean(path(:, 1)) / mean(trvt(:, 1)) * mean(trvt(:, 2)) / mean(path(:, 2))   !< alpha/beta
+              n      = n + 1
+            ENDDO
 
-#ifdef DEBUG
-          DO i = 1, nvtr(ref) * totnutr
-            IF (b(i) .ne. 0._r32) WRITE(lu, *) a(i, 1), b(i), sheet, wave
           ENDDO
-#endif
 
-          CALL llsq_solver(a, b, ok)
+        ENDDO
+      ENDDO  !< end loop over triangles
+!     !$omp end parallel do
 
-          ! copy llsq parameters for "trvt(path) = path * a0 + b0"
-          a0(sheet, wave) = b(1)
-          b0(sheet, wave) = b(2)
+      vratio = vratio / n         !< average alpha/beta ratio
 
-          ! envelopes to be computed for current sheet and wave type
-          coda%counts(sheet, wave) = NINT( (bounds(2) - bounds(1)) / DC ) + 1
+      coda%lopath = pbounds(1, :)
+      coda%uppath = pbounds(2, :)
 
-          ! number of envelopes to be skipped at current sheet and wave type
-          coda%displs(sheet, wave) = SUM(coda%counts) - coda%counts(sheet, wave)
+      coda%lotrvt = tbounds(1, :)
+      coda%uptrvt = tbounds(2, :)
 
-          coda%lotrvt(sheet, wave) = bounds(1)        !< minimum traveltime
-          coda%uptrvt(sheet, wave) = bounds(2)
+      IF (input%advanced%verbose .eq. 2) THEN
+        CALL update_log(num2char('<coda tableau>', justify='c', width=30) +    &
+                        num2char('Min trvt', width=15, justify='r') + '|' + num2char('Max trvt', width=15, justify='r') + '|' + &
+                        num2char('Min path', width=15, justify='r') + '|' + num2char('Max path', width=15, justify='r') + '|' + &
+                        num2char('<vp/vs>', width=15, justify='r')  + '|')
 
-        ENDDO         !< end loop over sheets
+        CALL update_log(num2char('', width=30) +  &
+                        num2char(coda%lotrvt(sheet, 1), width=15, justify='r', notation='f', precision=2) + '|' +    &
+                        num2char(coda%uptrvt(sheet, 1), width=15, justify='r', notation='f', precision=2) + '|' +    &
+                        num2char(coda%counts(sheet, 1), width=15, justify='r') + '|', blankline=.false.)
 
-      ENDDO    !< end loop over wave types
+
+
 
 
       IF (input%advanced%verbose .eq. 2) THEN
