@@ -40,6 +40,7 @@ MODULE m_isochron
   REAL(r32), PARAMETER :: BIG = HUGE(0._r32)
   REAL(r32), PARAMETER :: DP = 0.002_r32, DPSM = 0.07_r32         !< free-surface smoothing parameters
   REAL(r32), PARAMETER :: DCP = 1._r32, DCT = 0.5_r32                            !< resolution coda tablau (traveltime)
+  REAL(r32), PARAMETER :: ISQRT3 = 1._r32 / SQRT(3._r32)
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -83,11 +84,12 @@ MODULE m_isochron
 
       INTEGER(i32),                             INTENT(OUT) :: ok
       INTEGER(i32),                             INTENT(IN)  :: rec, band, pl, vel, iter
+      CHARACTER(:), ALLOCATABLE                             :: fo
       COMPLEX(r32)                                          :: fxpfzs, fzpfxs, g31, g21, g23, ga, gb
       COMPLEX(r32),              DIMENSION(3,3)             :: fp, fs, g
       COMPLEX(r32), ALLOCATABLE, DIMENSION(:)               :: fxp, fzp, tur, tui, tv
-      INTEGER(i32)                                          :: n, i, j, ref, icr, totnutr, seed, src, sheet, wtp, it1, it2, ic
-      INTEGER(i32)                                          :: it, cut, model, npts, noslip
+      INTEGER(i32)                                          :: i, j, ref, icr, totnutr, seed, src, sheet, wtp, it1, it2, ic, shift
+      INTEGER(i32)                                          :: it, cut, model, npts, noslip, ipc, itc, lu
       INTEGER(i32),              DIMENSION(3)               :: iuc, ivc, abv, blw, shot
       ! INTEGER(i32), ALLOCATABLE, DIMENSION(:,:)             :: ncuts, active
       REAL(r32)                                             :: m0, moment, strike, dip, urec, vrec, wrec, taumin, taumax, sd, cd, dt
@@ -96,8 +98,8 @@ MODULE m_isochron
       REAL(r32),                 DIMENSION(2)               :: ncuts, active
       REAL(r32),                 DIMENSION(3)               :: u, v, w, x, y, z, slip, rupture, rake, nrl, rho, alpha, beta, mu
       REAL(r32),                 DIMENSION(3)               :: p, q, path, trvt, repi, tau, sr, cr, velloc
-      REAL(r32),    ALLOCATABLE, DIMENSION(:)               :: fsp, mrf, envelope, stack, time
-      REAL(r32),    ALLOCATABLE, DIMENSION(:,:)             :: rtri, itri, rseis, iseis, seis
+      REAL(r32),    ALLOCATABLE, DIMENSION(:)               :: fsp, mrf, envelope, stack, time, cseis, ctri
+      REAL(r32),    ALLOCATABLE, DIMENSION(:,:)             :: rtri, itri, rseis, iseis, seis, nseis
       REAL(r64)                                             :: tictoc
       REAL(r64),                 DIMENSION(6)               :: timer
       REAL(r64),                 DIMENSION(10)              :: otimer
@@ -162,6 +164,15 @@ MODULE m_isochron
       ENDIF
 
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+      ! ---------------------------------------- interpolate noise ---------------------------------------------
+
+      ALLOCATE(nseis(npts, 3))
+
+      CALL interpolate(timeseries%cd%time, timeseries%cd%x(:, rec), time, nseis(:, 1))
+      CALL interpolate(timeseries%cd%time, timeseries%cd%y(:, rec), time, nseis(:, 2))
+      CALL interpolate(timeseries%cd%time, timeseries%cd%z(:, rec), time, nseis(:, 3))
+
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! --------------------------------------- solve integral for each mesh refinement --------------------------------------------
 
       moment = 0._r32      !< keep track of actual moment, this will be used to rescale synthetics to target moment
@@ -176,6 +187,12 @@ MODULE m_isochron
 
       ALLOCATE(rseis(npts, 3), iseis(npts, 3), rtri(npts, 3), itri(npts, 3))
       ALLOCATE(mrf(npts), tur(npts/2+1), tui(npts/2+1), tv(npts/2+1))
+
+#ifdef DEBUG
+      ALLOCATE(cseis(npts), ctri(npts))
+
+      cseis(:) = 0._r32
+#endif
 
       ! loop over mesh refinements
       DO ref = 1, SIZE(nvtr)
@@ -252,6 +269,10 @@ MODULE m_isochron
         timer(4) = timer(4) + tictoc
 #endif
 
+#ifdef DEBUG
+        ctri(:) = 0._r32
+#endif
+
 
         ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
         ! ------------------------------------------- allocate memory for FFT/IFFT -------------------------------------------------
@@ -261,8 +282,8 @@ MODULE m_isochron
         !$omp parallel do default(shared) private(i, j, iuc, ivc, icr, slip, u, v, w, x, y, z, nrl, strike, dip, rake, sd, cd)   &
         !$omp private(sr, cr, tictoc, rupture, alpha, beta, rho, mu, ic, src, shot, mrf, urec, vrec, wrec, repi)     &
         !$omp private(rtri, itri, wtp, abv, blw, velloc, srfvel, scattering, sheet, p, path, trvt, q, tau, taumin, taumax, it1)   &
-        !$omp private(it2, g, attenuation, cut, c, it, tur, tui, tv, a0)   &
-        !$omp reduction(+: m0, rseis, iseis, otimer, ncuts, active, noslip)
+        !$omp private(it2, g, attenuation, cut, c, it, tur, tui, tv, a0, ipc, itc, shift)   &
+        !$omp reduction(+: m0, rseis, iseis, otimer, ncuts, active, noslip, ctri)
         DO j = 1, nvtr(ref)
           DO i = 1, totnutr
 
@@ -505,19 +526,61 @@ MODULE m_isochron
                 ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
                 ! ------------------------------------------ add coda contribution -----------------------------------------------
 
+                ipc = NINT( (mean(path) - coda%lopath(wtp)) / DCP ) + 1
+                itc = NINT( (mean(trvt) - coda%lotrvt(wtp)) / DCT ) + 1
+
+                shift = NINT(mean(rupture) / dt) + 1 - 1
+
                 ! (averaged) amplitude of direct wave for isotropic radiation (0.63) at free-surface (2)
                 ! a0 = (2._r32 * ABS(mean(q)) * mean(mu) * mean(slip) * c) * 0.63_r32 * 2._r32
-                !
-                ! avepath = mean(path)
-                ! avetrvt = mean(trvt)
 
-                ! a0 = a0 / direct(, sheet, wtp)
+print*, 'rec sheet', rec, sheet, mean(trvt) + mean(rupture), wtp, mean(q)*mean(mu)*mean(slip)
 
-                !   DO it = 1, npts
-                !     rtri(it, 1) = rtri(it, 1) + envelope(it) * timeseries%cd%x(it, rec)
-                !     rtri(it, 2) = rtri(it, 2) + envelope(it) * timeseries%cd%y(it, rec)
-                !     rtri(it, 3) = rtri(it, 3) + envelope(it) * timeseries%cd%z(it, rec)
-                !   ENDDO
+                ! SQRT(3) is there because isotropic radiation is distributed evenly along the three directions of motion
+
+!                 IF (wtp .eq. 1) THEN
+!
+!                   a0 = (2._r32 * ABS(mean(q)) * mean(mu) * mean(slip) * c) * 0.44_r32 * 2._r32 * attenuation * ISQRT3
+!                   a0 = a0 / maxsheets(wtp)
+!
+! ! print*, 'rec sheet', rec, sheet, mean(trvt) + mean(rupture), wtp, a0
+!
+!                   a0 = a0 / coda%pdirect(itc, ipc)
+!
+!                   DO it = 1, npts - shift
+!                     rtri(it + shift, 1) = rtri(it + shift, 1) + coda%penvelope(it, itc, ipc) * a0 * nseis(it, 1)
+!                     rtri(it + shift, 2) = rtri(it + shift, 2) + coda%penvelope(it, itc, ipc) * a0 * nseis(it, 2)
+!                     rtri(it + shift, 3) = rtri(it + shift, 3) + coda%penvelope(it, itc, ipc) * a0 * nseis(it, 3)
+!                   ENDDO
+!
+! #ifdef DEBUG
+!                   DO it = 1, npts - shift
+!                     ctri(it + shift) = ctri(it + shift) + coda%penvelope(it, itc, ipc) * a0
+!                   ENDDO
+! #endif
+!
+!                 ELSE
+!
+!                   a0 = (2._r32 * ABS(mean(q)) * mean(mu) * mean(slip) * c) * 0.60_r32 * 2._r32 * attenuation * ISQRT3
+!                   a0 = a0 / maxsheets(wtp)
+!
+! ! print*, 'rec sheet', rec, sheet, mean(trvt) + mean(rupture), wtp, a0
+!
+!                   a0 = a0 / coda%sdirect(itc, ipc)
+!
+!                   DO it = 1, npts - shift
+!                     rtri(it + shift, 1) = rtri(it + shift, 1) + coda%senvelope(it, itc, ipc) * a0 * nseis(it, 1)
+!                     rtri(it + shift, 2) = rtri(it + shift, 2) + coda%senvelope(it, itc, ipc) * a0 * nseis(it, 2)
+!                     rtri(it + shift, 3) = rtri(it + shift, 3) + coda%senvelope(it, itc, ipc) * a0 * nseis(it, 3)
+!                   ENDDO
+!
+! #ifdef DEBUG
+!                   DO it = 1, npts - shift
+!                     ctri(it + shift) = ctri(it + shift) + coda%senvelope(it, itc, ipc) * a0
+!                   ENDDO
+! #endif
+!
+!                 ENDIF
 
               ENDDO     !< end loop over sheets
 
@@ -613,6 +676,12 @@ MODULE m_isochron
 
 print*, 'area ', dutr(ref) * dvtr(ref) * 0.5_r32
 
+#ifdef DEBUG
+      DO it = 1, npts
+        cseis(it) = cseis(it) + ctri(it)
+      ENDDO
+#endif
+
       ENDDO        !< end loop over mesh refinements
 
       scale = plane(pl)%targetm0 / moment          !< scaling factor to scale to desired moment
@@ -685,6 +754,20 @@ print*, 'scale ', scale
       print*, 'Time Filter: ', real(timer(6))
 #endif
 
+#ifdef DEBUG
+
+      fo = 'envelope_rec' + num2char(rec) + '_band' + num2char(band) + '_plane' + num2char(pl) + '_vel' + num2char(vel) + '.txt'
+
+      OPEN(newunit = lu, file = fo, status = 'replace', form = 'formatted', access = 'sequential', action = 'write', IOSTAT = ok)
+
+      DO it = 1, npts
+        WRITE(lu, *) time(it), cseis(it) * scale
+      ENDDO
+
+      CLOSE(lu)
+
+#endif
+
     END SUBROUTINE solve_isochron_integral
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
@@ -693,17 +776,17 @@ print*, 'scale ', scale
 
     SUBROUTINE time_integration(ref, it1, it2, dt, attenuation, tau, g, c, ncuts, rtri, itri)
 
-      INTEGER(i32),                 INTENT(IN)  :: ref, it1, it2
-      REAL(r32),                    INTENT(IN)  :: dt, attenuation
-      REAL(r32),    DIMENSION(3),   INTENT(IN)  :: tau
-      COMPLEX(r32), DIMENSION(3,3), INTENT(IN)  :: g
-      REAL(r32),                    INTENT(OUT) :: c
-      INTEGER(i32),                 INTENT(OUT) :: ncuts
-      REAL(r32),    DIMENSION(:,:), INTENT(OUT) :: rtri, itri
-      COMPLEX(r32)                              :: g31, g21, g23, ga, gb
-      INTEGER(i32)                              :: ic, it, icut
-      REAL(r32)                                 :: tau31, tau21, tau23, du, dv, p13, p12, p32, dl, t
-      REAL(r32),    DIMENSION(3)                :: dtau
+      INTEGER(i32),                 INTENT(IN)    :: ref, it1, it2
+      REAL(r32),                    INTENT(IN)    :: dt, attenuation
+      REAL(r32),    DIMENSION(3),   INTENT(IN)    :: tau
+      COMPLEX(r32), DIMENSION(3,3), INTENT(IN)    :: g
+      REAL(r32),                    INTENT(OUT)   :: c
+      INTEGER(i32),                 INTENT(OUT)   :: ncuts
+      REAL(r32),    DIMENSION(:,:), INTENT(INOUT) :: rtri, itri
+      COMPLEX(r32)                                :: g31, g21, g23, ga, gb
+      INTEGER(i32)                                :: ic, it, icut
+      REAL(r32)                                   :: tau31, tau21, tau23, du, dv, p13, p12, p32, dl, t
+      REAL(r32),    DIMENSION(3)                  :: dtau
 
       !-----------------------------------------------------------------------------------------------------------------------------
 

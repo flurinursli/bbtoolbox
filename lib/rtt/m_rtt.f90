@@ -1138,7 +1138,7 @@ MODULE m_rtt
       REAL(r32),    DIMENSION(SIZE(time)),  INTENT(OUT) :: envelope
       INTEGER(i32),                         INTENT(OUT) :: ok
       COMPLEX(r64), DIMENSION(nfft/2+1)                 :: spectrum
-      INTEGER(i32)                                      :: i, is, ip, lu, i0, i1, ierr, rank
+      INTEGER(i32)                                      :: i, is, ip, lu, i0, i1, ierr, rank, n
       INTEGER(i32)                                      :: nwigner, npts
 #ifdef MPI
       INTEGER(i32), DIMENSION(SIZE(pprank))             :: displs
@@ -1327,19 +1327,31 @@ MODULE m_rtt
       ! scaling factor
       c0 = 0.5_r64 / (pi * SQRT(pi) * tau * sr**2)
 
-      ! v  = e0_p * c0 * EXP(-eta_p * alpha * tp) / alpha
-      ! b  = e0_s * c0 * EXP(-eta_s * beta * ts) / beta
-      v  = e0_p * c0 / alpha
-      b  = e0_s * c0 / beta
-      ! c0 = 4._r64 / tau**2
+      v  = e0_p * c0 * EXP(-eta_p * alpha * tp) / alpha
+      b  = e0_s * c0 * EXP(-eta_s * beta * ts) / beta
 
+      ! c0 = 4._r64 / tau**2
+      !
       ! DO i = 1, npts
       !   e0(i) = e0(i) + v * EXP(-c0 * (time(i) - tp)**2)
       !   e0(i) = e0(i) + b * EXP(-c0 * (time(i) - ts)**2)
       ! ENDDO
 
-      direct(1) = SQRT(v)
-      direct(2) = SQRT(b)
+      direct(1) = SQRT(v * EXP(-bi * tp))
+      direct(2) = SQRT(b * EXP(-bi * ts))
+
+      ip = NINT( (tp - tau) / dt) + 1
+
+      n = NINT(2._r32 * tau / dt) + 1
+
+      DO i = 1, ip - n/2 - 1
+        em(i) = 0._r32
+      ENDDO
+
+      DO i = ip - n/2, ip
+        em(i) = em(i) * SIN(pi * REAL(i - ip + n/2, r32) / n)**2          !< hann window
+      ENDDO
+
 
       ! e0(:)  = 0._r64
       ! e1(:)  = 0._r64
@@ -1443,7 +1455,8 @@ MODULE m_rtt
       DO i = 1, npts
         ! envelope(i) = (e0(i) + e1(i) + em(i)) * EXP(-b * time(i))
         ! envelope(i) = (e0(i) + em(i)) * EXP(-bi * time(i))
-        envelope(i) = SQRT(em(i)) * EXP(-bi * time(i))
+        envelope(i) = SQRT(em(i) * EXP(-bi * time(i)))
+        ! envelope(i) = SQRT( (e0(i) + em(i)) * EXP(-bi * time(i)) )
       ENDDO
 
 #ifdef PERF
