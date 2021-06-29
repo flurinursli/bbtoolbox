@@ -605,7 +605,7 @@ MODULE m_wkbj
         wkbj(src, wtp)%pn(i) = vpn(i)
         wkbj(src, wtp)%x(i)  = vxx(i)
         wkbj(src, wtp)%t(i)  = vtt(i)
-        wkbj(src, wtp)%q(i)  = vqp(i)
+        wkbj(src, wtp)%q(i)  = vqp(i) 
         wkbj(src, wtp)%r(i)  = vr(i)
         wkbj(src, wtp)%sheet(i) = vsheet(i)
       ENDDO

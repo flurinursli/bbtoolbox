@@ -1014,9 +1014,9 @@ MODULE m_toolbox
                           num2char('Strike', width=15, justify='r') + '|' +  &
                           num2char('Dip', width=15, justify='r')    + '|')
           CALL update_log(num2char('', width=30) + &
-                          num2char(input%source%x, notation='f', width=15, precision=3, justify='r') + '|' + &
-                          num2char(input%source%y, notation='f', width=15, precision=3, justify='r') + '|' + &
-                          num2char(input%source%z, notation='f', width=15, precision=3, justify='r') + '|' + &
+                          num2char(input%source%x, notation='f', width=15, precision=1, justify='r') + '|' + &
+                          num2char(input%source%y, notation='f', width=15, precision=1, justify='r') + '|' + &
+                          num2char(input%source%z, notation='f', width=15, precision=1, justify='r') + '|' + &
                           num2char(input%source%strike, notation='f', width=15, precision=1, justify='r') + '|' + &
                           num2char(input%source%dip, notation='f', width=15, precision=1, justify='r')    + '|', blankline=.false.)
         ENDIF
@@ -1074,10 +1074,10 @@ MODULE m_toolbox
                         num2char('Depth', width=15, justify='r') + '|')
         DO j = 1, SIZE(input%velocity(i)%vp)
           CALL update_log(num2char('', width=30)  +  &
-                          num2char(input%velocity(i)%vp(j), width=15, notation='f', precision=3, justify='r') + '|' + &
-                          num2char(input%velocity(i)%vs(j), width=15, notation='f', precision=3, justify='r') + '|' + &
-                          num2char(input%velocity(i)%rho(j), width=15, notation='f', precision=3, justify='r') + '|' + &
-                          num2char(input%velocity(i)%depth(j), width=15, notation='f', precision=3, justify='r') + '|',  &
+                          num2char(input%velocity(i)%vp(j), width=15, notation='f', precision=1, justify='r') + '|' + &
+                          num2char(input%velocity(i)%vs(j), width=15, notation='f', precision=1, justify='r') + '|' + &
+                          num2char(input%velocity(i)%rho(j), width=15, notation='f', precision=1, justify='r') + '|' + &
+                          num2char(input%velocity(i)%depth(j), width=15, notation='f', precision=1, justify='r') + '|',  &
                           blankline = .false.)
         ENDDO
       ENDDO
@@ -1094,10 +1094,10 @@ MODULE m_toolbox
           CALL update_log(num2char('', width=30)  +  &
                           num2char(input%attenuation(i)%lcut(j), width=15, notation='f', precision=1, justify='r') + '|' + &
                           num2char(input%attenuation(i)%hcut(j), width=15, notation='f', precision=1, justify='r') + '|' + &
-                          num2char(input%attenuation(i)%gpp(j), width=15, notation='f', precision=3, justify='r') + '|' + &
-                          num2char(input%attenuation(i)%gps(j), width=15, notation='f', precision=3, justify='r') + '|' + &
-                          num2char(input%attenuation(i)%gss(j), width=15, notation='f', precision=3, justify='r') + '|' + &
-                          num2char(input%attenuation(i)%b(j), width=15, notation='f', precision=3, justify='r') + '|',  &
+                          num2char(input%attenuation(i)%gpp(j), width=15, notation='f', precision=5, justify='r') + '|' + &
+                          num2char(input%attenuation(i)%gps(j), width=15, notation='f', precision=5, justify='r') + '|' + &
+                          num2char(input%attenuation(i)%gss(j), width=15, notation='f', precision=5, justify='r') + '|' + &
+                          num2char(input%attenuation(i)%b(j), width=15, notation='f', precision=5, justify='r') + '|',  &
                           blankline = .false.)
         ENDDO
       ENDDO
@@ -1133,9 +1133,9 @@ MODULE m_toolbox
       ELSE
         DO i = 1, SIZE(input%receiver)
           CALL update_log(num2char('', width=30)  +   &
-                          num2char(input%receiver(i)%x, width=15, notation='f', precision=3, justify='r') + '|' + &
-                          num2char(input%receiver(i)%y, width=15, notation='f', precision=3, justify='r') + '|' + &
-                          num2char(input%receiver(i)%z, width=15, notation='f', precision=3, justify='r') + '|' + &
+                          num2char(input%receiver(i)%x, width=15, notation='f', precision=1, justify='r') + '|' + &
+                          num2char(input%receiver(i)%y, width=15, notation='f', precision=1, justify='r') + '|' + &
+                          num2char(input%receiver(i)%z, width=15, notation='f', precision=1, justify='r') + '|' + &
                           num2char(TRIM(input%receiver(i)%file), width=15, justify='r') + '|' + &
                           num2char(input%receiver(i)%velocity, width=15, justify='r')   + '|' + &
                           num2char(input%receiver(i)%attenuation, width=15, justify='r') + '|', blankline = .false.)
@@ -1167,8 +1167,8 @@ MODULE m_toolbox
 
         DO i = 1, SIZE(input%receiver)
           CALL update_log(num2char('', width=30)  +   &
-                          num2char(input%receiver(i)%x, width=15, notation='f', precision=3, justify='r') + '|' + &
-                          num2char(input%receiver(i)%y, width=15, notation='f', precision=3, justify='r') + '|', blankline=.false.)
+                          num2char(input%receiver(i)%x, width=15, notation='f', precision=1, justify='r') + '|' + &
+                          num2char(input%receiver(i)%y, width=15, notation='f', precision=1, justify='r') + '|', blankline=.false.)
         ENDDO
       ENDIF
 

@@ -534,53 +534,53 @@ MODULE m_isochron
                 ! (averaged) amplitude of direct wave for isotropic radiation (0.63) at free-surface (2)
                 ! a0 = (2._r32 * ABS(mean(q)) * mean(mu) * mean(slip) * c) * 0.63_r32 * 2._r32
 
-print*, 'rec sheet', rec, sheet, mean(trvt) + mean(rupture), wtp, mean(q)*mean(mu)*mean(slip)
+! print*, 'rec sheet', rec, sheet, mean(trvt) + mean(rupture), wtp, mean(q)*mean(mu)*mean(slip)
 
                 ! SQRT(3) is there because isotropic radiation is distributed evenly along the three directions of motion
 
-!                 IF (wtp .eq. 1) THEN
-!
-!                   a0 = (2._r32 * ABS(mean(q)) * mean(mu) * mean(slip) * c) * 0.44_r32 * 2._r32 * attenuation * ISQRT3
-!                   a0 = a0 / maxsheets(wtp)
-!
-! ! print*, 'rec sheet', rec, sheet, mean(trvt) + mean(rupture), wtp, a0
-!
-!                   a0 = a0 / coda%pdirect(itc, ipc)
-!
-!                   DO it = 1, npts - shift
-!                     rtri(it + shift, 1) = rtri(it + shift, 1) + coda%penvelope(it, itc, ipc) * a0 * nseis(it, 1)
-!                     rtri(it + shift, 2) = rtri(it + shift, 2) + coda%penvelope(it, itc, ipc) * a0 * nseis(it, 2)
-!                     rtri(it + shift, 3) = rtri(it + shift, 3) + coda%penvelope(it, itc, ipc) * a0 * nseis(it, 3)
-!                   ENDDO
-!
-! #ifdef DEBUG
-!                   DO it = 1, npts - shift
-!                     ctri(it + shift) = ctri(it + shift) + coda%penvelope(it, itc, ipc) * a0
-!                   ENDDO
-! #endif
-!
-!                 ELSE
-!
-!                   a0 = (2._r32 * ABS(mean(q)) * mean(mu) * mean(slip) * c) * 0.60_r32 * 2._r32 * attenuation * ISQRT3
-!                   a0 = a0 / maxsheets(wtp)
-!
-! ! print*, 'rec sheet', rec, sheet, mean(trvt) + mean(rupture), wtp, a0
-!
-!                   a0 = a0 / coda%sdirect(itc, ipc)
-!
-!                   DO it = 1, npts - shift
-!                     rtri(it + shift, 1) = rtri(it + shift, 1) + coda%senvelope(it, itc, ipc) * a0 * nseis(it, 1)
-!                     rtri(it + shift, 2) = rtri(it + shift, 2) + coda%senvelope(it, itc, ipc) * a0 * nseis(it, 2)
-!                     rtri(it + shift, 3) = rtri(it + shift, 3) + coda%senvelope(it, itc, ipc) * a0 * nseis(it, 3)
-!                   ENDDO
-!
-! #ifdef DEBUG
-!                   DO it = 1, npts - shift
-!                     ctri(it + shift) = ctri(it + shift) + coda%senvelope(it, itc, ipc) * a0
-!                   ENDDO
-! #endif
-!
-!                 ENDIF
+                IF (wtp .eq. 1) THEN
+
+                  a0 = (2._r32 * ABS(mean(q)) * mean(mu) * mean(slip) * c) * 0.44_r32 * 2._r32 * attenuation * ISQRT3
+                  a0 = a0 / maxsheets(wtp)
+
+! print*, 'rec sheet', rec, sheet, mean(trvt) + mean(rupture), wtp, a0
+
+                  a0 = a0 / coda%pdirect(itc, ipc)
+
+                  DO it = 1, npts - shift
+                    rtri(it + shift, 1) = rtri(it + shift, 1) + coda%penvelope(it, itc, ipc) * a0 * nseis(it, 1)
+                    rtri(it + shift, 2) = rtri(it + shift, 2) + coda%penvelope(it, itc, ipc) * a0 * nseis(it, 2)
+                    rtri(it + shift, 3) = rtri(it + shift, 3) + coda%penvelope(it, itc, ipc) * a0 * nseis(it, 3)
+                  ENDDO
+
+#ifdef DEBUG
+                  DO it = 1, npts - shift
+                    ctri(it + shift) = ctri(it + shift) + coda%penvelope(it, itc, ipc) * a0
+                  ENDDO
+#endif
+
+                ELSE
+
+                  a0 = (2._r32 * ABS(mean(q)) * mean(mu) * mean(slip) * c) * 0.60_r32 * 2._r32 * attenuation * ISQRT3
+                  a0 = a0 / maxsheets(wtp)
+
+! print*, 'rec sheet', rec, sheet, mean(trvt) + mean(rupture), wtp, a0
+
+                  a0 = a0 / coda%sdirect(itc, ipc)
+
+                  DO it = 1, npts - shift
+                    rtri(it + shift, 1) = rtri(it + shift, 1) + coda%senvelope(it, itc, ipc) * a0 * nseis(it, 1)
+                    rtri(it + shift, 2) = rtri(it + shift, 2) + coda%senvelope(it, itc, ipc) * a0 * nseis(it, 2)
+                    rtri(it + shift, 3) = rtri(it + shift, 3) + coda%senvelope(it, itc, ipc) * a0 * nseis(it, 3)
+                  ENDDO
+
+#ifdef DEBUG
+                  DO it = 1, npts - shift
+                    ctri(it + shift) = ctri(it + shift) + coda%senvelope(it, itc, ipc) * a0
+                  ENDDO
+#endif
+
+                ENDIF
 
               ENDDO     !< end loop over sheets
 
@@ -654,7 +654,6 @@ print*, 'rec sheet', rec, sheet, mean(trvt) + mean(rupture), wtp, mean(q)*mean(m
           ENDDO
         ENDDO
 
-
 #ifdef PERF
         CALL watch_stop(tictoc, COMM)
         timer(5) = timer(5) + tictoc
@@ -685,6 +684,7 @@ print*, 'area ', dutr(ref) * dvtr(ref) * 0.5_r32
       ENDDO        !< end loop over mesh refinements
 
       scale = plane(pl)%targetm0 / moment          !< scaling factor to scale to desired moment
+      scale = scale * 1.E-18_r32                   !< take into account the fact that units for "q" were km, g/cm^3, km/s
 
 print*, 'scale ', scale
 
@@ -1730,12 +1730,13 @@ print*, 'scale ', scale
 
         CALL update_log(num2char('', width=30, justify='c')  +  &
                         num2char(SIZE(shooting), width=15, justify='r') + '|' + &
-                        num2char(rmax, width=15, notation='f', precision=1, justify='r') + '|' + &
-                        num2char(MINVAL(shooting), width=15, notation='f', precision=2, justify='r') + '|' + &
-                        num2char(MAXVAL(shooting), width=15, notation='f', precision=2, justify='r') + '|' +  &
+                        num2char(rmax*1.E-03_r32, width=15, notation='f', precision=3, justify='r') + '|' + &
+                        num2char(MINVAL(shooting)*1.E-03_r32, width=15, notation='f', precision=3, justify='r') + '|' + &
+                        num2char(MAXVAL(shooting)*1.E-03_r32, width=15, notation='f', precision=3, justify='r') + '|' +  &
                         ! num2char(num2char(zmin, notation='f', width=6, precision=2) + ', ' +   &
                         !          num2char(zmax, notation='f', width=6, precision=2), width=15, justify='r') + '|',blankline=.false.)
-                        num2char(mean([zmin, zmax]), notation='f', width=15, precision=2, justify='r') + '|', blankline=.false.)
+                        num2char(mean([zmin, zmax])*1.E-03_r32, notation='f', width=15, precision=3, justify='r') + '|',    &
+                        blankline=.false.)
 
       ENDIF
 
