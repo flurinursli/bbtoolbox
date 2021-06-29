@@ -1457,7 +1457,7 @@ print*, 'rupture ', maxval(plane(pl)%rupture)
           z = z0 + v(j) * sd                             !< absolute coordinates
           z = MAX(0._r32, z)                             !< avoid small negative values: is this needed??
 
-          beta = vinterp(model%depth, model%vs, model%vsgrad, z) * input%advanced%vrfact    !< vs * vrfact
+          beta = vinterp(model%depth, model%vs, model%vsgrad, z) * 0.85_r32 !input%advanced%vrfact    !< vs * vrfact
 
           DO i = 1, nu
             vsvr(i, j) = beta        !< velocity is constant at a given depth

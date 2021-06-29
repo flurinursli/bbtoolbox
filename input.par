@@ -83,4 +83,4 @@ rec lon=-116.02762 lat=34.28803 z=0 file= 'DUMB' velocity=1   attenuation= 2
 #rec lon=14.82 lat=45.14 z=0 file= 'st02' velocity = 1 attenuation = 2
 
 # set optional parameters (all fields are optional)
-advanced pmw = 4 vrfact = 0.85 avecuts = 2 sheets = 0 waves = 2 verbose = 2
+advanced pmw = 4 avecuts = 2 waves = 0 verbose = 2

@@ -40,6 +40,7 @@ MODULE m_toolbox
   REAL(r32), PARAMETER :: DEFAULT_VPGRAD = 0.01_r32, DEFAULT_VSGRAD = 0.01_r32, DEFAULT_RHOGRAD = 0._r32
 
   TYPE :: src
+    CHARACTER(1)   :: save2disk = "n"
     CHARACTER(8)   :: type = "Brune"
     CHARACTER(256) :: file
     INTEGER(i32)   :: seed
@@ -74,13 +75,12 @@ MODULE m_toolbox
     INTEGER(i32) :: seed, samples
     LOGICAL      :: add_coherency = .true.
     REAL(r32)    :: fmax, matching, bandwidth
-    REAL(r32)    :: alpha                   !< Luco-Wong coherence
-    REAL(r32)    :: a, ak, f0, b            !< Harichandran-Vanmacke coherence
+    REAL(r32)    :: alpha                               !< Luco-Wong coherence
+    REAL(r32)    :: a, ak, f0, b                        !< Harichandran-Vanmacke coherence
   END TYPE hf
 
   TYPE :: adv
-    INTEGER(i32) :: pmw = 4, avecuts = 2, sheets = 0, waves = 2, verbose = 1
-    REAL(r32)    :: vrfact = 0.85_r32
+    INTEGER(i32) :: pmw = 4, avecuts = 2, waves = 0, verbose = 1
   END TYPE adv
 
   TYPE :: org
@@ -647,19 +647,27 @@ MODULE m_toolbox
 
         input%source%file = TRIM(str)
 
-        CALL parse(ok, freq, lu, 'freq', ['=', ' '], 'rupture', com = '#')     !< freq
+        ! CALL parse(ok, freq, lu, 'freq', ['=', ' '], 'rupture', com = '#')     !< freq
+        ! CALL missing_arg(ok, .false., '')
+        !
+        ! IF (ok .ne. 0) RETURN
+        !
+        ! IF (.not.is_empty(freq)) input%source%freq = freq
+        !
+        ! CALL parse(ok, str, lu, 'type', ["'", "'"], 'rupture', com = '#')     !< type
+        ! CALL missing_arg(ok, .false., '')
+        !
+        ! IF (ok .ne. 0) RETURN
+        !
+        ! IF (.not.is_empty(str)) input%source%type = TRIM(str)
+
+        CALL parse(ok, str, lu, 'save', ["'", "'"], 'rupture', com = '#')
         CALL missing_arg(ok, .false., '')
 
         IF (ok .ne. 0) RETURN
 
-        IF (.not.is_empty(freq)) input%source%freq = freq
+        IF (.not.is_empty(str)) input%source%save2disk = TRIM(str)             !< save2disk
 
-        CALL parse(ok, str, lu, 'type', ["'", "'"], 'rupture', com = '#')     !< type
-        CALL missing_arg(ok, .false., '')
-
-        IF (ok .ne. 0) RETURN
-
-        IF (.not.is_empty(str)) input%source%type = TRIM(str)
         CALL parse(ok, input%source%roughness, lu, 'roughness', ['=', ' '], 'rupture', com = '#')     !< roughness
         CALL missing_arg(ok, .false., '')
 
@@ -710,15 +718,15 @@ MODULE m_toolbox
 
       IF (.not.is_empty(z)) input%advanced%pmw = z
 
-      CALL parse(ok, z, lu, 'vrfact', ['=', ' '], 'advanced', com = '#')     !< vrfact
-      CALL missing_arg(ok, .false., '')
-
-      IF (ok .ne. 0) RETURN
-
-      IF (.not.is_empty(z)) input%advanced%vrfact = z
+      ! CALL parse(ok, z, lu, 'vrfact', ['=', ' '], 'advanced', com = '#')     !< vrfact
+      ! CALL missing_arg(ok, .false., '')
+      !
+      ! IF (ok .ne. 0) RETURN
+      !
+      ! IF (.not.is_empty(z)) input%advanced%vrfact = z
 
       ! use vrfact from "advanced" settings if the one from "source" is empty
-      IF (is_empty(input%source%vrfact)) input%source%vrfact = input%advanced%vrfact
+      ! IF (is_empty(input%source%vrfact)) input%source%vrfact = input%advanced%vrfact
 
       CALL parse(ok, p, lu, 'avecuts', ['=', ' '], 'advanced', com = '#')     !< avecuts
       CALL missing_arg(ok, .false., '')
@@ -727,12 +735,12 @@ MODULE m_toolbox
 
       IF (.not.is_empty(p)) input%advanced%avecuts = p
 
-      CALL parse(ok, p, lu, 'sheets', ['=', ' '], 'advanced', com = '#')     !< sheets
-      CALL missing_arg(ok, .false., '')
-
-      IF (ok .ne. 0) RETURN
-
-      IF (.not.is_empty(p)) input%advanced%sheets = p
+      ! CALL parse(ok, p, lu, 'sheets', ['=', ' '], 'advanced', com = '#')     !< sheets
+      ! CALL missing_arg(ok, .false., '')
+      !
+      ! IF (ok .ne. 0) RETURN
+      !
+      ! IF (.not.is_empty(p)) input%advanced%sheets = p
 
       CALL parse(ok, p, lu, 'waves', ['=', ' '], 'advanced', com = '#')     !< waves
       CALL missing_arg(ok, .false., '')
@@ -999,34 +1007,36 @@ MODULE m_toolbox
                           num2char('lat', width=15, justify='r') + '|' +  &
                           num2char('z', width=15, justify='r') + '|' +  &
                           num2char('Strike', width=15, justify='r') + '|' +  &
-                          num2char('Dip', width=15, justify='r')    + '|')
+                          num2char('Dip', width=15, justify='r')    + '|' +  &
+                          num2char('Rake', width=15, justify='r')    + '|')
           CALL update_log(num2char('', width=30) + &
                           num2char(input%source%lon, notation='f', width=15, precision=3, justify='r') + '|' + &
                           num2char(input%source%lat, notation='f', width=15, precision=3, justify='r') + '|' + &
                           num2char(input%source%z, notation='f', width=15, precision=3, justify='r') + '|' + &
                           num2char(input%source%strike, notation='f', width=15, precision=1, justify='r') + '|' + &
-                          num2char(input%source%dip, notation='f', width=15, precision=1, justify='r')    + '|', blankline=.false.)
+                          num2char(input%source%dip, notation='f', width=15, precision=1, justify='r')    + '|' + &
+                          num2char(input%source%rake, notation='f', width=15, precision=1, justify='r')   + '|',  blankline=.false.)
         ELSE
           CALL update_log(num2char('Source parameters', width=30, fill='.') +     &
                           num2char('x', width=15, justify='r') + '|' +  &
                           num2char('y', width=15, justify='r') + '|' +  &
                           num2char('z', width=15, justify='r') + '|' +  &
                           num2char('Strike', width=15, justify='r') + '|' +  &
-                          num2char('Dip', width=15, justify='r')    + '|')
+                          num2char('Dip', width=15, justify='r')    + '|' +  &
+                          num2char('Rake', width=15, justify='r')    + '|')
           CALL update_log(num2char('', width=30) + &
                           num2char(input%source%x, notation='f', width=15, precision=1, justify='r') + '|' + &
                           num2char(input%source%y, notation='f', width=15, precision=1, justify='r') + '|' + &
                           num2char(input%source%z, notation='f', width=15, precision=1, justify='r') + '|' + &
                           num2char(input%source%strike, notation='f', width=15, precision=1, justify='r') + '|' + &
-                          num2char(input%source%dip, notation='f', width=15, precision=1, justify='r')    + '|', blankline=.false.)
+                          num2char(input%source%dip, notation='f', width=15, precision=1, justify='r')    + '|' + &
+                          num2char(input%source%rake, notation='f', width=15, precision=1, justify='r')   + '|',  blankline=.false.)
         ENDIF
         CALL update_log(num2char('(continued)', width=30, fill='.', justify='c') +  &
-                        num2char('Rake', width=15, justify='r')   + '|' + &
                         num2char('Moment', width=15, justify='r')     + '|' +  &
                         num2char('Type', width=15, justify='r') + '|' +  &
                         num2char('Frequency', width=15, justify='r') + '|', blankline = .false.)
         CALL update_log(num2char('', width=30) +  &
-                        num2char(input%source%rake, notation='f', width=15, precision=1, justify='r')   + '|' + &
                         num2char(input%source%m0, notation='s', width=15, precision=3, justify='r')     + '|' + &
                         num2char(input%source%type, width=15, justify='r') + '|' + &
                         num2char(input%source%freq, notation='f', width=15, precision=3, justify='r') + '|', blankline = .false.)
@@ -1034,19 +1044,19 @@ MODULE m_toolbox
         CALL update_log(num2char('Rupture file', width=30, fill='.')   +   &
                         num2char(TRIM(input%source%file), width=79, justify='c') + '|')
         CALL update_log(num2char('Rupture parameters', width=30, fill='.')  + &
-                        num2char('Type', width=15, justify='r') + '|' + &
-                        num2char('Frequency', width=15, justify='r') + '|' + &
+                        ! num2char('Type', width=15, justify='r') + '|' + &
+                        ! num2char('Frequency', width=15, justify='r') + '|' + &
                         num2char('Roughness', width=15, justify='r') + '|', blankline = .false.)
         IF (input%source%add_roughness) THEN
           CALL update_log(num2char('', width=30) +  &
-                          num2char(input%source%type, width=15, justify='r') + '|' + &
-                          num2char(input%source%freq, width=15, notation='f', precision=3, justify='r') + '|' + &
+                          ! num2char(input%source%type, width=15, justify='r') + '|' + &
+                          ! num2char(input%source%freq, width=15, notation='f', precision=3, justify='r') + '|' + &
                           num2char(input%source%roughness, width=15, notation='f', precision=1, justify='r') + '|',  &
                           blankline = .false.)
         ELSE
           CALL update_log(num2char('', width=30) +  &
-                          num2char(input%source%type, width=15, justify='r') + '|' + &
-                          num2char(input%source%freq, width=15, notation='f', precision=3, justify='r') + '|' + &
+                          ! num2char(input%source%type, width=15, justify='r') + '|' + &
+                          ! num2char(input%source%freq, width=15, notation='f', precision=3, justify='r') + '|' + &
                           num2char('None', width=15, justify='r') + '|', blankline = .false.)
         ENDIF
         IF (input%source%add_rik) THEN
@@ -1097,8 +1107,8 @@ MODULE m_toolbox
                           num2char(input%attenuation(i)%gpp(j), width=15, notation='f', precision=5, justify='r') + '|' + &
                           num2char(input%attenuation(i)%gps(j), width=15, notation='f', precision=5, justify='r') + '|' + &
                           num2char(input%attenuation(i)%gss(j), width=15, notation='f', precision=5, justify='r') + '|' + &
-                          num2char(input%attenuation(i)%b(j), width=15, notation='f', precision=5, justify='r') + '|',  &
-                          blankline = .false.)
+                          num2char(input%attenuation(i)%b(j),   width=15, notation='f', precision=5, justify='r') + '|',  &
+                          blankline=.false.)
         ENDDO
       ENDDO
 
@@ -1145,16 +1155,16 @@ MODULE m_toolbox
       CALL update_log(num2char('Advanced settings', width=30, fill='.') +   &
                       num2char('Pmw', width=15, justify = 'r') + '|' +   &
                       num2char('Avg cuts', width=15, justify = 'r')           + '|' +   &
-                      num2char('Vr factor', width=15, justify = 'r')          + '|' +   &
-                      num2char('Sheets', width=15, justify = 'r')             + '|' +   &
+                      ! num2char('Vr factor', width=15, justify = 'r')          + '|' +   &
+                      ! num2char('Sheets', width=15, justify = 'r')             + '|' +   &
                       num2char('Waves', width=15, justify = 'r')              + '|' +   &
                       num2char('Verbose', width=15, justify = 'r')            + '|')
 
       CALL update_log(num2char('', width=30) + &
                       num2char(input%advanced%pmw, width=15, justify='r')     + '|' + &
                       num2char(input%advanced%avecuts, width=15, justify='r') + '|' + &
-                      num2char(input%advanced%vrfact, width=15, notation='f', precision=2, justify='r') + '|' +  &
-                      num2char(input%advanced%sheets, width=15, justify='r')  + '|' + &
+                      ! num2char(input%advanced%vrfact, width=15, notation='f', precision=2, justify='r') + '|' +  &
+                      ! num2char(input%advanced%sheets, width=15, justify='r')  + '|' + &
                       num2char(input%advanced%waves, width=15, justify='r') + '|' + &
                       num2char(input%advanced%verbose, width=15, justify='r') + '|', blankline=.false.)
 
@@ -1202,7 +1212,7 @@ MODULE m_toolbox
       float = [input%coda%fmax, input%coda%matching, input%coda%bandwidth, input%coda%alpha, input%source%x, &
                input%source%y, input%source%z, input%source%strike, input%source%dip, input%source%rake, input%source%m0,  &
                input%source%freq, input%source%roughness, input%source%correlation, input%source%l0, input%source%aparam, &
-               input%source%vrfact, input%advanced%vrfact, input%source%lon, input%source%lat, input%origin%lon, input%origin%lat, &
+               input%source%vrfact, input%source%lon, input%source%lat, input%origin%lon, input%origin%lat, &
                input%coda%a, input%coda%b, input%coda%ak, input%coda%f0]
 
       CALL mpi_bcast(float, SIZE(float), mpi_real, 0, mpi_comm_world, ierr)
@@ -1212,25 +1222,24 @@ MODULE m_toolbox
       input%source%strike = float(8); input%source%dip = float(9); input%source%rake = float(10); input%source%m0 = float(11)
       input%source%freq = float(12); input%source%roughness = float(13); input%source%correlation = float(14)
       input%source%l0 = float(15); input%source%aparam = float(16); input%source%vrfact = float(17)
-      input%advanced%vrfact = float(18); input%source%lon = float(19); input%source%lat = float(20); input%origin%lon = float(21)
-      input%origin%lat = float(22); input%coda%a = float(23); input%coda%b = float(24); input%coda%ak = float(25)
-      input%coda%f0 = float(26)
+      input%source%lon = float(18); input%source%lat = float(19); input%origin%lon = float(20)
+      input%origin%lat = float(21); input%coda%a = float(22); input%coda%b = float(23); input%coda%ak = float(24)
+      input%coda%f0 = float(25)
 
-      ALLOCATE(intg(12))
+      ALLOCATE(intg(10))
 
       IF (ALLOCATED(input%receiver)) THEN
         intg = [SIZE(input%velocity), SIZE(input%attenuation), SIZE(input%receiver), input%coda%seed, input%coda%samples,   &
-                input%source%seed, input%advanced%pmw, input%advanced%avecuts, input%advanced%sheets,                       &
+                input%source%seed, input%advanced%pmw, input%advanced%avecuts,                       &
                 input%advanced%waves, input%advanced%verbose]
       ENDIF
 
-      CALL mpi_bcast(intg, 11, mpi_int, 0, mpi_comm_world, ierr)
+      CALL mpi_bcast(intg, 10, mpi_int, 0, mpi_comm_world, ierr)
 
       IF (.not.ALLOCATED(input%receiver)) THEN
         ALLOCATE(input%velocity(intg(1)), input%attenuation(intg(2)), input%receiver(intg(3)))
         input%coda%seed = intg(4); input%coda%samples = intg(5); input%source%seed = intg(6); input%advanced%pmw = intg(7);
-        input%advanced%avecuts = intg(8); input%advanced%sheets = intg(9); input%advanced%waves = intg(10);
-        input%advanced%verbose = intg(11)
+        input%advanced%avecuts = intg(8); input%advanced%waves = intg(9); input%advanced%verbose = intg(10)
       ENDIF
 
       DO i = 1, SIZE(input%velocity)
@@ -1238,10 +1247,10 @@ MODULE m_toolbox
         CALL mpi_bcast(n, 1, mpi_int, 0, mpi_comm_world, ierr)
         IF (.not.ALLOCATED(input%velocity(i)%vp)) THEN
           ALLOCATE(input%velocity(i)%vp(n), input%velocity(i)%vs(n), input%velocity(i)%rho(n), input%velocity(i)%depth(n))
-          ALLOCATE(input%velocity(i)%vpgrad(n), input%velocity(i)%vsgrad(n))
+          ALLOCATE(input%velocity(i)%vpgrad(n), input%velocity(i)%vsgrad(n), input%velocity(i)%rhograd(n))
         ENDIF
         float = [input%velocity(i)%vp(:), input%velocity(i)%vs(:), input%velocity(i)%rho(:), input%velocity(i)%depth(:),  &
-                 input%velocity(i)%vpgrad(:), input%velocity(i)%vsgrad(:)]
+                 input%velocity(i)%vpgrad(:), input%velocity(i)%vsgrad(:), input%velocity(i)%rhograd(:)]
         CALL mpi_bcast(float, SIZE(float), mpi_real, 0, mpi_comm_world, ierr)
         input%velocity(i)%vp = float(1:n)
         input%velocity(i)%vs = float(n+1:2*n)
@@ -1249,6 +1258,7 @@ MODULE m_toolbox
         input%velocity(i)%depth = float(3*n+1:4*n)
         input%velocity(i)%vpgrad = float(4*n+1:5*n)
         input%velocity(i)%vsgrad = float(5*n+1:6*n)
+        input%velocity(i)%rhograd = float(6*n+1:7*n)
       ENDDO
 
       DO i = 1, SIZE(input%attenuation)
@@ -1291,7 +1301,7 @@ MODULE m_toolbox
       CALL mpi_bcast(input%receiver(:)%file, n*32, mpi_character, 0, mpi_comm_world, ierr)
 
       string = input%source%file // input%source%type // input%input%folder // input%input%variable // input%input%format //  &
-               input%coda%model // input%output%folder // input%output%variable
+               input%coda%model // input%output%folder // input%output%variable // input%source%save2disk
 
       CALL mpi_bcast(string, LEN(string), mpi_character, 0, mpi_comm_world, ierr)
 
@@ -1302,7 +1312,8 @@ MODULE m_toolbox
       input%input%format = string(n:n+8-1); n = n + 8
       input%coda%model = string(n:n+4-1); n = n + 4
       input%output%folder = string(n:n+256-1); n = n + 256
-      input%output%variable = string(n:n+16-1)
+      input%output%variable = string(n:n+16-1); n = n + 16
+      input%source%save2disk = string(n:n+1-1)
 
       lg = [input%source%is_point, input%source%add_roughness, input%source%add_rik, input%coda%add_coherency]
 
