@@ -900,6 +900,8 @@ MODULE m_isochron
 
             rseis(:, ic) = iir(rseis(:, ic), ok)                                 !< filter
 
+            rseis(:, ic) = differentiate(rseis(:, ic), dt)             !< move from displacement to velocity
+
             CALL interpolate(time, rseis(:, ic), timeseries%sp%time, stack)      !< resampling
 
             DO it = 1, SIZE(timeseries%sp%time)
@@ -977,7 +979,7 @@ print*, 'scale ', scale
 
           ! seis(:, ic) = iir(seis(:, ic), ok)                       !< filter
 
-          seis(:, ic) = differentiate(seis(:, ic), timeseries%sp%dt)             !< move from displacement to velocity
+          ! seis(:, ic) = differentiate(seis(:, ic), timeseries%sp%dt)             !< move from displacement to velocity
 
           ! CALL interpolate(time, seis(:, ic), timeseries%sp%time, stack)
 

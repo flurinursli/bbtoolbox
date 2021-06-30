@@ -93,8 +93,8 @@ PROGRAM main
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
   ! ------------------------------------------------------- time stuff -------------------------------------------------------------
 
-  timeseries%sp%dt = 0.5_r32 / (input%coda%fmax * 1.5_r32)
-  timeseries%cd%dt = 0.5_r32 / (input%coda%fmax * 1.5_r32)
+  timeseries%sp%dt = 0.5_r32 / (input%coda%fmax * 2) !1.5_r32)
+  timeseries%cd%dt = 0.5_r32 / (input%coda%fmax * 2) !1.5_r32)
 
   npts = SIZE(timeseries%lp%time)
 
