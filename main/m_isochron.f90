@@ -38,8 +38,8 @@ MODULE m_isochron
   REAL(r32), PARAMETER :: PI = 3.14159265358979323846_r64
   REAL(r32), PARAMETER :: DEG_TO_RAD = PI / 180._r32
   REAL(r32), PARAMETER :: BIG = HUGE(0._r32)
-  REAL(r32), PARAMETER :: DP = 0.002_r32, DPSM = 0.07_r32         !< free-surface smoothing parameters
-  REAL(r32), PARAMETER :: DCP = 1._r32, DCT = 0.5_r32                            !< resolution coda tablau (traveltime)
+  REAL(r32), PARAMETER :: DP = 0.002_r32, DPSM = 0.07_r32              !< free-surface smoothing parameters
+  REAL(r32), PARAMETER :: DCP = 1._r32, DCT = 0.5_r32                  !< resolution coda tablau (path in km, traveltime in s)
   REAL(r32), PARAMETER :: ISQRT3 = 1._r32 / SQRT(3._r32)
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
@@ -84,51 +84,80 @@ MODULE m_isochron
 
       INTEGER(i32),                             INTENT(OUT) :: ok
       INTEGER(i32),                             INTENT(IN)  :: rec, band, pl, vel, iter
+
       CHARACTER(:), ALLOCATABLE                             :: fo
+
       COMPLEX(r32)                                          :: fxpfzs, fzpfxs, g31, g21, g23, ga, gb
       COMPLEX(r32),              DIMENSION(3,3)             :: fp, fs, g
       COMPLEX(r32), ALLOCATABLE, DIMENSION(:)               :: fxp, fzp, tur, tui, tv
+
       INTEGER(i32)                                          :: i, j, ref, icr, totnutr, seed, src, sheet, wtp, it1, it2, ic, shift
-      INTEGER(i32)                                          :: it, cut, model, npts, noslip, ipc, itc, lu
-      INTEGER(i32),              DIMENSION(3)               :: iuc, ivc, abv, blw, shot
-      ! INTEGER(i32), ALLOCATABLE, DIMENSION(:,:)             :: ncuts, active
-      REAL(r32)                                             :: m0, moment, strike, dip, urec, vrec, wrec, taumin, taumax, sd, cd, dt
-      REAL(r32)                                             :: srfvel, c, scale
-      REAL(r32)                                             :: avepath, avetrvt, scattering, attenuation, t, a0
-      REAL(r32),                 DIMENSION(2)               :: ncuts, active
+      INTEGER(i32)                                          :: it, icut, model, npts, noslip, ipc, itc, lu
+
+      INTEGER(i32),              DIMENSION(2)               :: weight
+      INTEGER(i32),              DIMENSION(3)               :: iuc, ivc, shot
+
+      REAL(r32)                                             :: m0, moment, strike, dip, urec, vrec, wrec, taumin, taumax, sd, cd
+      REAL(r32)                                             :: srfvel, scale
+      REAL(r32)                                             :: avepath, avetrvt, scattering, attenuation, a0
+
+      REAL(r32)                                             :: dx, dy, dr, cpsi, spsi, sloloc, pn, signp, sthf, cthf
+      REAL(r32)                                             :: rn, rv, ru, bn, cn, bu, cu, bv, cv, stho, ctho
+
+      REAL(r32)                                             :: tau31, tau21, tau23, c, t, du, dv, p13, p12, p32, dl, dt
+
+      REAL(r32),                 DIMENSION(2)               :: ncuts, tricross
       REAL(r32),                 DIMENSION(3)               :: u, v, w, x, y, z, slip, rupture, rake, nrl, rho, alpha, beta, mu
-      REAL(r32),                 DIMENSION(3)               :: p, q, path, trvt, repi, tau, sr, cr, velloc
+      REAL(r32),                 DIMENSION(3)               :: p, q, path, trvt, repi, tau, dtau, sr, cr, velloc
+
+      REAL(r32),                 DIMENSION(3)               :: ir, itheta, iphi
+      REAL(r32),                 DIMENSION(3,3)             :: rvec, thvec, phvec
+
       REAL(r32),    ALLOCATABLE, DIMENSION(:)               :: fsp, mrf, envelope, stack, time, cseis, ctri
       REAL(r32),    ALLOCATABLE, DIMENSION(:,:)             :: rtri, itri, rseis, iseis, seis, nseis
+
       REAL(r64)                                             :: tictoc
-      REAL(r64),                 DIMENSION(6)               :: timer
-      REAL(r64),                 DIMENSION(10)              :: otimer
+      REAL(r64),                 DIMENSION(6)               :: stopwatch
+      REAL(r64),                 DIMENSION(10)              :: ostopwatch
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
       ok = 0
 
       ! don't do anything if velocity model is not the right one for current receiver
-      IF (input%receiver(rec)%velocity .ne. vel) RETURN         !< consider only receivers for current velocity model "vel"
+      IF (input%receiver(rec)%velocity .ne. vel) RETURN
 
-      ASSOCIATE(model => input%attenuation(1), fmax => input%coda%fmax, dt => timeseries%sp%dt)
+#ifdef PERF
+      stopwatch(:)  = 0._r64
+      ostopwatch(:) = 0._r64
+#endif
+
+      weight(:) = 1
+
+      SELECT CASE(input%advanced%waves)
+        CASE(1)
+          weight(2) = 0                 !< neglect S-waves contribution
+        CASE(2)
+          weight(1) = 0                 !< neglect P-waves contribution
+      END SELECT
+
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+      ! ---------------------------------------- lookup table free-surface coefficients --------------------------------------------
+
+      ASSOCIATE(model => input%attenuation(1), fmax => input%coda%fmax)
 
         IF (input%advanced%verbose .eq. 2) THEN
           CALL update_log(num2char('Integration for recv', width=30, fill='.') + num2char(rec, width=15, justify='r') + '|')
-          CALL update_log(num2char('<freq band>', width=30, justify='c') +   &
-                          num2char(num2char(model%lcut(band), notation='f', width=6, precision=1) + ', ' +   &
-                                   num2char(MIN(model%hcut(band), fmax), notation='f', width=6, precision=1),           &
+
+          CALL update_log(num2char('<freq band>', width=30, justify='c') +                                               &
+                          num2char(num2char(model%lcut(band),            notation='f', width=6, precision=1) + ', ' +    &
+                                   num2char(MIN(model%hcut(band), fmax), notation='f', width=6, precision=1),            &
                           width=15, justify='r') + '|')
         ENDIF
 
       END ASSOCIATE
 
       model = input%receiver(rec)%attenuation      !< attenuation model
-
-#ifdef PERF
-      timer(:)  = 0._r64
-      otimer(:) = 0._r64
-#endif
 
       CALL setup_interpolation('linear', 'zero', ok)
 
@@ -211,7 +240,7 @@ MODULE m_isochron
 
         noslip    = 0       !< total triangles having zero slip
         ncuts(:)  = 0       !< total isochron cuts for each wave type
-        active(:) = 0       !< total triangles that were cut
+        tricross(:) = 0       !< total triangles that were cut
 
         ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
         ! ------------------------------------------ define RIK model on mesh nodes ------------------------------------------------
@@ -226,7 +255,7 @@ MODULE m_isochron
 
 #ifdef PERF
         CALL watch_stop(tictoc, COMM)
-        timer(1) = timer(1) + tictoc
+        stopwatch(1) = stopwatch(1) + tictoc
 #endif
 
         totnutr = 2 * nutr(ref) - 1                     !< total triangles in a row
@@ -242,7 +271,7 @@ MODULE m_isochron
 
 #ifdef PERF
         CALL watch_stop(tictoc, COMM)
-        timer(2) = timer(2) + tictoc
+        stopwatch(2) = stopwatch(2) + tictoc
 #endif
 
 #ifdef PERF
@@ -254,7 +283,7 @@ MODULE m_isochron
 
 #ifdef PERF
         CALL watch_stop(tictoc, COMM)
-        timer(3) = timer(3) + tictoc
+        stopwatch(3) = stopwatch(3) + tictoc
 #endif
 
 #ifdef PERF
@@ -266,7 +295,7 @@ MODULE m_isochron
 
 #ifdef PERF
         CALL watch_stop(tictoc, COMM)
-        timer(4) = timer(4) + tictoc
+        stopwatch(4) = stopwatch(4) + tictoc
 #endif
 
 #ifdef DEBUG
@@ -281,9 +310,15 @@ MODULE m_isochron
 
         !$omp parallel do default(shared) private(i, j, iuc, ivc, icr, slip, u, v, w, x, y, z, nrl, strike, dip, rake, sd, cd)   &
         !$omp private(sr, cr, tictoc, rupture, alpha, beta, rho, mu, ic, src, shot, mrf, urec, vrec, wrec, repi)     &
-        !$omp private(rtri, itri, wtp, abv, blw, velloc, srfvel, scattering, sheet, p, path, trvt, q, tau, taumin, taumax, it1)   &
-        !$omp private(it2, g, attenuation, cut, c, it, tur, tui, tv, a0, ipc, itc, shift)   &
-        !$omp reduction(+: m0, rseis, iseis, otimer, ncuts, active, noslip, ctri)
+        !$omp private(rtri, itri, wtp, velloc, srfvel, scattering, sheet, p, path, trvt, q, tau, taumin, taumax, it1)   &
+        !$omp private(it2, attenuation, it, tur, tui, tv, a0, ipc, itc, shift)   &
+
+        !$omp private(fxpfzs, fzpfxs, fp, fs, dx, dy, dr, cpsi, spsi, sloloc, pn, signp, sthf, cthf, rn, rv, ru, bn, cn, bu, cu)  &
+        !$omp private(bv, cv, stho, ctho, ir, itheta, iphi, rvec, thvec, phvec, g)     &
+
+        !$omp private(icut, g31, g21, g23, ga, gb, tau31, tau21, tau23, dtau, c, t, du, dv, p13, p12, p32, dl)  &
+
+        !$omp reduction(+: m0, rseis, iseis, ostopwatch, ncuts, tricross, noslip, ctri)
         DO j = 1, nvtr(ref)
           DO i = 1, totnutr
 
@@ -343,7 +378,7 @@ MODULE m_isochron
 
 #ifdef PERF
             CALL watch_stop(tictoc, COMM)
-            otimer(1) = otimer(1) + tictoc
+            ostopwatch(1) = ostopwatch(1) + tictoc
 #endif
 
             ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
@@ -363,7 +398,7 @@ MODULE m_isochron
 
 #ifdef PERF
             CALL watch_stop(tictoc, COMM)
-            otimer(2) = otimer(2) + tictoc
+            ostopwatch(2) = ostopwatch(2) + tictoc
 #endif
 
             ! move from "x-y" to "u-t" coordinates for corners
@@ -400,7 +435,7 @@ MODULE m_isochron
 
 #ifdef PERF
             CALL watch_stop(tictoc, COMM)
-            otimer(3) = otimer(3) + tictoc
+            ostopwatch(3) = ostopwatch(3) + tictoc
 #endif
 
             ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
@@ -427,9 +462,6 @@ MODULE m_isochron
             ! loop over wave types
             DO wtp = 1, 2
 
-              ! abv(:) = 1       !< reset sheet-related index
-              ! blw(:) = 1
-
               IF (wtp .eq. 1) THEN
                 velloc(:)  = alpha(:) / 1000._r32
                 srfvel     = input%velocity(input%receiver(rec)%velocity)%vp(1) / 1000._r32
@@ -450,7 +482,7 @@ MODULE m_isochron
 
 #ifdef PERF
                 CALL watch_stop(tictoc, COMM)
-                otimer(4) = otimer(4) + tictoc
+                ostopwatch(4) = ostopwatch(4) + tictoc
 #endif
 
                 ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
@@ -480,7 +512,7 @@ MODULE m_isochron
                 ! jump to next sheet if no isochron is spanned (i.e. no cuts)
                 IF (it2 .lt. it1) CYCLE
 
-                active(wtp) = active(wtp) + 1
+                tricross(wtp) = tricross(wtp) + 1
 
                 ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
                 ! ------------------------------------------ evaluate integral kernel ----------------------------------------------
@@ -489,38 +521,232 @@ MODULE m_isochron
                 CALL watch_start(tictoc, COMM)
 #endif
 
-                CALL integral_kernel(wtp, urec, vrec, u, v, velloc, srfvel, sd, cd, sr, cr, p, fsp, fxp, fzp, g)
-
-                ! complete integral kernel
                 DO icr = 1, 3
-                  g(1, icr) = g(1, icr) * slip(icr) * mu(icr) * q(icr)
-                  g(2, icr) = g(2, icr) * slip(icr) * mu(icr) * q(icr)
-                  g(3, icr) = g(3, icr) * slip(icr) * mu(icr) * q(icr)
+
+                  dx = urec - u(icr)
+                  dy = vrec - v(icr)
+
+                  dr = HYPOT(dx, dy)
+
+                  ! cos and sin of angle psi
+                  cpsi = dx / dr
+                  spsi = dy / dr
+
+                  sloloc = 1._r32 / velloc(icr)        !< slowness at corner
+
+                  pn = p(icr)
+
+                  ! "p" is "-p" for downgoing rays
+                  IF (pn .gt. sloloc) pn = -(2._r32 * sloloc - pn)
+
+                  ! get sign of ray (+ if upgoing, - if downgoing)
+                  signp = SIGN(1._r32, pn)
+
+                  pn = ABS(pn)         !< from here onwards we need only its absolute value
+
+                  ! sine of angle eta at source
+                  sthf = velloc(icr) * pn
+
+#ifdef DEVOP
+                  IF (sthf .gt. 1.01_r32) CALL report_error('solve_isochron_integral - ERROR: sin(eta) sensibly larger than 1')
+#endif
+
+                  sthf = MIN(sthf, 1._r32)     !< handle roundoff errors
+
+                  ! cosine of angle eta at source
+                  cthf = signp * SQRT(1._r32 - sthf**2)
+
+                  ! dot products
+                  ! the fault normal points in the -y. direction for a 90 degree dip, and a positive u component of slip
+                  ! correspond to a left lateral strike slip motion
+                  rn = sthf * spsi * sd + cthf * cd          !< r.n (direction r and normal to plane)
+                  rv = cthf * sd - sthf * spsi * cd          !< r.v (directions r and dip-slip)
+                  ru = - sthf * cpsi                         !< r.u (directions r and along-strike)
+
+                  ! radiation pattern-dependent kernel stuff
+                  IF (wtp .eq. 1) THEN
+                    ir(icr) = 2._r32 * rn * (ru * cr(icr) - rv * sr(icr))
+                  ELSE
+                    ! dot products
+                    bn = (cthf * spsi * sd - sthf * cd)
+                    cn = (cpsi * sd)
+                    bu = -cthf * cpsi
+                    cu = spsi
+                    bv = -cthf * spsi * cd - sthf * sd
+                    cv = -cpsi * cd
+
+                    itheta(icr) = (rn * bu + bn * ru) * cr(icr) - (rn * bv + bn * rv) * sr(icr)
+                    iphi(icr)   = (rn * cu + cn * ru) * cr(icr) - (rn * cv + cn * rv) * sr(icr)
+                  ENDIF
+
+                  stho = pn * srfvel
+
+#ifdef DEVOP
+                  IF (stho .gt. 1.01_r32) CALL report_error('solve_isochron_integral - ERROR: sin(eta) sensibly larger than 1')
+#endif
+
+                  stho = MIN(stho, 1._r32)          !< handle roundoff errors
+                  ctho = SQRT(1._r32 - stho**2)
+
+                  ! determine stuff that depends on the component of motion. rvec, thvec, and phvec are the components of the r,
+                  ! theta, and phi (unit vectors at the observer)
+                  rvec(1, icr)  = -stho * cpsi
+                  rvec(2, icr)  = -stho * spsi
+                  rvec(3, icr)  =  ctho
+                  thvec(1, icr) = -ctho * cpsi
+                  thvec(2, icr) = -ctho * spsi
+                  thvec(3, icr) = -stho
+                  phvec(1, icr) = spsi
+                  phvec(2, icr) = -cpsi
+                  phvec(3, icr) = 0._r32
+
+                  ! interpolate free-surface amplification coefficients at current ray parameter
+                  CALL interpolate(fsp, fxp, pn, fxpfzs)
+                  CALL interpolate(fsp, fzp, pn, fzpfxs)
+
+                  ! free-surface amplification coefficients for incident p (fp) and sv (fs) waves for each corner and component
+                  ! of motion (x,y,z)
+                  fp(1, icr) = fxpfzs
+                  fp(2, icr) = fxpfzs
+                  fp(3, icr) = fzpfxs
+                  fs(1, icr) = fzpfxs
+                  fs(2, icr) = fzpfxs
+                  fs(3, icr) = fxpfzs
+
+                  ! store integral kernel in "g"
+                  IF (wtp .eq. 1) THEN
+                    DO ic = 1, 3
+                      g(ic, icr) = ir(icr) * rvec(ic, icr) * fp(ic, icr)          !< P
+                    ENDDO
+                  ELSE
+                    DO ic = 1, 3
+                      g(ic, icr) = itheta(icr) * thvec(ic, icr) * fs(ic, icr) + iphi(icr) * phvec(ic, icr) * 2._r32    !< SV + SH
+                    ENDDO
+                  ENDIF
+
+                  ! complete integral kernel
+                  DO ic = 1, 3
+                    g(ic, icr) = g(ic, icr) * slip(icr) * mu(icr) * q(icr)
+                  ENDDO
+
                 ENDDO
 
 #ifdef PERF
                 CALL watch_stop(tictoc, COMM)
-                otimer(5) = otimer(5) + tictoc
+                ostopwatch(5) = ostopwatch(5) + tictoc
 #endif
 
                 ! term for direct wave amplitude attenuation
                 attenuation = EXP(-(mean(path) * scattering + input%attenuation(model)%b(band) * mean(trvt)) / 2._r32)
 
+                ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+                ! ---------------------------------------------- time integration --------------------------------------------------
+
 #ifdef PERF
                 CALL watch_start(tictoc, COMM)
 #endif
 
+                ! differences in tau between corners
+                tau31 = tau(3) - tau(1)
+                tau21 = tau(2) - tau(1)
+                tau23 = tau(2) - tau(3)
+
+                ! apparent velocity of the tau curves
+                c = HYPOT(tau31 / dutr(ref), (tau(2) - 0.5_r32 * (tau(1) + tau(3))) / dvtr(ref))
+                c = 1._r32 / c
+
+                ! loop over components of motion
+                DO ic = 1, 3
+
+                  g31 = g(ic, 3) - g(ic, 1)
+                  g21 = g(ic, 2) - g(ic, 1)
+                  g23 = g(ic, 2) - g(ic, 3)
+
+                  ! loop over time (cuts)
+                  DO it = it1, it2
+
+                    t = (it - 1) * dt
+
+                    dtau(1) = t - tau(1)
+                    dtau(2) = t - tau(2)
+                    dtau(3) = t - tau(3)
+
+                    ! determine which corner is cut. Set "icut=0" when isochron is outside triangle
+                    IF (SIGN(1._r32, dtau(1)) .eq. SIGN(1._r32, dtau(2))) THEN
+                      IF (SIGN(1._r32, dtau(2)) .eq. SIGN(1._r32, dtau(3))) THEN
+                        icut = 0
+                      ELSE
+                        icut = 3
+                      ENDIF
+                    ELSE
+                      IF (SIGN(1._r32, dtau(1)) .eq. SIGN(1._r32, dtau(3))) THEN
+                        icut = 2
+                      ELSE
+                        icut = 1
+                      ENDIF
+                    ENDIF
+
+                    IF ( (dtau(1) .eq. 0._r32) .and. (dtau(2) .eq. 0._r32) ) icut = 3
+                    IF ( (dtau(1) .eq. 0._r32) .and. (dtau(3) .eq. 0._r32) ) icut = 2
+                    IF ( (dtau(2) .eq. 0._r32) .and. (dtau(3) .eq. 0._r32) ) icut = 1
+
+                    ! keep track of cuts
+                    IF ( (ic .eq. 1) .and. (icut .ne. 0) ) ncuts(wtp) = ncuts(wtp) + 1
+
+                    ! choose the correct integration formulae depending on which corner of the triangle is cut. ga and gb are the
+                    ! values of the integrand at the boundaries of the triangle where intersected by the integration contour.
+                    ! dl is the length of the contour within the triangle.
+                    SELECT CASE (icut)
+                    CASE(0)               !< isochron cuts a corner
+                      ga = 0._r32
+                      gb = 0._r32
+                      du = 0._r32
+                      dv = 0._r32
+                    CASE(1)
+                      p13 = dtau(1) / tau31
+                      p12 = dtau(1) / tau21
+                      ga  = g(ic, 1) + p13 * g31
+                      gb  = g(ic, 1) + p12 * g21
+                      dv  = dvtr(ref) * p12
+                      du  = dutr(ref) * (p13 - 0.5_r32 * p12)
+                    CASE(2)
+                      p12 = dtau(1) / tau21
+                      p32 = dtau(3) / tau23
+                      ga  = g(ic, 3) + p32 * g23
+                      gb  = g(ic, 1) + p12 * g21
+                      dv  = dvtr(ref) * (p12 - p32)
+                      du  = dutr(ref) * (1._r32 - 0.5_r32 * p12 - 0.5_r32 * p32)
+                    CASE(3)
+                      p13 = dtau(1) / tau31
+                      p32 = dtau(3) / tau23
+                      ga  = g(ic, 1) + p13 * g31
+                      gb  = g(ic, 3) + p32 * g23
+                      dv  = dvtr(ref) * p32
+                      du  = dutr(ref) * (1._r32 - p13 - 0.5_r32 * p32)
+                    END SELECT
+
+                    dl = HYPOT(du, dv)
+
+                    ! result of integration (real and imaginary parts)
+                    rtri(it, ic) = rtri(it, ic) + c * REAL(ga + gb, r32) * dl * 0.5_r32 * attenuation
+                    itri(it, ic) = itri(it, ic) + c * AIMAG(ga + gb)     * dl * 0.5_r32 * attenuation
+
+                  ENDDO      !< end loop over time (cuts)
+
+                ENDDO      !< end loop over components
+
+
                 ! "rtri" and "itri" contain direct wave contribution for current triangle and receiver
-                CALL time_integration(ref, it1, it2, dt, attenuation, tau, g, c, cut, rtri, itri)
+                ! CALL time_integration(ref, it1, it2, dt, attenuation, tau, g, c, cut, rtri, itri)
 
-                ncuts(wtp) = ncuts(wtp) + cut
+                ! ncuts(wtp) = ncuts(wtp) + cut
 
-! print*, 'c ', rec, wtp, sheet, ' - ', cut, ' - ', ncuts(wtp), ' - ', active(wtp)
+! print*, 'c ', rec, wtp, sheet, ' - ', cut, ' - ', ncuts(wtp), ' - ', tricross(wtp)
 
 
 #ifdef PERF
                 CALL watch_stop(tictoc, COMM)
-                otimer(6) = otimer(6) + tictoc
+                ostopwatch(6) = ostopwatch(6) + tictoc
 #endif
 
                 ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
@@ -611,7 +837,7 @@ MODULE m_isochron
 
 #ifdef PERF
             CALL watch_stop(tictoc, COMM)
-            otimer(9) = otimer(9) + tictoc
+            ostopwatch(9) = ostopwatch(9) + tictoc
 #endif
 
             ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
@@ -656,7 +882,7 @@ MODULE m_isochron
 
 #ifdef PERF
         CALL watch_stop(tictoc, COMM)
-        timer(5) = timer(5) + tictoc
+        stopwatch(5) = stopwatch(5) + tictoc
 #endif
 
         IF (input%advanced%verbose .eq. 2) THEN
@@ -666,8 +892,8 @@ MODULE m_isochron
                           num2char('Skipped', width=15, justify='r') + '|')
 
           CALL update_log(num2char('', width=30)  +  &
-                          num2char(ncuts(1)/active(1), notation='f', width=15, precision=1, justify='r') + '|'  +   &
-                          num2char(ncuts(2)/active(2), notation='f', width=15, precision=1, justify='r') + '|'  +   &
+                          num2char(ncuts(1)/tricross(1), notation='f', width=15, precision=1, justify='r') + '|'  +   &
+                          num2char(ncuts(2)/tricross(2), notation='f', width=15, precision=1, justify='r') + '|'  +   &
                           num2char(num2char(noslip) + ' (' +  &
                                    num2char(100*noslip/(totnutr*nvtr(ref))) + '%)', width=15, justify='r') + '|', blankline=.false.)
 
@@ -730,28 +956,28 @@ print*, 'scale ', scale
 
 #ifdef PERF
       CALL watch_stop(tictoc, COMM)
-      timer(6) = timer(6) + tictoc
+      stopwatch(6) = stopwatch(6) + tictoc
 #endif
 
 
 #ifdef PERF
-      print*, 'Time RIK nodes: ', real(timer(1))
-      print*, 'Time roughness: ', real(timer(2))
-      print*, 'Time shooting: ', real(timer(3))
-      print*, 'Time coda: ', real(timer(4))
+      print*, 'Time RIK nodes: ', real(stopwatch(1))
+      print*, 'Time roughness: ', real(stopwatch(2))
+      print*, 'Time shooting: ', real(stopwatch(3))
+      print*, 'Time coda: ', real(stopwatch(4))
 
-      print*, 'Time mechanism: ', real(otimer(1))
-      print*, 'Time corners: ', real(otimer(2))
-      print*, 'Time MRF + FFT: ', real(otimer(3))
-      print*, 'Time ray corners: ', real(otimer(4))
-      print*, 'Time kernel: ', real(otimer(5))
-      ! print*, 'Time envelope: ', real(timer(9))
-      print*, 'Time intg: ', real(otimer(6))
-      print*, 'Time iir: ', real(otimer(8))
-      print*, 'Time conv MRF: ', real(otimer(9))
+      print*, 'Time mechanism: ', real(ostopwatch(1))
+      print*, 'Time corners: ', real(ostopwatch(2))
+      print*, 'Time MRF + FFT: ', real(ostopwatch(3))
+      print*, 'Time ray corners: ', real(ostopwatch(4))
+      print*, 'Time kernel: ', real(ostopwatch(5))
+      ! print*, 'Time envelope: ', real(stopwatch(9))
+      print*, 'Time intg: ', real(ostopwatch(6))
+      print*, 'Time iir: ', real(ostopwatch(8))
+      print*, 'Time conv MRF: ', real(ostopwatch(9))
 
-      print*, 'Time Hilbert: ', real(timer(5))
-      print*, 'Time Filter: ', real(timer(6))
+      print*, 'Time Hilbert: ', real(stopwatch(5))
+      print*, 'Time Filter: ', real(stopwatch(6))
 #endif
 
 #ifdef DEBUG
@@ -769,251 +995,6 @@ print*, 'scale ', scale
 #endif
 
     END SUBROUTINE solve_isochron_integral
-
-    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
-    !===============================================================================================================================
-    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
-
-    SUBROUTINE time_integration(ref, it1, it2, dt, attenuation, tau, g, c, ncuts, rtri, itri)
-
-      INTEGER(i32),                 INTENT(IN)    :: ref, it1, it2
-      REAL(r32),                    INTENT(IN)    :: dt, attenuation
-      REAL(r32),    DIMENSION(3),   INTENT(IN)    :: tau
-      COMPLEX(r32), DIMENSION(3,3), INTENT(IN)    :: g
-      REAL(r32),                    INTENT(OUT)   :: c
-      INTEGER(i32),                 INTENT(OUT)   :: ncuts
-      REAL(r32),    DIMENSION(:,:), INTENT(INOUT) :: rtri, itri
-      COMPLEX(r32)                                :: g31, g21, g23, ga, gb
-      INTEGER(i32)                                :: ic, it, icut
-      REAL(r32)                                   :: tau31, tau21, tau23, du, dv, p13, p12, p32, dl, t
-      REAL(r32),    DIMENSION(3)                  :: dtau
-
-      !-----------------------------------------------------------------------------------------------------------------------------
-
-      ncuts = 0
-
-      ! differences in tau between corners
-      tau31 = tau(3) - tau(1)
-      tau21 = tau(2) - tau(1)
-      tau23 = tau(2) - tau(3)
-
-      ! apparent velocity of the tau curves
-      c = HYPOT(tau31 / dutr(ref), (tau(2) - 0.5_r32 * (tau(1) + tau(3))) / dvtr(ref))
-      c = 1._r32 / c
-
-      ! loop over components of motion
-      DO ic = 1, 3
-
-        g31 = g(ic, 3) - g(ic, 1)
-        g21 = g(ic, 2) - g(ic, 1)
-        g23 = g(ic, 2) - g(ic, 3)
-
-        ! loop over time (cuts)
-        DO it = it1, it2
-
-          t = (it - 1) * dt
-
-          dtau(1) = t - tau(1)
-          dtau(2) = t - tau(2)
-          dtau(3) = t - tau(3)
-
-          ! determine which corner is cut. Set "icut=0" when isochron is outside triangle
-          IF (SIGN(1._r32, dtau(1)) .eq. SIGN(1._r32, dtau(2))) THEN
-            IF (SIGN(1._r32, dtau(2)) .eq. SIGN(1._r32, dtau(3))) THEN
-              icut = 0
-            ELSE
-              icut = 3
-            ENDIF
-          ELSE
-            IF (SIGN(1._r32, dtau(1)) .eq. SIGN(1._r32, dtau(3))) THEN
-              icut = 2
-            ELSE
-              icut = 1
-            ENDIF
-          ENDIF
-
-          IF ( (dtau(1) .eq. 0._r32) .and. (dtau(2) .eq. 0._r32) ) icut = 3
-          IF ( (dtau(1) .eq. 0._r32) .and. (dtau(3) .eq. 0._r32) ) icut = 2
-          IF ( (dtau(2) .eq. 0._r32) .and. (dtau(3) .eq. 0._r32) ) icut = 1
-
-          ! keep track of cuts
-          IF ( (ic .eq. 1) .and. (icut .ne. 0) ) ncuts = ncuts + 1
-
-          ! choose the correct integration formulae depending on which corner of the triangle is cut. ga and gb are the
-          ! values of the integrand at the boundaries of the triangle where intersected by the integration contour.
-          ! dl is the length of the contour within the triangle.
-
-          SELECT CASE (icut)
-          CASE(0)               !< isochron cuts a corner
-            ga = 0._r32
-            gb = 0._r32
-            du = 0._r32
-            dv = 0._r32
-          CASE(1)
-            p13 = dtau(1) / tau31
-            p12 = dtau(1) / tau21
-            ga  = g(ic, 1) + p13 * g31
-            gb  = g(ic, 1) + p12 * g21
-            dv  = dvtr(ref) * p12
-            du  = dutr(ref) * (p13 - 0.5_r32 * p12)
-          CASE(2)
-            p12 = dtau(1) / tau21
-            p32 = dtau(3) / tau23
-            ga  = g(ic, 3) + p32 * g23
-            gb  = g(ic, 1) + p12 * g21
-            dv  = dvtr(ref) * (p12 - p32)
-            du  = dutr(ref) * (1._r32 - 0.5_r32 * p12 - 0.5_r32 * p32)
-          CASE(3)
-            p13 = dtau(1) / tau31
-            p32 = dtau(3) / tau23
-            ga  = g(ic, 1) + p13 * g31
-            gb  = g(ic, 3) + p32 * g23
-            dv  = dvtr(ref) * p32
-            du  = dutr(ref) * (1._r32 - p13 - 0.5_r32 * p32)
-          END SELECT
-
-          dl = HYPOT(du, dv)
-
-          ! result of integration (real and imaginary parts)
-          rtri(it, ic) = rtri(it, ic) + c * REAL(ga + gb, r32) * dl * 0.5_r32 * attenuation
-          itri(it, ic) = itri(it, ic) + c * AIMAG(ga + gb)     * dl * 0.5_r32 * attenuation
-
-        ENDDO      !< end loop over time (cuts)
-
-      ENDDO      !< end loop over components
-
-    END SUBROUTINE time_integration
-
-    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
-    !===============================================================================================================================
-    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
-
-    SUBROUTINE integral_kernel(wtp, urec, vrec, u, v, velloc, srfvel, sd, cd, sr, cr, pn, fsp, fxp, fzp, g)
-
-      INTEGER(i32),                 INTENT(IN)  :: wtp
-      REAL(r32),                    INTENT(IN)  :: urec, vrec
-      REAL(r32),    DIMENSION(3),   INTENT(IN)  :: u, v, velloc
-      REAL(r32),                    INTENT(IN)  :: srfvel, sd, cd
-      REAL(r32),    DIMENSION(3),   INTENT(IN)  :: sr, cr, pn
-      REAL(r32),    DIMENSION(:),   INTENT(IN)  :: fsp
-      COMPLEX(r32), DIMENSION(:),   INTENT(IN)  :: fxp, fzp
-      COMPLEX(r32), DIMENSION(3,3), INTENT(OUT) :: g
-      COMPLEX(r32)                              :: fxpfzs, fzpfxs
-      COMPLEX(r32), DIMENSION(3,3)              :: fp, fs
-      INTEGER(i32)                              :: icr, ic
-      REAL(r32)                                 :: dx, dy, dr, cpsi, spsi, sloloc, p, signp, sthf, cthf, stho, ctho
-      REAL(r32)                                 :: rn, rv, ru, bn, cn, bu, cu, bv, cv
-      REAL(r32),    DIMENSION(3)                :: ir, itheta, iphi
-      REAL(r32),    DIMENSION(3,3)              :: rvec, thvec, phvec
-
-      !-----------------------------------------------------------------------------------------------------------------------------
-
-      DO icr = 1, 3
-
-        dx = urec - u(icr)
-        dy = vrec - v(icr)
-
-        dr = HYPOT(dx, dy)
-
-        ! cos and sin of angle psi
-        cpsi = dx / dr
-        spsi = dy / dr
-
-        sloloc = 1._r32 / velloc(icr)        !< slowness at corner
-
-        p = pn(icr)
-
-        ! "p" is "-p" for downgoing rays
-        IF (p .gt. sloloc) p = -(2._r32 * sloloc - p)
-
-        ! get sign of ray (+ if upgoing, - if downgoing)
-        signp = SIGN(1._r32, p)
-
-        p = ABS(p)         !< from here onwards we need only its absolute value
-
-        ! sine of angle eta at source
-        sthf = velloc(icr) * p
-
-#ifdef ERROR_TRAP
-        IF (sthf .gt. 1.01_r32) CALL report_error('solve_isochron_integral - ERROR: sin(eta) sensibly larger than 1')
-#endif
-
-        sthf = MIN(sthf, 1._r32)     !< handle roundoff errors
-
-        ! cosine of angle eta at source
-        cthf = signp * SQRT(1._r32 - sthf**2)
-
-        ! dot products
-        ! the fault normal points in the -y. direction for a 90 degree dip, and a positive u component of slip
-        ! correspond to a left lateral strike slip motion
-        rn = sthf * spsi * sd + cthf * cd          !< r.n (direction r and normal to plane)
-        rv = cthf * sd - sthf * spsi * cd          !< r.v (directions r and dip-slip)
-        ru = - sthf * cpsi                         !< r.u (directions r and along-strike)
-
-        ! radiation pattern-dependent kernel stuff
-        IF (wtp .eq. 1) THEN
-          ir(icr) = 2._r32 * rn * (ru * cr(icr) - rv * sr(icr))
-        ELSE
-          ! dot products
-          bn = (cthf * spsi * sd - sthf * cd)
-          cn = (cpsi * sd)
-          bu = -cthf * cpsi
-          cu = spsi
-          bv = -cthf * spsi * cd - sthf * sd
-          cv = -cpsi * cd
-
-          itheta(icr) = (rn * bu + bn * ru) * cr(icr) - (rn * bv + bn * rv) * sr(icr)
-          iphi(icr)   = (rn * cu + cn * ru) * cr(icr) - (rn * cv + cn * rv) * sr(icr)
-        ENDIF
-
-        stho = p * srfvel
-
-#ifdef ERROR_TRAP
-        IF (stho .gt. 1.01_r32) CALL report_error('solve_isochron_integral - ERROR: sin(eta) sensibly larger than 1')
-#endif
-
-        stho = MIN(stho, 1._r32)          !< handle roundoff errors
-        ctho = SQRT(1._r32 - stho**2)
-
-        ! determine stuff that depends on the component of motion. rvec, thvec, and phvec are the components of the r,
-        ! theta, and phi (unit vectors at the observer)
-        rvec(1, icr)  = -stho * cpsi
-        rvec(2, icr)  = -stho * spsi
-        rvec(3, icr)  =  ctho
-        thvec(1, icr) = -ctho * cpsi
-        thvec(2, icr) = -ctho * spsi
-        thvec(3, icr) = -stho
-        phvec(1, icr) = spsi
-        phvec(2, icr) = -cpsi
-        phvec(3, icr) = 0._r32
-
-        ! interpolate free-surface amplification coefficients at current ray parameter
-        CALL interpolate(fsp, fxp, p, fxpfzs)
-        CALL interpolate(fsp, fzp, p, fzpfxs)
-
-        ! free-surface amplification coefficients for incident p (fp) and sv (fs) waves for each corner and component
-        ! of motion (x,y,z)
-        fp(1, icr) = fxpfzs
-        fp(2, icr) = fxpfzs
-        fp(3, icr) = fzpfxs
-        fs(1, icr) = fzpfxs
-        fs(2, icr) = fzpfxs
-        fs(3, icr) = fxpfzs
-
-        ! store integral kernel in "g"
-        IF (wtp .eq. 1) THEN
-          DO ic = 1, 3
-            g(ic, icr) = ir(icr) * rvec(ic, icr) * fp(ic, icr)          !< P
-          ENDDO
-        ELSE
-          DO ic = 1, 3
-            g(ic, icr) = itheta(icr) * thvec(ic, icr) * fs(ic, icr) + iphi(icr) * phvec(ic, icr) * 2._r32    !< SV + SH
-          ENDDO
-        ENDIF
-
-      ENDDO
-
-    END SUBROUTINE integral_kernel
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
@@ -2181,6 +2162,17 @@ print*, 'scale ', scale
 print*, 'ok coda ', ok
 
     END SUBROUTINE lookup_coda
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    REAL(r32) FUNCTION integration_step()
+
+
+
+
+    END FUNCTION integration_step
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
