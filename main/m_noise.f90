@@ -160,9 +160,9 @@ MODULE m_noise
       CALL setup_rng(ok, 'normal', 0._r32, 1._r32, input%coda%seed + iter)
 
       ! components for same receiver are not inter-correlated
-      CALL rng(timeseries%cd%x(:, 1), 1)
-      CALL rng(timeseries%cd%y(:, 1), 1)
-      CALL rng(timeseries%cd%z(:, 1), 1)
+      CALL rng(timeseries%cd%xyz(:, 1, 1), 1)
+      CALL rng(timeseries%cd%xyz(:, 2, 1), 1)
+      CALL rng(timeseries%cd%xyz(:, 3, 1), 1)
 
       DO comp = 1, 3
 
@@ -179,11 +179,11 @@ MODULE m_noise
 #endif
 
           IF (comp .eq. 1) THEN
-            CALL fft(timeseries%cd%x(:, rcvr-1), z)
+            CALL fft(timeseries%cd%xyz(:, 1, rcvr-1), z)
           ELSEIF (comp .eq. 2) THEN
-            CALL fft(timeseries%cd%y(:, rcvr-1), z)
+            CALL fft(timeseries%cd%xyz(:, 2, rcvr-1), z)
           ELSE
-            CALL fft(timeseries%cd%z(:, rcvr-1), z)
+            CALL fft(timeseries%cd%xyz(:, 3, rcvr-1), z)
           ENDIF
 
           ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
@@ -322,11 +322,11 @@ MODULE m_noise
           ENDDO
 
           IF (comp .eq. 1) THEN
-            CALL ifft(timeseries%cd%x(:, rcvr), z)
+            CALL ifft(timeseries%cd%xyz(:, 1, rcvr), z)
           ELSEIF (comp .eq. 2) THEN
-            CALL ifft(timeseries%cd%y(:, rcvr), z)
+            CALL ifft(timeseries%cd%xyz(:, 2, rcvr), z)
           ELSEIF (comp .eq. 3) THEN
-            CALL ifft(timeseries%cd%z(:, rcvr), z)
+            CALL ifft(timeseries%cd%xyz(:, 3, rcvr), z)
           ENDIF
 
           DEALLOCATE(c, v)
@@ -528,11 +528,11 @@ MODULE m_noise
           z = z / SQRT(var)
 
           IF (comp .eq. 1) THEN
-            CALL ifft(timeseries%cd%x(:, rcvr), z)
+            CALL ifft(timeseries%cd%xyz(:, 1, rcvr), z)
           ELSEIF (comp .eq. 2) THEN
-            CALL ifft(timeseries%cd%y(:, rcvr), z)
+            CALL ifft(timeseries%cd%xyz(:, 2, rcvr), z)
           ELSEIF (comp .eq. 3) THEN
-            CALL ifft(timeseries%cd%z(:, rcvr), z)
+            CALL ifft(timeseries%cd%xyz(:, 3, rcvr), z)
           ENDIF
 
         ENDDO     !< end loop over receivers

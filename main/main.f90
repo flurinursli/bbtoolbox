@@ -103,8 +103,8 @@ PROGRAM main
 
   nrecs = SIZE(input%receiver)
 
-  ALLOCATE(timeseries%sp%x(npts, nrecs), timeseries%sp%y(npts, nrecs), timeseries%sp%z(npts, nrecs))
-  ALLOCATE(timeseries%cd%x(npts, nrecs), timeseries%cd%y(npts, nrecs), timeseries%cd%z(npts, nrecs))
+  ALLOCATE(timeseries%sp%xyz(npts, 3, nrecs))
+  ALLOCATE(timeseries%cd%xyz(npts, 3, nrecs))
 
   ALLOCATE(timeseries%sp%time(npts), timeseries%cd%time(npts))
 
@@ -122,7 +122,7 @@ PROGRAM main
   DO iter = i0, i1            !< every iteration is characterized by different source properties (rik, roughness)
 
     ! reset timeseries
-    timeseries%sp%x(:,:) = 0._r32; timeseries%sp%y(:,:) = 0._r32; timeseries%sp%z(:,:) = 0._r32
+    timeseries%sp%xyz(:,:,:) = 0._r32
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     ! --------------------------------------------- generate coda with random phase ------------------------------------------------

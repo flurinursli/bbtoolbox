@@ -27,9 +27,9 @@ MODULE m_timeseries
   INTEGER(i32) :: m_iter, m_rcvr
 
   TYPE :: cmp
-    REAL(r32)                              :: dt
-    REAL(r32), ALLOCATABLE, DIMENSION(:)   :: time
-    REAL(r32), ALLOCATABLE, DIMENSION(:,:) :: x, y, z
+    REAL(r32)                                :: dt
+    REAL(r32), ALLOCATABLE, DIMENSION(:)     :: time
+    REAL(r32), ALLOCATABLE, DIMENSION(:,:,:) :: xyz
   END TYPE cmp
 
   TYPE :: tsr
@@ -199,9 +199,9 @@ MODULE m_timeseries
           !                   b) all timeseries have same time vector
 
           IF (rcvr .eq. 1) THEN
-            ALLOCATE(timeseries%lp%x(SIZE(x), n), timeseries%lp%y(SIZE(x), n), timeseries%lp%z(SIZE(x), n))
+            ALLOCATE(timeseries%lp%xyz(SIZE(x), 3, n))
           ELSE
-            IF (SIZE(timeseries%lp%x, 1) .ne. SIZE(x)) THEN
+            IF (SIZE(timeseries%lp%xyz, 1) .ne. SIZE(x)) THEN
               CALL report_error('disk2seis - ERROR: all long-period timeseries must have same number of points')
               ok = 1
               RETURN
@@ -213,9 +213,9 @@ MODULE m_timeseries
             ENDIF
           ENDIF
 
-          timeseries%lp%x(:, rcvr) = x
-          timeseries%lp%y(:, rcvr) = y
-          timeseries%lp%z(:, rcvr) = z
+          timeseries%lp%xyz(:, 1, rcvr) = x
+          timeseries%lp%xyz(:, 2, rcvr) = y
+          timeseries%lp%xyz(:, 3, rcvr) = z
 
           timeseries%lp%time = time
 
@@ -245,24 +245,21 @@ MODULE m_timeseries
       !
 
       INTEGER(i32)               :: rcvr, ierr
-      INTEGER(i32), DIMENSION(2) :: n
+      INTEGER(i32), DIMENSION(3) :: n
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
 #ifdef MPI
 
-      n = SHAPE(timeseries%lp%x)
+      n = SHAPE(timeseries%lp%xyz)
 
-      CALL mpi_bcast(n, 2, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr)
+      CALL mpi_bcast(n, 3, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr)
 
-      IF (.not.ALLOCATED(timeseries%lp%x)) THEN
-        ALLOCATE(timeseries%lp%x(n(1),n(2)), timeseries%lp%y(n(1),n(2)), timeseries%lp%z(n(1),n(2)), timeseries%lp%time(n(1)))
+      IF (.not.ALLOCATED(timeseries%lp%xyz)) THEN
+        ALLOCATE(timeseries%lp%xyz(n(1),n(2),n(3)), timeseries%lp%time(n(1)))
       ENDIF
 
-      CALL mpi_bcast(timeseries%lp%x, n(1)*n(2), MPI_REAL, 0, MPI_COMM_WORLD, ierr)
-      CALL mpi_bcast(timeseries%lp%y, n(1)*n(2), MPI_REAL, 0, MPI_COMM_WORLD, ierr)
-      CALL mpi_bcast(timeseries%lp%z, n(1)*n(2), MPI_REAL, 0, MPI_COMM_WORLD, ierr)
-
+      CALL mpi_bcast(timeseries%lp%xyz, n(1)*n(2)*n(3), MPI_REAL, 0, MPI_COMM_WORLD, ierr)
       CALL mpi_bcast(timeseries%lp%time, n(1), MPI_REAL, 0, MPI_COMM_WORLD, ierr)
 
 #endif
@@ -522,7 +519,7 @@ MODULE m_timeseries
 
         IF (seis .eq. 'lp') THEN
 
-          ASSOCIATE(x => timeseries%lp%x(:, rcvr), y => timeseries%lp%y(:, rcvr), z => timeseries%lp%z(:, rcvr),      &
+          ASSOCIATE(x => timeseries%lp%xyz(:, 1, rcvr), y => timeseries%lp%xyz(:, 2, rcvr), z => timeseries%lp%xyz(:, 3, rcvr),   &
                     time => timeseries%lp%time, dt => timeseries%lp%dt)
 
             IF (ASSOCIATED(pfun)) THEN
@@ -540,7 +537,7 @@ MODULE m_timeseries
 
         ELSEIF (seis .eq. 'sp') THEN
 
-          ASSOCIATE(x => timeseries%sp%x(:, rcvr), y => timeseries%sp%y(:, rcvr), z => timeseries%sp%z(:, rcvr),      &
+          ASSOCIATE(x => timeseries%sp%xyz(:, 1, rcvr), y => timeseries%sp%xyz(:, 2, rcvr), z => timeseries%sp%xyz(:, 3, rcvr),   &
                     time => timeseries%sp%time, dt => timeseries%sp%dt)
 
             IF (ASSOCIATED(pfun)) THEN
@@ -558,7 +555,7 @@ MODULE m_timeseries
 
         ELSEIF (seis .eq. 'bb') THEN
 
-          ASSOCIATE(x => timeseries%bb%x(:, rcvr), y => timeseries%bb%y(:, rcvr), z => timeseries%bb%z(:, rcvr),      &
+          ASSOCIATE(x => timeseries%bb%xyz(:, 1, rcvr), y => timeseries%bb%xyz(:, 2, rcvr), z => timeseries%bb%xyz(:, 3, rcvr),   &
                     time => timeseries%bb%time, dt => timeseries%bb%dt)
 
             IF (ASSOCIATED(pfun)) THEN
@@ -576,7 +573,7 @@ MODULE m_timeseries
 
         ELSEIF (seis .eq. 'cd') THEN
 
-          ASSOCIATE(x => timeseries%cd%x(:, rcvr), y => timeseries%cd%y(:, rcvr), z => timeseries%cd%z(:, rcvr),      &
+          ASSOCIATE(x => timeseries%cd%xyz(:, 1, rcvr), y => timeseries%cd%xyz(:, 2, rcvr), z => timeseries%cd%xyz(:, 3, rcvr),   &
                     time => timeseries%cd%time, dt => timeseries%cd%dt)
 
             IF (ASSOCIATED(pfun)) THEN

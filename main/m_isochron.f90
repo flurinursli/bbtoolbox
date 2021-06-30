@@ -173,33 +173,14 @@ MODULE m_isochron
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! ---------------------------------------- allocate arrays to handle seismograms ---------------------------------------------
 
-      dt = timeseries%sp%dt !* (input%coda%fmax / MIN(input%attenuation(1)%hcut(band), fmax))
-
-      IF (input%source%is_point) dt = MAXVAL(plane(pl)%rupture) / (input%advanced%avecuts * 4)
-
-      npts = NINT(timeseries%sp%time(SIZE(timeseries%sp%time)) / dt) + 2
-
-      ALLOCATE(seis(npts, 3), time(npts))
+      ALLOCATE(seis(SIZE(timeseries%sp%time), 3))
 
       seis(:, :) = 0._r32
 
-      DO it = 1, npts
-        time(it) = (it - 1) * dt
-      ENDDO
-
-      IF (input%advanced%verbose .eq. 2) THEN
-        CALL update_log(num2char('<time step>', width=30, justify='c') +    &
-                        num2char(dt, notation='f', width=15, precision=4, justify='r') + '|')
-      ENDIF
-
-      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
-      ! ---------------------------------------- interpolate noise ---------------------------------------------
-
-      ALLOCATE(nseis(npts, 3))
-
-      CALL interpolate(timeseries%cd%time, timeseries%cd%x(:, rec), time, nseis(:, 1))
-      CALL interpolate(timeseries%cd%time, timeseries%cd%y(:, rec), time, nseis(:, 2))
-      CALL interpolate(timeseries%cd%time, timeseries%cd%z(:, rec), time, nseis(:, 3))
+#ifdef DEBUG
+      ALLOCATE(cseis(SIZE(timeseries%sp%time)))
+      cseis(:) = 0._r32
+#endif
 
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! --------------------------------------- solve integral for each mesh refinement --------------------------------------------
@@ -214,15 +195,6 @@ MODULE m_isochron
       ! set "seed" such that random numbers depend on fault plane number and iteration
       seed = input%source%seed + (iter - 1) * SIZE(plane) + pl
 
-      ALLOCATE(rseis(npts, 3), iseis(npts, 3), rtri(npts, 3), itri(npts, 3))
-      ALLOCATE(mrf(npts), tur(npts/2+1), tui(npts/2+1), tv(npts/2+1))
-
-#ifdef DEBUG
-      ALLOCATE(cseis(npts), ctri(npts))
-
-      cseis(:) = 0._r32
-#endif
-
       ! loop over mesh refinements
       DO ref = 1, SIZE(nvtr)
 
@@ -230,12 +202,46 @@ MODULE m_isochron
           CALL update_log(num2char('<mesh refinement>', width=30, justify='c') + num2char(ref, width=15, justify='r') + '|')
         ENDIF
 
+        ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+        ! ------------------------------------------- set integration time-step ----------------------------------------------------
+
+        CALL integration_step(ok, ref, rec, pl, vel, iter, dt)
+
+        ! IF (input%source%is_point) dt = MAXVAL(plane(pl)%rupture) / (input%advanced%avecuts * 4)
+
+        IF (input%advanced%verbose .eq. 2) THEN
+          CALL update_log(num2char('<time step>', width=30, justify='c') +    &
+                          num2char(dt, notation='f', width=15, precision=4, justify='r') + '|')
+        ENDIF
+
+        npts = NINT(timeseries%sp%time(SIZE(timeseries%sp%time)) / dt) + 2
+
+        ALLOCATE(time(npts), mrf(npts), tur(npts/2+1), tui(npts/2+1), tv(npts/2+1))
+        ALLOCATE(rseis(npts, 3), iseis(npts, 3), rtri(npts, 3), itri(npts, 3))
+
+#ifdef DEBUG
+        ALLOCATE(ctri(npts))
+#endif
+
+        DO it = 1, npts
+          time(it) = (it - 1) * dt
+        ENDDO
+
         ! these stack contributions from each mesh refinement
         DO ic = 1, 3
           DO it = 1, npts
             rseis(it, ic) = 0._r32
             iseis(it, ic) = 0._r32
           ENDDO
+        ENDDO
+
+        ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+        ! --------------------------------------------------- interpolate noise ------------------------------------------------------
+
+        ALLOCATE(nseis(npts, 3))
+
+        DO ic = 1, 3
+          CALL interpolate(timeseries%cd%time, timeseries%cd%xyz(:, ic, rec), time, nseis(:, ic))
         ENDDO
 
         noslip    = 0       !< total triangles having zero slip
@@ -873,12 +879,38 @@ MODULE m_isochron
         CALL watch_start(tictoc, COMM)
 #endif
 
-        DO ic = 1, 3
-          CALL hilbert(iseis(:, ic))
-          DO it = 1, npts
-            seis(it, ic) = seis(it, ic) + (rseis(it, ic) - iseis(it, ic)) * dt         !< dt is from convolution
+        ASSOCIATE(model => input%attenuation(1), fmax => input%coda%fmax)
+
+          CALL make_iir_plan(ok, 'butter', dt, [model%lcut(band), MIN(model%hcut(band), fmax)], 'pass', 2, zphase = .true.)
+
+          IF (ok .ne. 0) THEN
+            CALL report_error(filter_error(ok))
+            RETURN
+          ENDIF
+
+          ALLOCATE(stack(SIZE(timeseries%sp%time)))
+
+          DO ic = 1, 3
+
+            CALL hilbert(iseis(:, ic))
+
+            DO it = 1, npts
+              rseis(it, ic) = (rseis(it, ic) - iseis(it, ic)) * dt         !< dt is from convolution
+            ENDDO
+
+            rseis(:, ic) = iir(rseis(:, ic), ok)                                 !< filter
+
+            CALL interpolate(time, rseis(:, ic), timeseries%sp%time, stack)      !< resampling
+
+            DO it = 1, SIZE(timeseries%sp%time)
+              seis(it, ic) = seis(it, ic) + stack(it)
+            ENDDO
+
           ENDDO
-        ENDDO
+
+          CALL destroy_iir_plan()
+
+        END ASSOCIATE
 
 #ifdef PERF
         CALL watch_stop(tictoc, COMM)
@@ -902,10 +934,19 @@ MODULE m_isochron
 print*, 'area ', dutr(ref) * dvtr(ref) * 0.5_r32
 
 #ifdef DEBUG
-      DO it = 1, npts
-        cseis(it) = cseis(it) + ctri(it)
-      ENDDO
+
+        CALL interpolate(time, ctri(:), timeseries%sp%time, stack)      !< resampling
+
+        DO it = 1, SIZE(timeseries%sp%time)
+          cseis(it) = cseis(it) + stack(it)
+        ENDDO
+
+        DEALLOCATE(ctri)
+
 #endif
+
+        DEALLOCATE(time, mrf, tur, tui, tv, stack)
+        DEALLOCATE(rseis, iseis, rtri, itri, nseis)
 
       ENDDO        !< end loop over mesh refinements
 
@@ -925,32 +966,26 @@ print*, 'scale ', scale
 
       ASSOCIATE(model => input%attenuation(1), fmax => input%coda%fmax)
 
-        CALL make_iir_plan(ok, 'butter', dt, [model%lcut(band), MIN(model%hcut(band), fmax)], 'pass', 2, zphase = .true.)
-
-        IF (ok .ne. 0) THEN
-          CALL report_error(filter_error(ok))
-          RETURN
-        ENDIF
+        ! CALL make_iir_plan(ok, 'butter', dt, [model%lcut(band), MIN(model%hcut(band), fmax)], 'pass', 2, zphase = .true.)
+        !
+        ! IF (ok .ne. 0) THEN
+        !   CALL report_error(filter_error(ok))
+        !   RETURN
+        ! ENDIF
 
         DO ic = 1, 3
 
-          seis(:, ic) = iir(seis(:, ic), ok)                       !< filter
+          ! seis(:, ic) = iir(seis(:, ic), ok)                       !< filter
 
-          seis(:, ic) = differentiate(seis(:, ic), dt)             !< move from displacement to velocity
+          seis(:, ic) = differentiate(seis(:, ic), timeseries%sp%dt)             !< move from displacement to velocity
 
-          CALL interpolate(time, seis(:, ic), timeseries%sp%time, stack)
+          ! CALL interpolate(time, seis(:, ic), timeseries%sp%time, stack)
 
-          IF (ic .eq. 1) THEN
-            timeseries%sp%x(:, rec) = timeseries%sp%x(:, rec) + stack(:) * scale
-          ELSEIF (ic .eq. 2) THEN
-            timeseries%sp%y(:, rec) = timeseries%sp%y(:, rec) + stack(:) * scale
-          ELSE
-            timeseries%sp%z(:, rec) = timeseries%sp%z(:, rec) + stack(:) * scale
-          ENDIF
+          timeseries%sp%xyz(:, ic, rec) = timeseries%sp%xyz(:, ic, rec) + seis(:, ic) * scale
 
         ENDDO
 
-        CALL destroy_iir_plan()
+        ! CALL destroy_iir_plan()
 
       END ASSOCIATE
 
@@ -986,8 +1021,8 @@ print*, 'scale ', scale
 
       OPEN(newunit = lu, file = fo, status = 'replace', form = 'formatted', access = 'sequential', action = 'write', IOSTAT = ok)
 
-      DO it = 1, npts
-        WRITE(lu, *) time(it), cseis(it) * scale
+      DO it = 1, SIZE(timeseries%sp%time)
+        WRITE(lu, *) timeseries%sp%time(it), cseis(it) * scale
       ENDDO
 
       CLOSE(lu)
@@ -1852,7 +1887,7 @@ print*, 'scale ', scale
       INTEGER(i32),                           INTENT(IN)  :: iter
       CHARACTER(:), ALLOCATABLE                           :: fo
       COMPLEX(r32), ALLOCATABLE, DIMENSION(:)             :: spectrum
-      INTEGER(i32)                                        :: band, rec, i, lu, npts
+      INTEGER(i32)                                        :: band, rec, i, lu, npts, ic
       REAL(r32),    ALLOCATABLE, DIMENSION(:)             :: freq, amp, phase, respz, blob
 
       !-----------------------------------------------------------------------------------------------------------------------------
@@ -1937,19 +1972,11 @@ print*, 'scale ', scale
 
           ! apply spectral correction function
           DO rec = 1, SIZE(input%receiver)
-
-            CALL fft(timeseries%sp%x(:, rec), spectrum)
-            spectrum(:) = spectrum(:) * respz(:)
-            CALL ifft(timeseries%sp%x(:, rec), spectrum)
-
-            CALL fft(timeseries%sp%y(:, rec), spectrum)
-            spectrum(:) = spectrum(:) * respz(:)
-            CALL ifft(timeseries%sp%y(:, rec), spectrum)
-
-            CALL fft(timeseries%sp%z(:, rec), spectrum)
-            spectrum(:) = spectrum(:) * respz(:)
-            CALL ifft(timeseries%sp%z(:, rec), spectrum)
-
+            DO ic = 1, 3
+              CALL fft(timeseries%sp%xyz(:, ic, rec), spectrum)
+              spectrum(:) = spectrum(:) * respz(:)
+              CALL ifft(timeseries%sp%xyz(:, ic, rec), spectrum)
+            ENDDO
           ENDDO
 
           CALL destroy_fftw_plan([npts])
@@ -2167,12 +2194,149 @@ print*, 'ok coda ', ok
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    REAL(r32) FUNCTION integration_step()
+    subroutine integration_step(ok, ref, rec, pl, vel, iter, step)
 
+      INTEGER(i32),              INTENT(OUT) :: ok
+      INTEGER(i32),              INTENT(IN)  :: ref, rec, pl, vel, iter
+      REAL(r32),                 INTENT(OUT) :: step
+      INTEGER(i32)                           :: seed, totnutr, i, j, icr, src, wtp, sheet
+      INTEGER(i32), DIMENSION(2)             :: n
+      INTEGER(i32), DIMENSION(3)             :: iuc, ivc, shot
+      REAL(r32)                              :: strike, dip, urec, vrec, wrec, taumin, taumax
+      REAL(r32),    DIMENSION(2)             :: dt
+      REAL(r32),    DIMENSION(3)             :: slip, u, v, w, x, y, z, nrl, rake, repi, rupture
+      REAL(r32),    DIMENSION(3)             :: p, path, trvt, q, tau
 
+      !-----------------------------------------------------------------------------------------------------------------------------
 
+      dt(:) = 0._r32
+      n(:)  = 0
 
-    END FUNCTION integration_step
+      ! set "seed" such that random numbers depend on fault plane number and iteration
+      seed = input%source%seed + (iter - 1) * SIZE(plane) + pl
+
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+      ! ------------------------------------------ define RIK model on mesh nodes ------------------------------------------------
+
+      ALLOCATE(nodes(nugr(ref), nvgr(ref)))
+
+      CALL nodefun(ref, pl, vel, seed)                !< define slip, rupture time and rise time on mesh nodes
+
+      totnutr = 2 * nutr(ref) - 1                     !< total triangles in a row
+
+      ! generate fault plane roughness
+      CALL fault_roughness(ok, ref, pl, iter)
+
+      ! shoot rays between receivers and a set of sources spanning (vertically) current mesh
+      CALL rayshooting(ok, ref, pl, vel)
+
+      !$omp parallel do default(shared) private(i, j, iuc, ivc, icr, slip, u, v, w, x, y, z, nrl, strike, dip, rake, rupture)   &
+      !$omp private(urec, vrec, wrec, repi, wtp, sheet, src, shot, p, path, trvt, q, tau, taumin, taumax)   &
+      !$omp reduction(+: dt, n)
+      DO j = 1, nvtr(ref)
+        DO i = 1, totnutr
+
+          ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+          ! ---------------------------------------- check corners have non-zero slip --------------------------------------------
+
+          CALL cornr(j, i, iuc, ivc)        !< corner indices for current triangle
+
+          DO icr = 1, 3
+            slip(icr) = SUM(nodes(iuc(icr), ivc(icr))%slip)
+          ENDDO
+
+          IF (ALL(slip .eq. 0._r32)) CYCLE          !< jump to next triangle if current has zero slip
+
+          ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+          ! --------------------------------------------- get perturbed mechanism ------------------------------------------------
+
+          CALL cornr2uv(iuc, ivc, ref, u, v)        !< on-fault coordinates
+
+          DO icr = 1, 3
+            w(icr) = roughness(iuc(icr), ivc(icr))      !< add roughness (always zero for point-sources)
+          ENDDO
+
+          CALL uvw2xyz(pl, u, v, w, x, y, z)            !< get cartesian coordinates
+
+          DO icr = 1, 3
+            z(icr) = MAX(MIN_DEPTH, z(icr))             !< make sure we never breach the free-surface (clip roughness)
+          ENDDO
+
+          CALL normal2tri(x, y, z, nrl)
+
+          ! always have normal pointing upward (i.e. negative z direction)
+          IF (MOD(i + (j-1)*totnutr, 2) == 0) nrl(:) = -nrl(:)
+
+          strike = plane(pl)%strike * DEG_TO_RAD
+          dip    = plane(pl)%dip    * DEG_TO_RAD
+
+          CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%rake, u, v, rake)
+
+          CALL perturbed_mechanism(strike, dip, rake, nrl)            !< get new strike, dip, rake (all values in radians)
+
+          ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+          ! ----------------------------------------------- corner parameters ----------------------------------------------------
+
+          DO icr = 1, 3
+            rupture(icr) = MINVAL(nodes(iuc(icr), ivc(icr))%rupture)
+          ENDDO
+
+          ! move from "x-y" to "u-t" coordinates for corners
+          u = x
+          v = y
+          w = 0._r32
+          CALL rotate(u, v, w, 0._r32, 0._r32, -strike)
+
+          ! find shooting points above/below
+          DO icr = 1, 3
+            DO src = 1, SIZE(shooting) - 1
+              IF ( (z(icr) .ge. shooting(src)) .and. (z(icr) .le. shooting(src + 1)) ) shot(icr) = src
+            ENDDO
+          ENDDO
+
+          ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+          ! -------------------------------------- triangle contribution to ground motion ----------------------------------------
+
+          urec = input%receiver(rec)%x
+          vrec = input%receiver(rec)%y
+          wrec = 0._r32
+
+          CALL rotate(urec, vrec, wrec, 0._r32, 0._r32, -strike)       !< move to "u-t" coordinates for receiver
+
+          DO icr = 1, 3
+            repi(icr) = HYPOT(urec - u(icr), vrec - v(icr)) / 1000._r32        !< epicentral distance (corner-receiver)
+          ENDDO
+
+          ! loop over wave types
+          DO wtp = 1, 2
+
+            DO sheet = 1, maxsheets(wtp)
+
+              CALL raypar_at_corners(sheet, shooting, repi, z, shot, wtp, p, path, trvt, q)
+
+              IF (ANY(trvt .eq. 0._r32)) CYCLE       !< all corners must belong to same sheet
+
+              tau(:) = trvt(:) + rupture(:)          !< sum travel-time and rupture time
+
+              taumax = MAXVAL(tau)
+              taumin = MINVAL(tau)
+
+              dt(wtp) = dt(wtp) + (taumax - taumin) / input%advanced%pmw
+              n(wtp)  = n(wtp) + 1
+
+            ENDDO     !< end loop over sheets
+
+          ENDDO    !< end loop over wave types
+
+        ENDDO
+      ENDDO
+      !$omp end parallel do
+
+      CALL dealloc_nodes()
+
+      step = MAXVAL(dt / n)
+
+    END SUBROUTINE integration_step
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================

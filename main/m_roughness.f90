@@ -52,9 +52,11 @@ MODULE m_roughness
 
       IF (ALLOCATED(roughness)) DEALLOCATE(roughness)
 
-      IF (input%source%add_roughness .and. (input%advanced%verbose .eq. 2) .and. (ref .eq. 1) )  THEN
-        ALLOCATE(avg(SIZE(nugr)), var(SIZE(nugr)), npts(SIZE(nugr)))
-      ENDIF
+      IF (.not.ALLOCATED(avg)) ALLOCATE(avg(SIZE(nugr)), var(SIZE(nugr)), npts(SIZE(nugr)))
+
+      ! IF (input%source%add_roughness .and. (input%advanced%verbose .eq. 2) .and. (ref .eq. 1) )  THEN
+      !   ALLOCATE(avg(SIZE(nugr)), var(SIZE(nugr)), npts(SIZE(nugr)))
+      ! ENDIF
 
       ! set "seed" such that roughness depends on iteration and fault plane
       seed = input%source%seed + (iter - 1) * SIZE(plane) + pl
