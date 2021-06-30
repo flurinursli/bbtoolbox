@@ -770,49 +770,50 @@ MODULE m_isochron
 
                 ! SQRT(3) is there because isotropic radiation is distributed evenly along the three directions of motion
 
-!                 IF (wtp .eq. 1) THEN
-!
-!                   a0 = (2._r32 * ABS(mean(q)) * mean(mu) * mean(slip) * c) * 0.44_r32 * 2._r32 * attenuation * ISQRT3
-!                   a0 = a0 / maxsheets(wtp)
-!
-! ! print*, 'rec sheet', rec, sheet, mean(trvt) + mean(rupture), wtp, a0
-!
-!                   a0 = a0 / coda%pdirect(itc, ipc)
-!
-!                   DO it = 1, npts - shift
-!                     rtri(it + shift, 1) = rtri(it + shift, 1) + coda%penvelope(it, itc, ipc) * a0 * nseis(it, 1)
-!                     rtri(it + shift, 2) = rtri(it + shift, 2) + coda%penvelope(it, itc, ipc) * a0 * nseis(it, 2)
-!                     rtri(it + shift, 3) = rtri(it + shift, 3) + coda%penvelope(it, itc, ipc) * a0 * nseis(it, 3)
-!                   ENDDO
-!
-! #ifdef DEBUG
-!                   DO it = 1, npts - shift
-!                     ctri(it + shift) = ctri(it + shift) + coda%penvelope(it, itc, ipc) * a0
-!                   ENDDO
-! #endif
-!
-!                 ELSE
-!
-!                   a0 = (2._r32 * ABS(mean(q)) * mean(mu) * mean(slip) * c) * 0.60_r32 * 2._r32 * attenuation * ISQRT3
-!                   a0 = a0 / maxsheets(wtp)
-!
-! ! print*, 'rec sheet', rec, sheet, mean(trvt) + mean(rupture), wtp, a0
-!
-!                   a0 = a0 / coda%sdirect(itc, ipc)
-!
-!                   DO it = 1, npts - shift
-!                     rtri(it + shift, 1) = rtri(it + shift, 1) + coda%senvelope(it, itc, ipc) * a0 * nseis(it, 1)
-!                     rtri(it + shift, 2) = rtri(it + shift, 2) + coda%senvelope(it, itc, ipc) * a0 * nseis(it, 2)
-!                     rtri(it + shift, 3) = rtri(it + shift, 3) + coda%senvelope(it, itc, ipc) * a0 * nseis(it, 3)
-!                   ENDDO
-!
-! #ifdef DEBUG
-!                   DO it = 1, npts - shift
-!                     ctri(it + shift) = ctri(it + shift) + coda%senvelope(it, itc, ipc) * a0
-!                   ENDDO
-! #endif
-!
-!                 ENDIF
+                IF (wtp .eq. 1) THEN
+
+                  a0 = (2._r32 * ABS(mean(q)) * mean(mu) * mean(slip) * c) * 0.44_r32 * 2._r32 * attenuation * ISQRT3
+                  a0 = a0 / maxsheets(wtp)
+
+! print*, 'rec sheet', rec, sheet, mean(trvt) + mean(rupture), wtp, a0
+
+                  a0 = a0 / coda%pdirect(itc, ipc)
+
+                  DO it = 1, npts - shift
+                    rtri(it + shift, 1) = rtri(it + shift, 1) + coda%penvelope(it, itc, ipc) * a0 * nseis(it, 1)
+                    rtri(it + shift, 2) = rtri(it + shift, 2) + coda%penvelope(it, itc, ipc) * a0 * nseis(it, 2)
+                    rtri(it + shift, 3) = rtri(it + shift, 3) + coda%penvelope(it, itc, ipc) * a0 * nseis(it, 3)
+                  ENDDO
+
+#ifdef DEBUG
+                  DO it = 1, npts - shift
+                    ctri(it + shift) = ctri(it + shift) + coda%penvelope(it, itc, ipc) * a0
+                  ENDDO
+#endif
+
+                ELSE
+
+                  a0 = (2._r32 * ABS(mean(q)) * mean(mu) * mean(slip) * c) * 0.60_r32 * 2._r32 * attenuation * ISQRT3
+                  a0 = a0 / maxsheets(wtp)
+
+print*, 'rec sheet ', rec, sheet, wtp, a0, coda%sdirect(itc, ipc), c, mean(slip), mean(mu), mean(q), attenuation
+! print*, 'rec sheet', rec, sheet, mean(trvt) + mean(rupture), wtp, a0
+
+                  a0 = a0 / coda%sdirect(itc, ipc)
+
+                  DO it = 1, npts - shift
+                    rtri(it + shift, 1) = rtri(it + shift, 1) + coda%senvelope(it, itc, ipc) * a0 * nseis(it, 1)
+                    rtri(it + shift, 2) = rtri(it + shift, 2) + coda%senvelope(it, itc, ipc) * a0 * nseis(it, 2)
+                    rtri(it + shift, 3) = rtri(it + shift, 3) + coda%senvelope(it, itc, ipc) * a0 * nseis(it, 3)
+                  ENDDO
+
+#ifdef DEBUG
+                  DO it = 1, npts - shift
+                    ctri(it + shift) = ctri(it + shift) + coda%senvelope(it, itc, ipc) * a0
+                  ENDDO
+#endif
+
+                ENDIF
 
               ENDDO     !< end loop over sheets
 
