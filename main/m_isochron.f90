@@ -99,7 +99,7 @@ MODULE m_isochron
 
       REAL(r32)                                             :: m0, moment, strike, dip, urec, vrec, wrec, taumin, taumax, sd, cd
       REAL(r32)                                             :: srfvel, scale
-      REAL(r32)                                             :: avepath, avetrvt, scattering, attenuation, a0
+      REAL(r32)                                             :: avepath, avetrvt, scattering, attenuation, a0, area
 
       REAL(r32)                                             :: dx, dy, dr, cpsi, spsi, sloloc, pn, signp, sthf, cthf
       REAL(r32)                                             :: rn, rv, ru, bn, cn, bu, cu, bv, cv, stho, ctho
@@ -308,6 +308,7 @@ MODULE m_isochron
         ctri(:) = 0._r32
 #endif
 
+        area = dutr(ref) * dvtr(ref) * 0.5_r32
 
         ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
         ! ------------------------------------------- allocate memory for FFT/IFFT -------------------------------------------------
@@ -420,8 +421,6 @@ MODULE m_isochron
               ENDDO
             ENDDO
 
-! print*, 'shot ', shot, ' - ', shooting, ' - ', z
-
             ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
             ! ---------------------------------------- moment rate function of triangle --------------------------------------------
 
@@ -494,10 +493,6 @@ MODULE m_isochron
                 ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
                 ! ------------------------------------------ time integration limits -----------------------------------------------
 
-
-! print*, 'r ', rec, wtp, sheet, ' x ', mean(repi), ' - ', path, ' - ', trvt
-
-
                 IF (ANY(trvt .eq. 0._r32)) CYCLE       !< all corners must belong to same sheet
 
                 tau(:) = trvt(:) + rupture(:)          !< sum travel-time and rupture time
@@ -510,10 +505,6 @@ MODULE m_isochron
                 it2 = it1 + (taumax - taumin) / dt - 1      !< when (taumax-taumin) < dt, it2 < it1
 
                 it2 = MIN(npts, it2)                        !< limit to max number of time points
-
-
-! print*, 't ', rec, wtp, sheet, ' - ', taumin, taumax, ' - ', it1, it2
-
 
                 ! jump to next sheet if no isochron is spanned (i.e. no cuts)
                 IF (it2 .lt. it1) CYCLE
@@ -553,7 +544,7 @@ MODULE m_isochron
                   ! sine of angle eta at source
                   sthf = velloc(icr) * pn
 
-#ifdef DEVOP
+#ifdef ERROR_TRAP
                   IF (sthf .gt. 1.01_r32) CALL report_error('solve_isochron_integral - ERROR: sin(eta) sensibly larger than 1')
 #endif
 
@@ -587,7 +578,7 @@ MODULE m_isochron
 
                   stho = pn * srfvel
 
-#ifdef DEVOP
+#ifdef ERROR_TRAP
                   IF (stho .gt. 1.01_r32) CALL report_error('solve_isochron_integral - ERROR: sin(eta) sensibly larger than 1')
 #endif
 
@@ -703,32 +694,32 @@ MODULE m_isochron
                     ! values of the integrand at the boundaries of the triangle where intersected by the integration contour.
                     ! dl is the length of the contour within the triangle.
                     SELECT CASE (icut)
-                    CASE(0)               !< isochron cuts a corner
-                      ga = 0._r32
-                      gb = 0._r32
-                      du = 0._r32
-                      dv = 0._r32
-                    CASE(1)
-                      p13 = dtau(1) / tau31
-                      p12 = dtau(1) / tau21
-                      ga  = g(ic, 1) + p13 * g31
-                      gb  = g(ic, 1) + p12 * g21
-                      dv  = dvtr(ref) * p12
-                      du  = dutr(ref) * (p13 - 0.5_r32 * p12)
-                    CASE(2)
-                      p12 = dtau(1) / tau21
-                      p32 = dtau(3) / tau23
-                      ga  = g(ic, 3) + p32 * g23
-                      gb  = g(ic, 1) + p12 * g21
-                      dv  = dvtr(ref) * (p12 - p32)
-                      du  = dutr(ref) * (1._r32 - 0.5_r32 * p12 - 0.5_r32 * p32)
-                    CASE(3)
-                      p13 = dtau(1) / tau31
-                      p32 = dtau(3) / tau23
-                      ga  = g(ic, 1) + p13 * g31
-                      gb  = g(ic, 3) + p32 * g23
-                      dv  = dvtr(ref) * p32
-                      du  = dutr(ref) * (1._r32 - p13 - 0.5_r32 * p32)
+                      CASE(0)               !< isochron cuts a corner
+                        ga = 0._r32
+                        gb = 0._r32
+                        du = 0._r32
+                        dv = 0._r32
+                      CASE(1)
+                        p13 = dtau(1) / tau31
+                        p12 = dtau(1) / tau21
+                        ga  = g(ic, 1) + p13 * g31
+                        gb  = g(ic, 1) + p12 * g21
+                        dv  = dvtr(ref) * p12
+                        du  = dutr(ref) * (p13 - 0.5_r32 * p12)
+                      CASE(2)
+                        p12 = dtau(1) / tau21
+                        p32 = dtau(3) / tau23
+                        ga  = g(ic, 3) + p32 * g23
+                        gb  = g(ic, 1) + p12 * g21
+                        dv  = dvtr(ref) * (p12 - p32)
+                        du  = dutr(ref) * (1._r32 - 0.5_r32 * p12 - 0.5_r32 * p32)
+                      CASE(3)
+                        p13 = dtau(1) / tau31
+                        p32 = dtau(3) / tau23
+                        ga  = g(ic, 1) + p13 * g31
+                        gb  = g(ic, 3) + p32 * g23
+                        dv  = dvtr(ref) * p32
+                        du  = dutr(ref) * (1._r32 - p13 - 0.5_r32 * p32)
                     END SELECT
 
                     dl = HYPOT(du, dv)
@@ -741,15 +732,6 @@ MODULE m_isochron
 
                 ENDDO      !< end loop over components
 
-
-                ! "rtri" and "itri" contain direct wave contribution for current triangle and receiver
-                ! CALL time_integration(ref, it1, it2, dt, attenuation, tau, g, c, cut, rtri, itri)
-
-                ! ncuts(wtp) = ncuts(wtp) + cut
-
-! print*, 'c ', rec, wtp, sheet, ' - ', cut, ' - ', ncuts(wtp), ' - ', tricross(wtp)
-
-
 #ifdef PERF
                 CALL watch_stop(tictoc, COMM)
                 ostopwatch(6) = ostopwatch(6) + tictoc
@@ -758,25 +740,20 @@ MODULE m_isochron
                 ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
                 ! ------------------------------------------ add coda contribution -----------------------------------------------
 
-                ipc = NINT( (mean(path) - coda%lopath(wtp)) / DCP ) + 1
-                itc = NINT( (mean(trvt) - coda%lotrvt(wtp)) / DCT ) + 1
+                ipc = NINT( (mean(path) - coda%lopath(wtp)) / DCP ) + 1         !< index closest path value
+                itc = NINT( (mean(trvt) - coda%lotrvt(wtp)) / DCT ) + 1         !< index closest traveltime value
 
-                shift = NINT(mean(rupture) / dt) + 1 - 1
+                shift = NINT(mean(rupture) / dt) + 1 - 1         !< additional time-shift due to rupture (in samples)
 
-                ! (averaged) amplitude of direct wave for isotropic radiation (0.63) at free-surface (2)
-                ! a0 = (2._r32 * ABS(mean(q)) * mean(mu) * mean(slip) * c) * 0.63_r32 * 2._r32
-
-! print*, 'rec sheet', rec, sheet, mean(trvt) + mean(rupture), wtp, mean(q)*mean(mu)*mean(slip)
-
-                ! SQRT(3) is there because isotropic radiation is distributed evenly along the three directions of motion
+                ! here below coda contributions due to direct P- and S-waves are treated separately. In any case, envelopes are
+                ! scaled such that amplitude of scattered direct wave is given by an isotropic source (0.44 for P, 0.60 for S - see
+                ! Boore&Boatwright 1984) at free-surface (~2, see book of Sato&Fehler). SQRT(3) is there because isotropic radiation
+                ! is distributed evenly amongst the three directions of motion.
 
                 IF (wtp .eq. 1) THEN
 
-                  a0 = (2._r32 * ABS(mean(q)) * mean(mu) * mean(slip) * c) * 0.44_r32 * 2._r32 * attenuation * ISQRT3
-                  a0 = a0 / maxsheets(wtp)
-
-! print*, 'rec sheet', rec, sheet, mean(trvt) + mean(rupture), wtp, a0
-
+                  a0 = (2._r32 * ABS(mean(q)) * mean(mu) * mean(slip)) * 0.44_r32 * 2._r32 * attenuation * ISQRT3 * area
+                  a0 = a0 / maxsheets(wtp)                 !< each sheet contributes equally
                   a0 = a0 / coda%pdirect(itc, ipc)
 
                   DO it = 1, npts - shift
@@ -793,12 +770,8 @@ MODULE m_isochron
 
                 ELSE
 
-                  a0 = (2._r32 * ABS(mean(q)) * mean(mu) * mean(slip) * c) * 0.60_r32 * 2._r32 * attenuation * ISQRT3
-                  a0 = a0 / maxsheets(wtp)
-
-print*, 'rec sheet ', rec, sheet, wtp, a0, coda%sdirect(itc, ipc), c, mean(slip), mean(mu), mean(q), attenuation
-! print*, 'rec sheet', rec, sheet, mean(trvt) + mean(rupture), wtp, a0
-
+                  a0 = (2._r32 * ABS(mean(q)) * mean(mu) * mean(slip)) * 0.60_r32 * 2._r32 * attenuation * ISQRT3 * area
+                  a0 = a0 / maxsheets(wtp)                !< each sheet contributes equally
                   a0 = a0 / coda%sdirect(itc, ipc)
 
                   DO it = 1, npts - shift
@@ -861,7 +834,7 @@ print*, 'rec sheet ', rec, sheet, wtp, a0, coda%sdirect(itc, ipc), c, mean(slip)
               ENDDO
             ENDDO
 
-            m0 = m0 + mean(mu * slip)        !< average moment contribution (area is included later)
+            m0 = m0 + mean(mu) * mean(slip)      !< average moment contribution (area is included later)
 
           ENDDO
         ENDDO
@@ -869,7 +842,7 @@ print*, 'rec sheet ', rec, sheet, wtp, a0, coda%sdirect(itc, ipc), c, mean(slip)
 
         CALL dealloc_nodes()
 
-        moment = moment + m0 * dutr(ref) * dvtr(ref) * 0.5_r32      !< sum is over mesh refinements
+        moment = moment + m0 * area      !< sum is over mesh refinements
 
         CALL destroy_fftw_plan([npts])
 
@@ -882,7 +855,9 @@ print*, 'rec sheet ', rec, sheet, wtp, a0, coda%sdirect(itc, ipc), c, mean(slip)
 
         ASSOCIATE(model => input%attenuation(1), fmax => input%coda%fmax)
 
-          CALL make_iir_plan(ok, 'butter', dt, [model%lcut(band), MIN(model%hcut(band), fmax)], 'pass', 2, zphase = .true.)
+          ! CALL make_iir_plan(ok, 'butter', dt, [model%lcut(band), MIN(model%hcut(band), fmax)], 'pass', 2, zphase = .true.)
+          CALL make_iir_plan(ok, 'butter', dt, [model%lcut(band), 8.], 'pass', 2, zphase = .true.)
+
 
           IF (ok .ne. 0) THEN
             CALL report_error(filter_error(ok))
@@ -956,7 +931,7 @@ print*, 'area ', dutr(ref) * dvtr(ref) * 0.5_r32
       scale = plane(pl)%targetm0 / moment          !< scaling factor to scale to desired moment
       scale = scale * 1.E-18_r32                   !< take into account the fact that units for "q" were km, g/cm^3, km/s
 
-print*, 'scale ', scale
+print*, 'scale ', scale, moment
 
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! ------------------------------------- filter, differentiate, scale & stack -------------------------------------------------
@@ -965,32 +940,9 @@ print*, 'scale ', scale
       CALL watch_start(tictoc, COMM)
 #endif
 
-      ALLOCATE(stack(SIZE(timeseries%sp%time)))
-
-      ASSOCIATE(model => input%attenuation(1), fmax => input%coda%fmax)
-
-        ! CALL make_iir_plan(ok, 'butter', dt, [model%lcut(band), MIN(model%hcut(band), fmax)], 'pass', 2, zphase = .true.)
-        !
-        ! IF (ok .ne. 0) THEN
-        !   CALL report_error(filter_error(ok))
-        !   RETURN
-        ! ENDIF
-
-        DO ic = 1, 3
-
-          ! seis(:, ic) = iir(seis(:, ic), ok)                       !< filter
-
-          ! seis(:, ic) = differentiate(seis(:, ic), timeseries%sp%dt)             !< move from displacement to velocity
-
-          ! CALL interpolate(time, seis(:, ic), timeseries%sp%time, stack)
-
-          timeseries%sp%xyz(:, ic, rec) = timeseries%sp%xyz(:, ic, rec) + seis(:, ic) * scale
-
-        ENDDO
-
-        ! CALL destroy_iir_plan()
-
-      END ASSOCIATE
+      DO ic = 1, 3
+        timeseries%sp%xyz(:, ic, rec) = timeseries%sp%xyz(:, ic, rec) + seis(:, ic) * scale
+      ENDDO
 
 #ifdef PERF
       CALL watch_stop(tictoc, COMM)

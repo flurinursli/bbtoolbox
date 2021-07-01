@@ -852,11 +852,9 @@ MODULE m_source
         ! diagonal = l*sqrt(2) = 2*sqrt(2)*du (l = 2*du)
         du = PTSRC_FACTOR * beta / input%coda%fmax / SQRT(2._r32) / 2._r32
 
-
         ! ASSOCIATE(model => input%attenuation(1), fmax => input%coda%fmax)
         !   du = PTSRC_FACTOR * beta / MIN(model%hcut(band), fmax) / SQRT(2._r32) / 2._r32
         ! END ASSOCIATE
-
 
         plane(pl)%u = [-du, 0._r32, du]
         plane(pl)%v = [-du, 0._r32, du]

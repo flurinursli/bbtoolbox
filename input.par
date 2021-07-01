@@ -17,7 +17,7 @@ output folder = '/home/walter/Backedup/Software/bbtoolbox/test/hf' format = 'txt
 # required fields are "x"/"y"/"z" (or "lon"/"lat"/"z" is receivers position is given in geographical coordinates), "strike", "dip", "rake" ...
 # ... "m0", "type" (default "Brune") and "freq" (default=6.28)
 #source x= 20350 y=15010 z=5000 strike=10 dip=90 rake=15 m0=1.0e+19 type='brune' freq=6.28
-source lon=-116.25 lat=34.50 z=300 strike=20 dip=70 rake=30 m0=1.0e+19 type='brune' freq=6.28
+source lon=-116.25 lat=34.50 z=3000 strike=20 dip=70 rake=30 m0=1.0e+19 type='brune' freq=6.28
 
 # ... or extended source (incl. roughness and RIK parameters: these are optional)
 # file format is determined from file extension
