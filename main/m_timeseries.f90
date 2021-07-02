@@ -881,7 +881,7 @@ MODULE m_timeseries
         WRITE(lu, '(4(ES15.5))', IOSTAT = ok, IOMSG = msg) time(lino), x(lino), y(lino), z(lino)
 #endif
         IF (ok .ne. 0) THEN
-          CALL report_error('write_sw4 - ERROR: ' + msg)
+          CALL report_error('write_plaintxt - ERROR: ' + msg)
           RETURN
         ENDIF
       ENDDO
@@ -896,7 +896,8 @@ MODULE m_timeseries
 
       ! Purpose:
       !   to write ASCII output files where timeseries are stored based on the format specifications provided by F.Panzera for the
-      !   BAFU project. On exit, "ok" is not zero if an error occurred.
+      !   BAFU project. On exit, "ok" is not zero if an error occurred. Note that in this case "x", "y" and "z" all refer to the
+      !   same vector.
       !
       ! Revisions:
       !     Date                    Description of change
@@ -924,43 +925,43 @@ MODULE m_timeseries
 
       WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) 'K-NET and KiK-net strong motion database'
       IF (ok .ne. 0) THEN
-        CALL report_error('write_sw4 - ERROR: ' + msg)
+        CALL report_error('write_bafu - ERROR: ' + msg)
         RETURN
       ENDIF
 
       WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) 'KiK-net_ID: ' + timestamp
       IF (ok .ne. 0) THEN
-        CALL report_error('write_sw4 - ERROR: ' + msg)
+        CALL report_error('write_bafu - ERROR: ' + msg)
         RETURN
       ENDIF
 
       WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) 'Event_time_HH:MM:SS: ' + hms(1:2) + hms(3:4) + hms(5:6)
       IF (ok .ne. 0) THEN
-        CALL report_error('write_sw4 - ERROR: ' + msg)
+        CALL report_error('write_bafu - ERROR: ' + msg)
         RETURN
       ENDIF
 
       WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) 'Station_code: ' + TRIM(input%receiver(m_rcvr)%file)
       IF (ok .ne. 0) THEN
-        CALL report_error('write_sw4 - ERROR: ' + msg)
+        CALL report_error('write_bafu - ERROR: ' + msg)
         RETURN
       ENDIF
 
       WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) 'Stream: ' + m_cp
       IF (ok .ne. 0) THEN
-        CALL report_error('write_sw4 - ERROR: ' + msg)
+        CALL report_error('write_bafu - ERROR: ' + msg)
         RETURN
       ENDIF
 
       WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) 'NPTS: ' + num2char(SIZE(time))
       IF (ok .ne. 0) THEN
-        CALL report_error('write_sw4 - ERROR: ' + msg)
+        CALL report_error('write_bafu - ERROR: ' + msg)
         RETURN
       ENDIF
 
       WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) 'Sample_rate_(s): ' + num2char(time(2) - time(1))
       IF (ok .ne. 0) THEN
-        CALL report_error('write_sw4 - ERROR: ' + msg)
+        CALL report_error('write_bafu - ERROR: ' + msg)
         RETURN
       ENDIF
 
@@ -974,37 +975,37 @@ MODULE m_timeseries
 
       WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) 'Units: ' + msg
       IF (ok .ne. 0) THEN
-        CALL report_error('write_sw4 - ERROR: ' + msg)
+        CALL report_error('write_bafu - ERROR: ' + msg)
         RETURN
       ENDIF
 
       WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) 'Filter_type: BUTTERWORTH'
       IF (ok .ne. 0) THEN
-        CALL report_error('write_sw4 - ERROR: ' + msg)
+        CALL report_error('write_bafu - ERROR: ' + msg)
         RETURN
       ENDIF
 
       WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) 'Filter order: 2'
       IF (ok .ne. 0) THEN
-        CALL report_error('write_sw4 - ERROR: ' + msg)
+        CALL report_error('write_bafu - ERROR: ' + msg)
         RETURN
       ENDIF
 
       WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) 'Low_cut_frequency_(Hz): 0'
       IF (ok .ne. 0) THEN
-        CALL report_error('write_sw4 - ERROR: ' + msg)
+        CALL report_error('write_bafu - ERROR: ' + msg)
         RETURN
       ENDIF
 
       WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) 'High_cut_frequency_(Hz): ' + num2char(input%coda%fmax, precision=1, notation='f')
       IF (ok .ne. 0) THEN
-        CALL report_error('write_sw4 - ERROR: ' + msg)
+        CALL report_error('write_bafu - ERROR: ' + msg)
         RETURN
       ENDIF
 
       WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) 'Trigger: Normal_triggered'
       IF (ok .ne. 0) THEN
-        CALL report_error('write_sw4 - ERROR: ' + msg)
+        CALL report_error('write_bafu - ERROR: ' + msg)
         RETURN
       ENDIF
 
@@ -1015,7 +1016,7 @@ MODULE m_timeseries
         WRITE(lu, '(4(ES15.5))', IOSTAT = ok, IOMSG = msg) x(lino)
 #endif
         IF (ok .ne. 0) THEN
-          CALL report_error('write_sw4 - ERROR: ' + msg)
+          CALL report_error('write_bafu - ERROR: ' + msg)
           RETURN
         ENDIF
       ENDDO

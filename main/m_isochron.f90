@@ -209,8 +209,6 @@ print*, 'weight ', weight
 
         CALL integration_step(ok, ref, rec, pl, vel, iter, dt)
 
-        ! IF (input%source%is_point) dt = MAXVAL(plane(pl)%rupture) / (input%advanced%avecuts * 4)
-
         IF (input%advanced%verbose .eq. 2) THEN
           CALL update_log(num2char('<time step>', width=30, justify='c') +    &
                           num2char(dt, notation='f', width=15, precision=4, justify='r') + '|')
@@ -599,7 +597,7 @@ print*, 'weight ', weight
                   phvec(2, icr) = -cpsi
                   phvec(3, icr) = 0._r32
 
-                  ! interpolate free-surface amplification coefficients at current ray parameter
+                  ! interpolate free-surface amplification coefficients at ray parameter "pn"
                   CALL interpolate(fsp, fxp, pn, fxpfzs)
                   CALL interpolate(fsp, fzp, pn, fzpfxs)
 
@@ -739,8 +737,8 @@ print*, 'weight ', weight
                 ostopwatch(6) = ostopwatch(6) + tictoc
 #endif
 
-                ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
-                ! ------------------------------------------ add coda contribution -----------------------------------------------
+                ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+                ! ------------------------------------------ add coda contribution -------------------------------------------------
 
                 ipc = NINT( (mean(path) - coda%lopath(wtp)) / DCP ) + 1         !< index closest path value
                 itc = NINT( (mean(trvt) - coda%lotrvt(wtp)) / DCT ) + 1         !< index closest traveltime value
@@ -750,12 +748,13 @@ print*, 'weight ', weight
                 ! here below coda contributions due to direct P- and S-waves are treated separately. In any case, envelopes are
                 ! scaled such that amplitude of scattered direct wave is given by an isotropic source (0.44 for P, 0.60 for S - see
                 ! Boore&Boatwright 1984) at free-surface (~2, see book of Sato&Fehler). SQRT(3) is there because isotropic radiation
-                ! is distributed evenly amongst the three directions of motion.
+                ! is distributed evenly amongst the three directions of motion. Product "envelope * noise" is independent of the
+                ! time-shift due to rupture.
 
                 IF (wtp .eq. 1) THEN
 
                   a0 = (2._r32 * ABS(mean(q)) * mean(mu) * mean(slip)) * 0.44_r32 * 2._r32 * attenuation * ISQRT3 * area
-                  a0 = a0 / maxsheets(wtp)                 !< each sheet contributes equally
+                  a0 = a0 / maxsheets(wtp)                           !< each sheet contributes equally
                   a0 = a0 / coda%pdirect(itc, ipc) * weight(wtp)
 
                   DO it = 1, npts - shift
@@ -773,7 +772,7 @@ print*, 'weight ', weight
                 ELSE
 
                   a0 = (2._r32 * ABS(mean(q)) * mean(mu) * mean(slip)) * 0.60_r32 * 2._r32 * attenuation * ISQRT3 * area
-                  a0 = a0 / maxsheets(wtp)                !< each sheet contributes equally
+                  a0 = a0 / maxsheets(wtp)                            !< each sheet contributes equally
                   a0 = a0 / coda%sdirect(itc, ipc) * weight(wtp)
 
                   DO it = 1, npts - shift
@@ -849,7 +848,7 @@ print*, 'weight ', weight
         CALL destroy_fftw_plan([npts])
 
         ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
-        ! ----------------------------------------------- Hilbert transform --------------------------------------------------------
+        ! ------------------------------------ Hilbert transform, filter, differentiate & stack ------------------------------------
 
 #ifdef PERF
         CALL watch_start(tictoc, COMM)
@@ -857,9 +856,8 @@ print*, 'weight ', weight
 
         ASSOCIATE(model => input%attenuation(1), fmax => input%coda%fmax)
 
-          ! CALL make_iir_plan(ok, 'butter', dt, [model%lcut(band), MIN(model%hcut(band), fmax)], 'pass', 2, zphase = .true.)
-          CALL make_iir_plan(ok, 'butter', dt, [model%lcut(band), 8.], 'pass', 2, zphase = .true.)
-
+          CALL make_iir_plan(ok, 'butter', dt, [model%lcut(band), MIN(model%hcut(band), fmax)], 'pass', 2, zphase = .true.)
+          ! CALL make_iir_plan(ok, 'butter', dt, [model%lcut(band), 8.], 'pass', 2, zphase = .true.)
 
           IF (ok .ne. 0) THEN
             CALL report_error(filter_error(ok))
@@ -873,14 +871,19 @@ print*, 'weight ', weight
             CALL hilbert(iseis(:, ic))
 
             DO it = 1, npts
-              rseis(it, ic) = (rseis(it, ic) - iseis(it, ic)) * dt         !< dt is from convolution
+              rseis(it, ic) = (rseis(it, ic) - iseis(it, ic)) * dt               !< "dt" is from convolution
             ENDDO
 
             rseis(:, ic) = iir(rseis(:, ic), ok)                                 !< filter
 
-            rseis(:, ic) = differentiate(rseis(:, ic), dt)             !< move from displacement to velocity
+            IF (ok .ne. 0) THEN
+              CALL report_error(filter_error(ok))
+              RETURN
+            ENDIF
 
-            CALL interpolate(time, rseis(:, ic), timeseries%sp%time, stack)      !< resampling
+            rseis(:, ic) = differentiate(rseis(:, ic), dt)                       !< move from displacement to velocity
+
+            CALL interpolate(time, rseis(:, ic), timeseries%sp%time, stack)      !< resampling (most likely downsampling)
 
             DO it = 1, SIZE(timeseries%sp%time)
               seis(it, ic) = seis(it, ic) + stack(it)
@@ -936,7 +939,7 @@ print*, 'area ', dutr(ref) * dvtr(ref) * 0.5_r32
 print*, 'scale ', scale, moment
 
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
-      ! ------------------------------------- filter, differentiate, scale & stack -------------------------------------------------
+      ! ---------------------------------------------- scale to desired moment -----------------------------------------------------
 
 #ifdef PERF
       CALL watch_start(tictoc, COMM)
