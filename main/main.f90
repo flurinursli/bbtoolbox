@@ -93,24 +93,37 @@ PROGRAM main
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
   ! ------------------------------------------------------- time stuff -------------------------------------------------------------
 
+  nrecs = SIZE(input%receiver)
+
+  timeseries%lp%dt = 0.5_r32 / 4
+
+  npts = NINT(40._r32 / timeseries%lp%dt) + 1
+
+  ALLOCATE(timeseries%lp%time(npts), timeseries%lp%xyz(npts, 3, nrecs))
+
+  DO i = 1, npts
+    timeseries%lp%time(i) = (i - 1) * timeseries%lp%dt
+  ENDDO
+
+  timeseries%bb%dt = 0.5_r32 / 16 !(input%coda%fmax * 2)
   timeseries%sp%dt = 0.5_r32 / 16 !(input%coda%fmax * 2)
-  timeseries%cd%dt = 0.5_r32 / 16 !(input%coda%fmax * 2) 
+  timeseries%cd%dt = 0.5_r32 / 16 !(input%coda%fmax * 2)
 
   npts = SIZE(timeseries%lp%time)
 
   !npts = NINT(timeseries%lp%time(npts) / timeseries%sp%dt) + 1
   npts = NINT(40._r32 / timeseries%sp%dt) + 1
 
-  nrecs = SIZE(input%receiver)
-
+  ALLOCATE(timeseries%bb%xyz(npts, 3, nrecs))
   ALLOCATE(timeseries%sp%xyz(npts, 3, nrecs))
   ALLOCATE(timeseries%cd%xyz(npts, 3, nrecs))
 
-  ALLOCATE(timeseries%sp%time(npts), timeseries%cd%time(npts))
+  ALLOCATE(timeseries%sp%time(npts), timeseries%cd%time(npts), timeseries%bb%time(npts))
 
   DO i = 1, npts
     timeseries%sp%time(i) = (i - 1) * timeseries%sp%dt
     timeseries%cd%time(i) = (i - 1) * timeseries%cd%dt
+    timeseries%bb%time(i) = (i - 1) * timeseries%bb%dt
   ENDDO
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
@@ -184,10 +197,13 @@ PROGRAM main
 
     CALL correct4impz(ok, iter)
 
-    !CALL add_coda(irec)
-    !CALL stitch(irec)
-
+#ifdef DEBUG
     CALL seis2disk(ok, iter, 'sp')
+#endif
+
+    CALL stitch(ok)
+
+    CALL seis2disk(ok, iter, 'bb')
 
   ENDDO  !< end loop over iterations
 

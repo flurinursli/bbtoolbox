@@ -141,6 +141,8 @@ MODULE m_isochron
           weight(1) = 0                 !< neglect P-waves contribution
       END SELECT
 
+print*, 'weight ', weight
+
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! ---------------------------------------- lookup table free-surface coefficients --------------------------------------------
 
@@ -725,8 +727,8 @@ MODULE m_isochron
                     dl = HYPOT(du, dv)
 
                     ! result of integration (real and imaginary parts)
-                    rtri(it, ic) = rtri(it, ic) + c * REAL(ga + gb, r32) * dl * 0.5_r32 * attenuation
-                    itri(it, ic) = itri(it, ic) + c * AIMAG(ga + gb)     * dl * 0.5_r32 * attenuation
+                    rtri(it, ic) = rtri(it, ic) + c * REAL(ga + gb, r32) * dl * 0.5_r32 * attenuation * weight(wtp)
+                    itri(it, ic) = itri(it, ic) + c * AIMAG(ga + gb)     * dl * 0.5_r32 * attenuation * weight(wtp)
 
                   ENDDO      !< end loop over time (cuts)
 
@@ -754,7 +756,7 @@ MODULE m_isochron
 
                   a0 = (2._r32 * ABS(mean(q)) * mean(mu) * mean(slip)) * 0.44_r32 * 2._r32 * attenuation * ISQRT3 * area
                   a0 = a0 / maxsheets(wtp)                 !< each sheet contributes equally
-                  a0 = a0 / coda%pdirect(itc, ipc)
+                  a0 = a0 / coda%pdirect(itc, ipc) * weight(wtp)
 
                   DO it = 1, npts - shift
                     rtri(it + shift, 1) = rtri(it + shift, 1) + coda%penvelope(it, itc, ipc) * a0 * nseis(it, 1)
@@ -772,7 +774,7 @@ MODULE m_isochron
 
                   a0 = (2._r32 * ABS(mean(q)) * mean(mu) * mean(slip)) * 0.60_r32 * 2._r32 * attenuation * ISQRT3 * area
                   a0 = a0 / maxsheets(wtp)                !< each sheet contributes equally
-                  a0 = a0 / coda%sdirect(itc, ipc)
+                  a0 = a0 / coda%sdirect(itc, ipc) * weight(wtp)
 
                   DO it = 1, npts - shift
                     rtri(it + shift, 1) = rtri(it + shift, 1) + coda%senvelope(it, itc, ipc) * a0 * nseis(it, 1)

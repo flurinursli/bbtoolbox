@@ -2,6 +2,8 @@ MODULE m_timeseries
 
   USE, NON_INTRINSIC :: m_precisions
   USE, NON_INTRINSIC :: m_logfile
+  USE, NON_INTRINSIC :: m_fft_real
+  USE, NON_INTRINSIC :: m_interpolation_r32
   USE, NON_INTRINSIC :: m_strings
   USE, NON_INTRINSIC :: m_toolbox, ONLY: input
   USE, NON_INTRINSIC :: m_userdef, ONLY: parse_usr => read_usr, write_usr
@@ -16,13 +18,16 @@ MODULE m_timeseries
   PRIVATE
 
   PUBLIC :: timeseries
-  PUBLIC :: read_lp, seis2disk, differentiate
+  PUBLIC :: read_lp, seis2disk, differentiate, stitch
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
   INTEGER(i32), PARAMETER :: SW4_HEADER_LINE = 13
+  REAL(r32),    PARAMETER :: PI = 3.14159265358979323846_r64
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+
+  CHARACTER(2) :: m_cp
 
   INTEGER(i32) :: m_iter, m_rcvr
 
@@ -471,7 +476,7 @@ MODULE m_timeseries
       INTEGER(i32),                           INTENT(IN)  :: iter
       CHARACTER(2),                           INTENT(IN)  :: seis
       CHARACTER(:), ALLOCATABLE                           :: fo, extension
-      INTEGER(i32)                                        :: lu, rcvr
+      INTEGER(i32)                                        :: lu, rcvr, ic
       REAL(r32)                                           :: dt
       REAL(r32),    ALLOCATABLE, DIMENSION(:)             :: time, x, y, z
 
@@ -486,6 +491,10 @@ MODULE m_timeseries
       ELSEIF ( (fo .eq. 'txt') .or. (fo .eq. 'TXT') ) THEN
         extension = '.txt'
         wsubr => write_plaintxt
+
+      ELSEIF ( (fo .eq. 'paz') .or. (fo .eq. 'PAZ') ) THEN
+        extension = '.txt'
+        wsubr => write_bafu
 
       ELSEIF ( (fo .eq. 'usr') .or. (fo .eq. 'USR') ) THEN
         extension = '.txt'
@@ -506,90 +515,192 @@ MODULE m_timeseries
       IF (TRIM(input%output%variable) .eq. 'displacement') pfun => integrate
       IF (TRIM(input%output%variable) .eq. 'acceleration') pfun => differentiate
 
-      DO rcvr = 1, SIZE(input%receiver)
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+      ! ------------------------------------------ BAFU format (one component per file) --------------------------------------------
 
-        fo = TRIM(input%output%folder) + '/' + TRIM(input%receiver(rcvr)%file) + '_' + seis + extension
+      IF ( (fo .eq. 'paz') .or. (fo .eq. 'PAZ') ) THEN
 
-        OPEN(newunit = lu, file = fo, status = 'replace', form = 'formatted', access = 'sequential', action = 'write', iostat= ok)
+        DO rcvr = 1, SIZE(input%receiver)
 
-        IF (ok .ne. 0) THEN
-          CALL report_error('seis2disk - ERROR: opening file ' + TRIM(fo) + ' failed with code ' + num2char(ok))
-          RETURN
-        ENDIF
+          DO ic = 1, 3
 
-        IF (seis .eq. 'lp') THEN
-
-          ASSOCIATE(x => timeseries%lp%xyz(:, 1, rcvr), y => timeseries%lp%xyz(:, 2, rcvr), z => timeseries%lp%xyz(:, 3, rcvr),   &
-                    time => timeseries%lp%time, dt => timeseries%lp%dt)
-
-            IF (ASSOCIATED(pfun)) THEN
-              x = pfun(x, dt)
-              y = pfun(y, dt)
-              z = pfun(z, dt)
+            IF (ic .eq. 1) THEN
+              m_cp = 'NS'
+            ELSEIF (ic .eq. 2) THEN
+              m_cp = 'EW'
+            ELSE
+              m_cp = 'UD'
             ENDIF
 
-            m_iter = iter         !< pass values to module aliases
-            m_rcvr = rcvr
+            fo = TRIM(input%output%folder) + '/' + uppercase(input%output%variable(1:3)) + '_' + num2char(iter) + '_' +    &
+                 TRIM(input%receiver(rcvr)%file) + '.' + m_cp + '.' + seis + extension
 
-            CALL wsubr(ok, lu, time, x, y, z)
+            OPEN(newunit = lu, file = fo, status = 'replace', form = 'formatted', access= 'sequential', action= 'write', iostat= ok)
 
-          END ASSOCIATE
-
-        ELSEIF (seis .eq. 'sp') THEN
-
-          ASSOCIATE(x => timeseries%sp%xyz(:, 1, rcvr), y => timeseries%sp%xyz(:, 2, rcvr), z => timeseries%sp%xyz(:, 3, rcvr),   &
-                    time => timeseries%sp%time, dt => timeseries%sp%dt)
-
-            IF (ASSOCIATED(pfun)) THEN
-              x = pfun(x, dt)
-              y = pfun(y, dt)
-              z = pfun(z, dt)
+            IF (ok .ne. 0) THEN
+              CALL report_error('seis2disk - ERROR: opening file ' + TRIM(fo) + ' failed with code ' + num2char(ok))
+              RETURN
             ENDIF
 
-            m_iter = iter         !< pass values to module aliases
-            m_rcvr = rcvr
+            IF (seis .eq. 'lp') THEN
 
-            CALL wsubr(ok, lu, time, x, y, z)
+              ASSOCIATE(x => timeseries%lp%xyz(:, ic, rcvr), time => timeseries%lp%time, dt => timeseries%lp%dt)
 
-          END ASSOCIATE
+                IF (ASSOCIATED(pfun)) x = pfun(x, dt) * 100._r32       !< move from m to cm
 
-        ELSEIF (seis .eq. 'bb') THEN
+                m_iter = iter         !< pass values to module aliases
+                m_rcvr = rcvr
 
-          ASSOCIATE(x => timeseries%bb%xyz(:, 1, rcvr), y => timeseries%bb%xyz(:, 2, rcvr), z => timeseries%bb%xyz(:, 3, rcvr),   &
-                    time => timeseries%bb%time, dt => timeseries%bb%dt)
+                CALL wsubr(ok, lu, time, x, x, x)
 
-            IF (ASSOCIATED(pfun)) THEN
-              x = pfun(x, dt)
-              y = pfun(y, dt)
-              z = pfun(z, dt)
+              END ASSOCIATE
+
+            ELSEIF (seis .eq. 'sp') THEN
+
+              ASSOCIATE(x => timeseries%sp%xyz(:, ic, rcvr), time => timeseries%sp%time, dt => timeseries%sp%dt)
+
+                IF (ASSOCIATED(pfun)) x = pfun(x, dt) * 100._r32        !< move from m to cm
+
+                m_iter = iter         !< pass values to module aliases
+                m_rcvr = rcvr
+
+                CALL wsubr(ok, lu, time, x, x, x)
+
+              END ASSOCIATE
+
+            ELSEIF (seis .eq. 'bb') THEN
+
+              ASSOCIATE(x => timeseries%bb%xyz(:, ic, rcvr), time => timeseries%bb%time, dt => timeseries%bb%dt)
+
+                IF (ASSOCIATED(pfun)) x = pfun(x, dt) * 100._r32        !< move from m to cm
+
+                m_iter = iter         !< pass values to module aliases
+                m_rcvr = rcvr
+
+                CALL wsubr(ok, lu, time, x, x, x)
+
+              END ASSOCIATE
+
+            ELSEIF (seis .eq. 'cd') THEN
+
+              ASSOCIATE(x => timeseries%cd%xyz(:, ic, rcvr), time => timeseries%cd%time, dt => timeseries%cd%dt)
+
+                IF (ASSOCIATED(pfun)) x = pfun(x, dt) * 100._r32        !< move from m to cm
+
+                m_iter = iter         !< pass values to module aliases
+                m_rcvr = rcvr
+
+                CALL wsubr(ok, lu, time, x, x, x)
+
+              END ASSOCIATE
+
             ENDIF
 
-            m_iter = iter         !< pass values to module aliases
-            m_rcvr = rcvr
-
-            CALL wsubr(ok, lu, time, x, y, z)
-
-          END ASSOCIATE
-
-        ELSEIF (seis .eq. 'cd') THEN
-
-          ASSOCIATE(x => timeseries%cd%xyz(:, 1, rcvr), y => timeseries%cd%xyz(:, 2, rcvr), z => timeseries%cd%xyz(:, 3, rcvr),   &
-                    time => timeseries%cd%time, dt => timeseries%cd%dt)
-
-            IF (ASSOCIATED(pfun)) THEN
-              x = pfun(x, dt)
-              y = pfun(y, dt)
-              z = pfun(z, dt)
+            IF (ok .ne. 0) THEN
+              CALL report_error('seis2disk - ERROR: could not write to file ' + fo)
+              RETURN
             ENDIF
 
-            m_iter = iter         !< pass values to module aliases
-            m_rcvr = rcvr
+            CLOSE(lu, IOSTAT = ok)
 
-            CALL wsubr(ok, lu, time, x, y, z)
+            IF (ok .ne. 0) THEN
+              CALL report_error('seis2disk - ERROR: closing file ' + fo + ' returned error code ' + num2char(ok))
+              RETURN
+            ENDIF
 
-          END ASSOCIATE
+          ENDDO      !< end loop over components
 
-        ENDIF
+        ENDDO    !< end loop over receivers
+
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+      ! -------------------------------------- all other formats (three component per file) ----------------------------------------
+
+      ELSE
+
+        DO rcvr = 1, SIZE(input%receiver)
+
+          fo = TRIM(input%output%folder) + '/' + TRIM(input%receiver(rcvr)%file) + '_' + seis + '_' + num2char(iter) + extension
+
+          OPEN(newunit = lu, file = fo, status = 'replace', form = 'formatted', access = 'sequential', action = 'write', iostat= ok)
+
+          IF (ok .ne. 0) THEN
+            CALL report_error('seis2disk - ERROR: opening file ' + TRIM(fo) + ' failed with code ' + num2char(ok))
+            RETURN
+          ENDIF
+
+          IF (seis .eq. 'lp') THEN
+
+            ASSOCIATE(x => timeseries%lp%xyz(:, 1, rcvr), y => timeseries%lp%xyz(:, 2, rcvr), z => timeseries%lp%xyz(:, 3, rcvr),  &
+              time => timeseries%lp%time, dt => timeseries%lp%dt)
+
+              IF (ASSOCIATED(pfun)) THEN
+                x = pfun(x, dt)
+                y = pfun(y, dt)
+                z = pfun(z, dt)
+              ENDIF
+
+              m_iter = iter         !< pass values to module aliases
+              m_rcvr = rcvr
+
+              CALL wsubr(ok, lu, time, x, y, z)
+
+            END ASSOCIATE
+
+          ELSEIF (seis .eq. 'sp') THEN
+
+            ASSOCIATE(x => timeseries%sp%xyz(:, 1, rcvr), y => timeseries%sp%xyz(:, 2, rcvr), z => timeseries%sp%xyz(:, 3, rcvr),  &
+              time => timeseries%sp%time, dt => timeseries%sp%dt)
+
+              IF (ASSOCIATED(pfun)) THEN
+                x = pfun(x, dt)
+                y = pfun(y, dt)
+                z = pfun(z, dt)
+              ENDIF
+
+              m_iter = iter         !< pass values to module aliases
+              m_rcvr = rcvr
+
+              CALL wsubr(ok, lu, time, x, y, z)
+
+            END ASSOCIATE
+
+          ELSEIF (seis .eq. 'bb') THEN
+
+            ASSOCIATE(x => timeseries%bb%xyz(:, 1, rcvr), y => timeseries%bb%xyz(:, 2, rcvr), z => timeseries%bb%xyz(:, 3, rcvr),  &
+                      time => timeseries%bb%time, dt => timeseries%bb%dt)
+
+              IF (ASSOCIATED(pfun)) THEN
+                x = pfun(x, dt)
+                y = pfun(y, dt)
+                z = pfun(z, dt)
+              ENDIF
+
+              m_iter = iter         !< pass values to module aliases
+              m_rcvr = rcvr
+
+              CALL wsubr(ok, lu, time, x, y, z)
+
+            END ASSOCIATE
+
+          ELSEIF (seis .eq. 'cd') THEN
+
+            ASSOCIATE(x => timeseries%cd%xyz(:, 1, rcvr), y => timeseries%cd%xyz(:, 2, rcvr), z => timeseries%cd%xyz(:, 3, rcvr),  &
+              time => timeseries%cd%time, dt => timeseries%cd%dt)
+
+              IF (ASSOCIATED(pfun)) THEN
+                x = pfun(x, dt)
+                y = pfun(y, dt)
+                z = pfun(z, dt)
+              ENDIF
+
+              m_iter = iter         !< pass values to module aliases
+              m_rcvr = rcvr
+
+              CALL wsubr(ok, lu, time, x, y, z)
+
+            END ASSOCIATE
+
+          ENDIF
 
           IF (ok .ne. 0) THEN
             CALL report_error('seis2disk - ERROR: could not write to file ' + fo)
@@ -603,7 +714,9 @@ MODULE m_timeseries
             RETURN
           ENDIF
 
-      ENDDO
+        ENDDO
+
+      ENDIF
 
       pfun => NULL()
 
@@ -773,14 +886,255 @@ MODULE m_timeseries
         ENDIF
       ENDDO
 
-
     END SUBROUTINE write_plaintxt
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
+    SUBROUTINE write_bafu(ok, lu, time, x, y, z)
 
+      ! Purpose:
+      !   to write ASCII output files where timeseries are stored based on the format specifications provided by F.Panzera for the
+      !   BAFU project. On exit, "ok" is not zero if an error occurred.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   02/07/21                  original version
+      !
+
+      INTEGER(i32),                           INTENT(OUT) :: ok
+      INTEGER(i32),                           INTENT(IN)  :: lu
+      REAL(r32),                DIMENSION(:), INTENT(IN)  :: time, x, y, z
+      CHARACTER(5)                                        :: zone
+      CHARACTER(8)                                        :: date
+      CHARACTER(10)                                       :: hms
+      CHARACTER(:), ALLOCATABLE                           :: timestamp, msg
+      INTEGER(i32)                                        :: lino
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      CALL DATE_AND_TIME(date, hms, zone)
+
+      timestamp = date(7:8) + '/' + date(5:6) + '/' + date(1:4) + ' ' + hms(1:2) + ':' + hms(3:4) + ':' + hms(5:10) + ' (UTC ' +  &
+      zone(1:3) + ':' + zone(4:5) + ')'
+
+      timestamp = date(1:4) + date(5:6) + date(7:8) + hms(1:2) + hms(3:4) + hms(5:6)
+
+      WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) 'K-NET and KiK-net strong motion database'
+      IF (ok .ne. 0) THEN
+        CALL report_error('write_sw4 - ERROR: ' + msg)
+        RETURN
+      ENDIF
+
+      WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) 'KiK-net_ID: ' + timestamp
+      IF (ok .ne. 0) THEN
+        CALL report_error('write_sw4 - ERROR: ' + msg)
+        RETURN
+      ENDIF
+
+      WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) 'Event_time_HH:MM:SS: ' + hms(1:2) + hms(3:4) + hms(5:6)
+      IF (ok .ne. 0) THEN
+        CALL report_error('write_sw4 - ERROR: ' + msg)
+        RETURN
+      ENDIF
+
+      WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) 'Station_code: ' + TRIM(input%receiver(m_rcvr)%file)
+      IF (ok .ne. 0) THEN
+        CALL report_error('write_sw4 - ERROR: ' + msg)
+        RETURN
+      ENDIF
+
+      WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) 'Stream: ' + m_cp
+      IF (ok .ne. 0) THEN
+        CALL report_error('write_sw4 - ERROR: ' + msg)
+        RETURN
+      ENDIF
+
+      WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) 'NPTS: ' + num2char(SIZE(time))
+      IF (ok .ne. 0) THEN
+        CALL report_error('write_sw4 - ERROR: ' + msg)
+        RETURN
+      ENDIF
+
+      WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) 'Sample_rate_(s): ' + num2char(time(2) - time(1))
+      IF (ok .ne. 0) THEN
+        CALL report_error('write_sw4 - ERROR: ' + msg)
+        RETURN
+      ENDIF
+
+      msg = 'cm'
+
+      IF (input%output%variable .eq. 'velocity') THEN
+        msg = msg + '/s'
+      ELSEIF (input%output%variable .eq. 'acceleration') THEN
+        msg = msg + '/s^2'
+      ENDIF
+
+      WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) 'Units: ' + msg
+      IF (ok .ne. 0) THEN
+        CALL report_error('write_sw4 - ERROR: ' + msg)
+        RETURN
+      ENDIF
+
+      WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) 'Filter_type: BUTTERWORTH'
+      IF (ok .ne. 0) THEN
+        CALL report_error('write_sw4 - ERROR: ' + msg)
+        RETURN
+      ENDIF
+
+      WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) 'Filter order: 2'
+      IF (ok .ne. 0) THEN
+        CALL report_error('write_sw4 - ERROR: ' + msg)
+        RETURN
+      ENDIF
+
+      WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) 'Low_cut_frequency_(Hz): 0'
+      IF (ok .ne. 0) THEN
+        CALL report_error('write_sw4 - ERROR: ' + msg)
+        RETURN
+      ENDIF
+
+      WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) 'High_cut_frequency_(Hz): ' + num2char(input%coda%fmax, precision=1, notation='f')
+      IF (ok .ne. 0) THEN
+        CALL report_error('write_sw4 - ERROR: ' + msg)
+        RETURN
+      ENDIF
+
+      WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) 'Trigger: Normal_triggered'
+      IF (ok .ne. 0) THEN
+        CALL report_error('write_sw4 - ERROR: ' + msg)
+        RETURN
+      ENDIF
+
+      DO lino = 1, SIZE(time)
+#ifdef DOUBLE_PREC
+        WRITE(lu, '(4(ES23.13))', IOSTAT = ok, IOMSG = msg) x(lino)
+#else
+        WRITE(lu, '(4(ES15.5))', IOSTAT = ok, IOMSG = msg) x(lino)
+#endif
+        IF (ok .ne. 0) THEN
+          CALL report_error('write_sw4 - ERROR: ' + msg)
+          RETURN
+        ENDIF
+      ENDDO
+
+    END SUBROUTINE write_bafu
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    SUBROUTINE stitch(ok)
+
+      ! Purpose:
+      !   to merge long- and short-period timeseries for receiver "recvr" together. On exit, "ok" is not zero if an error occurred.
+      !   The subroutine follows the procedure outlined in Mai&Beroza (2003) based on a couple of matched filters (Hann windows)
+      !   whose characteristics are controlled by "input%coda%matching" and "input%coda%bandwidth".
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      INTEGER(i32),                           INTENT(OUT) :: ok
+      CHARACTER(:), ALLOCATABLE                           :: fo
+      INTEGER(i32)                                        :: i, ic, rec, npts, l, lu, i0, n
+      COMPLEX(r32), ALLOCATABLE, DIMENSION(:)             :: lspectrum, sspectrum
+      REAL(r32)                                           :: df
+      REAL(r32),    ALLOCATABLE, DIMENSION(:)             :: lpres, freq, win
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      CALL setup_interpolation('linear', 'zero', ok)
+
+      IF (ok .ne. 0) RETURN
+
+      ASSOCIATE(lp => timeseries%lp%xyz, sp => timeseries%sp%xyz, ptime => timeseries%lp%time, stime => timeseries%sp%time,   &
+                bb => timeseries%bb%xyz)
+
+        npts = SIZE(stime, 1)
+
+        CALL make_fftw_plan([npts])
+
+        ALLOCATE(lpres(npts))
+        ALLOCATE(lspectrum(npts/2 + 1), sspectrum(npts/2 + 1), freq(npts/2 + 1), win(npts/2 + 1))
+
+        df = 1._r32 / (timeseries%sp%dt * npts)
+
+        ! frequency vector
+        DO i = 1, npts/2 + 1
+          freq(i) = (i - 1) * df
+        ENDDO
+
+        ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+        ! ----------------------------------------------- build matched filter -----------------------------------------------------
+
+        n = NINT(2._r32 * input%coda%bandwidth / df) + 1
+        l = ((n - 1) / 2) + 1                                 !< size (in points) of rising part of window
+
+        i0 = NINT(input%coda%matching / df) + 1
+
+        DO i = 1, i0 - (l / 2) - 1
+          win(i) = 0._r32
+        ENDDO
+
+        DO i = i0 - (l / 2), i0 - (l / 2) + (l - 1)
+          win(i) = SIN(PI * (i - i0 + (l / 2)) / (n - 1))**2
+        ENDDO
+
+        DO i = i0 - (l / 2) + (l - 1) + 1, npts / 2 + 1
+          win(i) = 1._r32
+        ENDDO
+
+        DO rec = 1, SIZE(input%receiver)
+          DO ic = 1, 3
+
+            CALL interpolate(ptime, lp(:, ic, rec), stime, lpres)            !< resample long-period timeseries
+
+            CALL fft(lpres, lspectrum)
+            CALL fft(sp(:, ic, rec), sspectrum)
+
+            DO i = 1, npts/2 + 1
+              sspectrum(i) = lspectrum(i) * (1._r32 - win(i)) + sspectrum(i) * win(i)      !< spectrum hybrid timeseries
+            ENDDO
+
+            CALL ifft(bb(:, ic, rec), sspectrum)
+
+          ENDDO
+        ENDDO
+
+        CALL destroy_fftw_plan([npts])
+
+      END ASSOCIATE
+
+#ifdef DEBUG
+
+      fo = 'matched.txt'
+
+      OPEN(newunit = lu, file = fo, status = 'replace', form = 'formatted', access = 'sequential', action = 'write', iostat= ok)
+
+      IF (ok .ne. 0) THEN
+        CALL report_error('Error while opening file' + TRIM(fo))
+        RETURN
+      ENDIF
+
+      DO i = 1, SIZE(freq)
+        WRITE(lu, *) freq(i), win(i)
+      ENDDO
+
+      CLOSE(lu, iostat = ok)
+
+      IF (ok .ne. 0) THEN
+        CALL report_error('Error while closing file ' + fo)
+        RETURN
+      ENDIF
+
+#endif
+
+    END SUBROUTINE stitch
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
