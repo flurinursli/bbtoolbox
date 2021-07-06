@@ -16,7 +16,7 @@ MODULE m_toolbox
   PRIVATE
 
   PUBLIC :: input
-  PUBLIC :: read_input_file, missing_arg, watch_start, watch_stop, geo2utm, split_task
+  PUBLIC :: read_input_file, missing_arg, watch_start, watch_stop, geo2utm, utm2geo, split_task
 
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
@@ -26,6 +26,7 @@ MODULE m_toolbox
   END INTERFACE assert
 
   INTERFACE
+
     SUBROUTINE geo2utm(long, lat, long_0, lat_0, easting, northing) bind(C, name="fun_c")
       USE, INTRINSIC     :: iso_c_binding
       USE, NON_INTRINSIC :: m_precisions
@@ -33,6 +34,15 @@ MODULE m_toolbox
       REAL(c_r32), VALUE       :: long, lat, long_0, lat_0
       REAL(c_r32), INTENT(OUT) :: easting, northing
     END SUBROUTINE
+
+    SUBROUTINE utm2geo(easting, northing, long_0, lat_0, long, lat) bind(C, name="fun_r")
+      USE, INTRINSIC     :: iso_c_binding
+      USE, NON_INTRINSIC :: m_precisions
+      IMPLICIT none
+      REAL(c_r32), VALUE       :: easting, northing, long_0, lat_0
+      REAL(c_r32), INTENT(OUT) :: long, lat
+    END SUBROUTINE
+
   END INTERFACE
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
@@ -962,6 +972,8 @@ MODULE m_toolbox
 
       CALL update_log(num2char('Output folder HF seismograms', width=30, fill='.') +  &
                       num2char(TRIM(input%output%folder), width=79, justify = 'c') + '|')
+      CALL update_log(num2char('Format HF seismograms', width=30, fill='.') +  &
+                      num2char(TRIM(input%output%format), width=79, justify='c') + '|', blankline = .false.)
       CALL update_log(num2char('Variable HF seismograms', width=30, fill='.') +  &
                       num2char(TRIM(input%output%variable), width=79, justify='c') + '|', blankline = .false.)
 
@@ -969,9 +981,9 @@ MODULE m_toolbox
                       num2char('Matching fr.', width=15, justify='r') + '|' + num2char('Bandwidth', width=15, justify='r') + '|' + &
                       num2char('Seed', width=15, justify='r') + '|' + num2char('Samples', width=15, justify='r') + '|')
       CALL update_log(num2char('', width=30) + &
-                      num2char(input%coda%fmax, notation='f', precision=3, width=15, justify='r')      + '|' +  &
-                      num2char(input%coda%matching, notation='f', precision=3, width=15, justify='r')  + '|' +  &
-                      num2char(input%coda%bandwidth, notation='f', precision=3, width=15, justify='r') + '|' +  &
+                      num2char(input%coda%fmax, notation='f', precision=2, width=15, justify='r')      + '|' +  &
+                      num2char(input%coda%matching, notation='f', precision=2, width=15, justify='r')  + '|' +  &
+                      num2char(input%coda%bandwidth, notation='f', precision=2, width=15, justify='r') + '|' +  &
                       num2char(input%coda%seed, width=15, justify='r')                                 + '|' +  &
                       num2char(input%coda%samples, width=15, justify='r')                              + '|', blankline = .false.)
 
@@ -1008,14 +1020,16 @@ MODULE m_toolbox
                           num2char('z', width=15, justify='r') + '|' +  &
                           num2char('Strike', width=15, justify='r') + '|' +  &
                           num2char('Dip', width=15, justify='r')    + '|' +  &
-                          num2char('Rake', width=15, justify='r')    + '|')
+                          num2char('Rake', width=15, justify='r')   + '|' +  &
+                          num2char('Moment', width=15, justify='r') + '|')
           CALL update_log(num2char('', width=30) + &
                           num2char(input%source%lon, notation='f', width=15, precision=3, justify='r') + '|' + &
                           num2char(input%source%lat, notation='f', width=15, precision=3, justify='r') + '|' + &
                           num2char(input%source%z, notation='f', width=15, precision=3, justify='r') + '|' + &
                           num2char(input%source%strike, notation='f', width=15, precision=1, justify='r') + '|' + &
                           num2char(input%source%dip, notation='f', width=15, precision=1, justify='r')    + '|' + &
-                          num2char(input%source%rake, notation='f', width=15, precision=1, justify='r')   + '|',  blankline=.false.)
+                          num2char(input%source%rake, notation='f', width=15, precision=1, justify='r')   + '|' + &
+                          num2char(input%source%m0, notation='s', width=15, precision=3, justify='r')     + '|', blankline=.false.)
         ELSE
           CALL update_log(num2char('Source parameters', width=30, fill='.') +     &
                           num2char('x', width=15, justify='r') + '|' +  &
@@ -1023,41 +1037,43 @@ MODULE m_toolbox
                           num2char('z', width=15, justify='r') + '|' +  &
                           num2char('Strike', width=15, justify='r') + '|' +  &
                           num2char('Dip', width=15, justify='r')    + '|' +  &
-                          num2char('Rake', width=15, justify='r')    + '|')
+                          num2char('Rake', width=15, justify='r')   + '|' +  &
+                          num2char('Moment', width=15, justify='r') + '|')
           CALL update_log(num2char('', width=30) + &
                           num2char(input%source%x, notation='f', width=15, precision=1, justify='r') + '|' + &
                           num2char(input%source%y, notation='f', width=15, precision=1, justify='r') + '|' + &
                           num2char(input%source%z, notation='f', width=15, precision=1, justify='r') + '|' + &
                           num2char(input%source%strike, notation='f', width=15, precision=1, justify='r') + '|' + &
                           num2char(input%source%dip, notation='f', width=15, precision=1, justify='r')    + '|' + &
-                          num2char(input%source%rake, notation='f', width=15, precision=1, justify='r')   + '|',  blankline=.false.)
+                          num2char(input%source%rake, notation='f', width=15, precision=1, justify='r')   + '|' + &
+                          num2char(input%source%m0, notation='s', width=15, precision=3, justify='r')     + '|', blankline=.false.)
         ENDIF
         CALL update_log(num2char('(continued)', width=30, fill='.', justify='c') +  &
-                        num2char('Moment', width=15, justify='r')     + '|' +  &
                         num2char('Type', width=15, justify='r') + '|' +  &
                         num2char('Frequency', width=15, justify='r') + '|', blankline = .false.)
         CALL update_log(num2char('', width=30) +  &
-                        num2char(input%source%m0, notation='s', width=15, precision=3, justify='r')     + '|' + &
                         num2char(input%source%type, width=15, justify='r') + '|' + &
-                        num2char(input%source%freq, notation='f', width=15, precision=3, justify='r') + '|', blankline = .false.)
+                        num2char(input%source%freq, notation='f', width=15, precision=2, justify='r') + '|', blankline = .false.)
       ELSE
         CALL update_log(num2char('Rupture file', width=30, fill='.')   +   &
                         num2char(TRIM(input%source%file), width=79, justify='c') + '|')
         CALL update_log(num2char('Rupture parameters', width=30, fill='.')  + &
                         ! num2char('Type', width=15, justify='r') + '|' + &
                         ! num2char('Frequency', width=15, justify='r') + '|' + &
-                        num2char('Roughness', width=15, justify='r') + '|', blankline = .false.)
+                        num2char('Roughness', width=15, justify='r') + '|' +   &
+                        num2char('SaveToDisk', width=15, justify='r') + '|', blankline = .false.)
         IF (input%source%add_roughness) THEN
           CALL update_log(num2char('', width=30) +  &
                           ! num2char(input%source%type, width=15, justify='r') + '|' + &
                           ! num2char(input%source%freq, width=15, notation='f', precision=3, justify='r') + '|' + &
-                          num2char(input%source%roughness, width=15, notation='f', precision=1, justify='r') + '|',  &
-                          blankline = .false.)
+                          num2char(input%source%roughness, width=15, notation='f', precision=1, justify='r') + '|' +  &
+                          num2char(input%source%save2disk, width=15, justify='r') + '|', blankline=.false.)
         ELSE
           CALL update_log(num2char('', width=30) +  &
                           ! num2char(input%source%type, width=15, justify='r') + '|' + &
                           ! num2char(input%source%freq, width=15, notation='f', precision=3, justify='r') + '|' + &
-                          num2char('None', width=15, justify='r') + '|', blankline = .false.)
+                          num2char('None', width=15, justify='r')                 + '|' +   &
+                          num2char(input%source%save2disk, width=15, justify='r') + '|', blankline=.false.)
         ENDIF
         IF (input%source%add_rik) THEN
           CALL update_log(num2char('RIK parameters', width=30, fill='.') +  &
@@ -1078,16 +1094,22 @@ MODULE m_toolbox
 
       DO i = 1, SIZE(input%velocity)
         CALL update_log(num2char('Velocity Model ' + num2char(i), width=30, fill='.') +   &
-                        num2char('Vp', width=15, justify='r') + '|' + &
-                        num2char('Vs', width=15, justify='r') + '|' + &
-                        num2char('Rho', width=15, justify='r') + '|' + &
-                        num2char('Depth', width=15, justify='r') + '|')
+                        num2char('Vp', width=15, justify='r')       + '|' + &
+                        num2char('Vp Grad', width=15, justify='r')  + '|' + &
+                        num2char('Vs', width=15, justify='r')       + '|' + &
+                        num2char('Vs Grad', width=15, justify='r')  + '|' + &
+                        num2char('Rho', width=15, justify='r')      + '|' + &
+                        num2char('Rho Grad', width=15, justify='r') + '|' + &
+                        num2char('Depth', width=15, justify='r')    + '|')
         DO j = 1, SIZE(input%velocity(i)%vp)
           CALL update_log(num2char('', width=30)  +  &
-                          num2char(input%velocity(i)%vp(j), width=15, notation='f', precision=1, justify='r') + '|' + &
-                          num2char(input%velocity(i)%vs(j), width=15, notation='f', precision=1, justify='r') + '|' + &
-                          num2char(input%velocity(i)%rho(j), width=15, notation='f', precision=1, justify='r') + '|' + &
-                          num2char(input%velocity(i)%depth(j), width=15, notation='f', precision=1, justify='r') + '|',  &
+                          num2char(input%velocity(i)%vp(j), width=15, notation='f', precision=1, justify='r')      + '|' + &
+                          num2char(input%velocity(i)%vpgrad(j), width=15, notation='f', precision=1, justify='r')  + '|' + &
+                          num2char(input%velocity(i)%vs(j), width=15, notation='f', precision=1, justify='r')      + '|' + &
+                          num2char(input%velocity(i)%vsgrad(j), width=15, notation='f', precision=1, justify='r')  + '|' + &
+                          num2char(input%velocity(i)%rho(j), width=15, notation='f', precision=1, justify='r')     + '|' + &
+                          num2char(input%velocity(i)%rhograd(j), width=15, notation='f', precision=1, justify='r') + '|' + &
+                          num2char(input%velocity(i)%depth(j), width=15, notation='f', precision=1, justify='r')   + '|',  &
                           blankline = .false.)
         ENDDO
       ENDDO
@@ -1301,7 +1323,7 @@ MODULE m_toolbox
       CALL mpi_bcast(input%receiver(:)%file, n*32, mpi_character, 0, mpi_comm_world, ierr)
 
       string = input%source%file // input%source%type // input%input%folder // input%input%variable // input%input%format //  &
-               input%coda%model // input%output%folder // input%output%variable // input%source%save2disk
+               input%coda%model // input%output%folder // input%output%variable // input%output%format // input%source%save2disk
 
       CALL mpi_bcast(string, LEN(string), mpi_character, 0, mpi_comm_world, ierr)
 
@@ -1313,6 +1335,7 @@ MODULE m_toolbox
       input%coda%model = string(n:n+4-1); n = n + 4
       input%output%folder = string(n:n+256-1); n = n + 256
       input%output%variable = string(n:n+16-1); n = n + 16
+      input%output%format = string(n:n+8-1); n = n + 8
       input%source%save2disk = string(n:n+1-1)
 
       lg = [input%source%is_point, input%source%add_roughness, input%source%add_rik, input%coda%add_coherency]

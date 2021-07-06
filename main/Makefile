@@ -25,7 +25,7 @@ endif
 m_toolbox.o : $(CPP_OBJ)
 
 # list C++ objects
-CPP_OBJ = geo2utm.o
+CPP_OBJ = geo2utm.o utm2geo.o
 
 # compile C++ objects
 $(CPP_OBJ) : %.o : %.cpp

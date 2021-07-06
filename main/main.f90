@@ -171,8 +171,7 @@ PROGRAM main
                                                    num2char(vel, width=15, justify='r')  + '|' +  &
                                                    num2char(band, width=15, justify='r') + '|', blankline=.false.)
 
-          ! create mesh for current plane, velocity model and frequency band
-          CALL meshing(pl, vel, band)
+          CALL meshing(pl, vel, band)             !< mesh is frequency-(i,e. "band") and velocity-dependent
 
           ! add rik rupture model
           IF (input%source%add_rik) CALL rik(ok, pl, vel, iter)
@@ -182,7 +181,7 @@ PROGRAM main
 #endif
 
           DO rec = 1, SIZE(input%receiver)
-            CALL solve_isochron_integral(ok, rec, band, pl, vel, iter)
+            ! CALL solve_isochron_integral(ok, rec, band, pl, vel, iter)
           ENDDO
 
           ! maxband = band        !< highest active frequency band
@@ -190,6 +189,8 @@ PROGRAM main
         ENDDO     !< end loop over frequency bands
 
         ! CALL correct4impz(ok, pl, maxband)         !< correct amplitude due to filter bank
+
+        IF (input%source%save2disk .eq. 'y') CALL write_srf(ok, pl, vel, iter)
 
       ENDDO    !< end loop over fault planes
 

@@ -25,7 +25,7 @@ MODULE m_isochron
 
   PRIVATE
 
-  PUBLIC :: solve_isochron_integral, node2disk, correct4impz
+  PUBLIC :: solve_isochron_integral, node2disk, correct4impz, write_srf
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -325,7 +325,8 @@ print*, 'weight ', weight
 
         !$omp private(icut, g31, g21, g23, ga, gb, tau31, tau21, tau23, dtau, c, t, du, dv, p13, p12, p32, dl)  &
 
-        !$omp reduction(+: m0, rseis, iseis, ostopwatch, ncuts, tricross, noslip, ctri)
+        !$omp reduction(+: m0, rseis, iseis, ostopwatch, ncuts, tricross, noslip, ctri)   &
+        !$omp collapse(2)
         DO j = 1, nvtr(ref)
           DO i = 1, totnutr
 
@@ -1445,7 +1446,7 @@ print*, 'scale ', scale, moment
               mu(icr) = rho * beta**2
             ENDDO
 
-            m0 = m0 + mean(mu * slip)
+            m0 = m0 + mean(mu) * mean(slip)
 
           ENDDO
         ENDDO
@@ -2302,5 +2303,178 @@ print*, 'ok coda ', ok
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
+    SUBROUTINE write_srf(ok, pl, vel, iter)
+
+      INTEGER(i32),                           INTENT(OUT) :: ok
+      INTEGER(i32),                           INTENT(IN)  :: pl, vel, iter
+      CHARACTER(:), ALLOCATABLE                           :: fo
+      INTEGER(i32)                                        :: lu, seed, npts, it, ref, totnutr, i, j, icr, offset, nt
+      INTEGER(i32),              DIMENSION(3)             :: iuc, ivc
+      REAL(r32)                                           :: m0, dt, area, strike, dip
+      REAL(r32),                 DIMENSION(3)             :: slip, u, v, w, x, y, z, nrl, rake, rupture, beta, rho, lon, lat
+      REAL(r32),    ALLOCATABLE, DIMENSION(:)             :: time, mrf
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      fo = 'srf_' + 'vel_' + num2char(vel) + '_' + 'iter_' + num2char(iter) + '.bin'
+
+      OPEN(newunit = lu, file = fo, status = 'replace', form = 'unformatted', access = 'stream', action = 'write', IOSTAT = ok)
+
+      IF (ok .ne. 0) THEN
+        CALL report_error('Error while opening file' + TRIM(fo))
+        RETURN
+      ENDIF
+
+      IF (pl .eq. 1) THEN
+        WRITE(lu, POS=1) '2.0'                         !< 3 bytes
+        ! WRITE(lu)        'PLANE', SIZE(plane)          !< 5 + 4 bytes
+      ENDIF
+
+      ! WRITE(lu, POS=3 + 9 + 44*(pl - 1) + 1) lon, lat, nstk, ndip, len, width, stk, dip, dtop, shyp, dhyp       !< 11 * 4 bytes
+
+      INQUIRE(lu, POS=offset)        !< get position of where to write next item
+
+      WRITE(lu, POS=offset) 'POINTS', SUM(nvtr * (2*nutr - 1))         !< total subfaults for current plane (all refinements)
+
+      m0 = 0._r32
+
+      ! select function to compute rupture at grid nodes, depending whether we are dealing with extended- or point-sources
+      nodefun => rik_at_nodes
+
+      IF (input%source%is_point) nodefun => ptrsrc_at_nodes
+
+      ! set "seed" such that random numbers depend on fault plane number and iteration
+      seed = input%source%seed + (iter - 1) * SIZE(plane) + pl
+
+      ! loop over mesh refinements
+      DO ref = 1, SIZE(nvtr)
+
+        dt = timeseries%sp%dt
+
+        npts = SIZE(timeseries%sp%time)
+
+        ALLOCATE(time(npts), mrf(npts))
+
+        DO it = 1, npts
+          time(it) = (it - 1) * dt
+        ENDDO
+
+        ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+        ! ------------------------------------------ define RIK model on mesh nodes ------------------------------------------------
+
+        ALLOCATE(nodes(nugr(ref), nvgr(ref)))
+
+        CALL nodefun(ref, pl, vel, seed)                !< define slip, rupture time and rise time on mesh nodes
+
+        totnutr = 2 * nutr(ref) - 1                     !< total triangles in a row
+
+        ! generate fault plane roughness
+        CALL fault_roughness(ok, ref, pl, iter)
+
+        area = dutr(ref) * dvtr(ref) * 0.5_r32 * 1.E+04_r32          !< triangle area in cm^2
+
+        INQUIRE(lu, POS=offset)
+
+        !$omp parallel do default(shared) private(i, j, iuc, ivc, slip, u, v, w, x, y, z, nrl, strike, dip, rake, icr, rupture)  &
+        !$omp private(beta, rho, mrf, lon, lat, nt) reduction(+: m0) collapse(2)
+        DO j = 1, nvtr(ref)
+          DO i = 1, totnutr
+
+            ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+            ! ---------------------------------------- check corners have non-zero slip --------------------------------------------
+
+            CALL cornr(j, i, iuc, ivc)        !< corner indices for current triangle
+
+            DO icr = 1, 3
+              slip(icr) = SUM(nodes(iuc(icr), ivc(icr))%slip) * 100._r32          !< slip in cm
+            ENDDO
+
+            CALL cornr2uv(iuc, ivc, ref, u, v)        !< on-fault coordinates
+
+            DO icr = 1, 3
+              w(icr) = roughness(iuc(icr), ivc(icr))      !< add roughness (always zero for point-sources)
+            ENDDO
+
+            CALL uvw2xyz(pl, u, v, w, x, y, z)            !< get cartesian coordinates (m)
+
+            DO icr = 1, 3
+              z(icr) = MAX(MIN_DEPTH, z(icr))             !< make sure we never breach the free-surface (clip roughness)
+            ENDDO
+
+            CALL normal2tri(x, y, z, nrl)
+
+            ! always have normal pointing upward (i.e. negative z direction)
+            IF (MOD(i + (j-1)*totnutr, 2) == 0) nrl(:) = -nrl(:)
+
+            strike = plane(pl)%strike * DEG_TO_RAD
+            dip    = plane(pl)%dip    * DEG_TO_RAD
+
+            CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%rake, u, v, rake)
+
+            CALL perturbed_mechanism(strike, dip, rake, nrl)            !< get new strike, dip, rake (all values in radians)
+
+            ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+            ! ----------------------------------------------- corner parameters ----------------------------------------------------
+
+            DO icr = 1, 3
+              rupture(icr) = MINVAL(nodes(iuc(icr), ivc(icr))%rupture)
+              beta(icr)    = vinterp(input%velocity(vel)%depth, input%velocity(vel)%vs, input%velocity(vel)%vsgrad, z(icr))
+              rho(icr)     = vinterp(input%velocity(vel)%depth, input%velocity(vel)%rho, input%velocity(vel)%rhograd, z(icr))
+            ENDDO
+
+            ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+            ! ---------------------------------------- moment rate function of triangle --------------------------------------------
+
+            nt = npts
+
+            IF (input%source%is_point) THEN
+              mrf = dbrune(time, input%source%freq)
+            ELSE
+              CALL mrf_rik(iuc, ivc, dt, rupture, mrf, nt)     !< moment rate function (averaged over corners)
+            ENDIF
+
+            CALL normalize(mrf, dt)
+
+            DO icr = 1, 3
+              CALL utm2geo(lon(icr), lat(icr), input%origin%lon, input%origin%lat, y(icr), x(icr))     !< from UTM to geo coordinates
+            ENDDO
+
+            ! all values are referred to triangle (subfault) center. Note that only one thread at a time will first find the next
+            ! position in the file, then append a first point block and then a second one. The following thread will be asked to
+            ! find the next position in the file and then write. This implies that subfaults will be written in any order.
+            !$omp critical
+            INQUIRE(lu, POS=offset)
+
+            WRITE(lu, POS=offset) mean(lon), mean(lat), mean(z)*1.E-03_r32, strike, dip, area, mean(rupture), dt,    &
+                                  mean(beta)*1.E+03_r32, mean(rho)*1.E-02_r32, mean(rake), mean(slip)*1.E+02_r32,    &
+                                  nt, 0._r32, 0, 0._r32, 0
+
+            DO it = 1, nt
+              WRITE(lu) mrf(it)             !< append MRF values
+            ENDDO
+            !$omp end critical
+
+          ENDDO
+        ENDDO
+        !$omp end parallel do
+
+        CALL dealloc_nodes()
+
+        DEALLOCATE(time, mrf)
+
+      ENDDO        !< end loop over mesh refinements
+
+      CLOSE(lu, iostat = ok)
+
+      IF (ok .ne. 0) THEN
+        CALL report_error('Error while closing file ' + fo)
+        RETURN
+      ENDIF
+
+    END SUBROUTINE write_srf
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
 END MODULE m_isochron

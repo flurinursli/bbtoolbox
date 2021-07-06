@@ -682,7 +682,7 @@ MODULE m_rik
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE mrf_rik(iuc, ivc, dt, tau, mrf)
+    SUBROUTINE mrf_rik(iuc, ivc, dt, tau, mrf, nt)
 
       ! Purpose:
       !   to build the moment rate function for a triangle whose corner indices are "iuc" and "ivc", each characterized by minimum
@@ -694,12 +694,13 @@ MODULE m_rik
       !   08/03/21                  original version
       !
 
-      INTEGER(i32), DIMENSION(3), INTENT(IN)  :: iuc, ivc
-      REAL(r32),                  INTENT(IN)  :: dt
-      REAL(r32),    DIMENSION(3), INTENT(IN)  :: tau
-      REAL(r32),    DIMENSION(:), INTENT(OUT) :: mrf
-      INTEGER(i32)                            :: icr, src, it, it1, it2, iu, iv, nsubs, npts, imax
-      REAL(r32)                               :: slip, povr, trapz, rupture, time, rise, t, t0
+      INTEGER(i32), DIMENSION(3),           INTENT(IN)  :: iuc, ivc
+      REAL(r32),                            INTENT(IN)  :: dt
+      REAL(r32),    DIMENSION(3),           INTENT(IN)  :: tau
+      REAL(r32),    DIMENSION(:),           INTENT(OUT) :: mrf
+      INTEGER(i32),               OPTIONAL, INTENT(OUT) :: nt
+      INTEGER(i32)                                      :: icr, src, it, it1, it2, iu, iv, nsubs, npts, imax
+      REAL(r32)                                         :: slip, povr, trapz, rupture, time, rise, t, t0
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
@@ -727,7 +728,7 @@ MODULE m_rik
           it1 = (rupture / dt) + 1
           it2 = MAX(npts, it1 + NINT(5._r32 * rise / dt) + 1)      !< compute up to 5*rise but stay within size of mrf
 
-          imax = MAX(imax, it2)     !< keep track of max time sample
+          imax = MAX(imax, it2)                                    !< keep track of max time sample
 
           povr = PI / rise
 
@@ -742,16 +743,12 @@ MODULE m_rik
 
       ENDDO
 
+      IF (PRESENT(nt)) nt = imax
+
     END SUBROUTINE mrf_rik
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
-
-
-    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
-    !===============================================================================================================================
-    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
-
 
 END MODULE m_rik
