@@ -686,7 +686,8 @@ MODULE m_rik
 
       ! Purpose:
       !   to build the moment rate function for a triangle whose corner indices are "iuc" and "ivc", each characterized by minimum
-      !   rupture time "tau" and time-step "dt".
+      !   rupture time "tau" and time-step "dt". The moment rate function is given by stacking the contribution of each corner (i.e.
+      !   the subsources affecting each corner) starting at time "tau" (which is corner-dependent).
       !
       ! Revisions:
       !     Date                    Description of change
@@ -725,7 +726,8 @@ MODULE m_rik
           rupture = nodes(iu, iv)%rupture(src) - tau(icr)
           rise    = nodes(iu, iv)%rise(src)
 
-          it1 = (rupture / dt) + 1
+          it1 = CEILING(rupture / dt) + 1
+
           it2 = MAX(npts, it1 + NINT(5._r32 * rise / dt) + 1)      !< compute up to 5*rise but stay within size of mrf
 
           imax = MAX(imax, it2)                                    !< keep track of max time sample

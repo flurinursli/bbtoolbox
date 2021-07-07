@@ -77,7 +77,7 @@ MODULE m_toolbox
   TYPE :: io
     CHARACTER(8)   :: format
     CHARACTER(16)  :: variable
-    CHARACTER(256) :: folder
+    CHARACTER(256) :: folder, amplification
   END TYPE io
 
   TYPE :: hf
@@ -509,6 +509,15 @@ MODULE m_toolbox
       IF (ok .ne. 0) RETURN
 
       input%input%variable = TRIM(str)     !< variable
+
+      CALL parse(ok, str, lu, 'amplification', ["'", "'"], 'input', com = '#')
+      CALL missing_arg(ok, .false., '')
+
+      IF (ok .ne. 0) RETURN
+
+      input%input%amplification = 'none'
+
+      IF (.not.is_empty(str)) input%input%amplification = TRIM(str)      !< amplification
 
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! -------------------------------------------------- output files ------------------------------------------------------------
@@ -970,6 +979,9 @@ MODULE m_toolbox
       CALL update_log(num2char('Variable LF seismograms', width=30, fill='.') +  &
                       num2char(TRIM(input%input%variable), width=79, justify='c') + '|', blankline = .false.)
 
+      CALL update_log(num2char('Input folder amplification', width=30, fill='.') +  &
+                      num2char(TRIM(input%input%amplification), width=79, justify = 'c') + '|')
+
       CALL update_log(num2char('Output folder HF seismograms', width=30, fill='.') +  &
                       num2char(TRIM(input%output%folder), width=79, justify = 'c') + '|')
       CALL update_log(num2char('Format HF seismograms', width=30, fill='.') +  &
@@ -1323,7 +1335,8 @@ MODULE m_toolbox
       CALL mpi_bcast(input%receiver(:)%file, n*32, mpi_character, 0, mpi_comm_world, ierr)
 
       string = input%source%file // input%source%type // input%input%folder // input%input%variable // input%input%format //  &
-               input%coda%model // input%output%folder // input%output%variable // input%output%format // input%source%save2disk
+               input%input%amplification // input%coda%model // input%output%folder // input%output%variable //   &
+               input%output%format // input%source%save2disk
 
       CALL mpi_bcast(string, LEN(string), mpi_character, 0, mpi_comm_world, ierr)
 
@@ -1332,11 +1345,12 @@ MODULE m_toolbox
       input%input%folder = string(n:n+256-1); n = n + 256
       input%input%variable = string(n:n+16-1); n = n + 16
       input%input%format = string(n:n+8-1); n = n + 8
+      input%input%amplification = string(n:n+256-1); n = n + 256
       input%coda%model = string(n:n+4-1); n = n + 4
       input%output%folder = string(n:n+256-1); n = n + 256
       input%output%variable = string(n:n+16-1); n = n + 16
       input%output%format = string(n:n+8-1); n = n + 8
-      input%source%save2disk = string(n:n+1-1)
+      input%source%save2disk = string(n:n+1-1); n = n + 1
 
       lg = [input%source%is_point, input%source%add_roughness, input%source%add_rik, input%coda%add_coherency]
 

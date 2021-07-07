@@ -29,6 +29,12 @@ MODULE m_isochron
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
+  INTERFACE assert
+    MODULE PROCEDURE assert_i32, assert_r32
+  END INTERFACE assert
+
+  ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+
 #ifdef MPI
   INTEGER(i32), PARAMETER :: COMM = MPI_COMM_SELF
 #else
@@ -37,6 +43,7 @@ MODULE m_isochron
 
   REAL(r32), PARAMETER :: PI = 3.14159265358979323846_r64
   REAL(r32), PARAMETER :: DEG_TO_RAD = PI / 180._r32
+  REAL(r32), PARAMETER :: RAD_TO_DEG = 180._r32 / PI
   REAL(r32), PARAMETER :: BIG = HUGE(0._r32)
   REAL(r32), PARAMETER :: DP = 0.002_r32, DPSM = 0.07_r32              !< free-surface smoothing parameters
   REAL(r32), PARAMETER :: DCP = 1._r32, DCT = 0.5_r32                  !< resolution coda tablau (path in km, traveltime in s)
@@ -2314,6 +2321,14 @@ print*, 'ok coda ', ok
       REAL(r32),                 DIMENSION(3)             :: slip, u, v, w, x, y, z, nrl, rake, rupture, beta, rho, lon, lat
       REAL(r32),    ALLOCATABLE, DIMENSION(:)             :: time, mrf
 
+#ifdef DEBUG
+      CHARACTER(3)                                        :: version_
+      INTEGER(i32)                                        :: offset_, totnutr_, nt_, nt2_, nt3_
+      REAL(r32)                                           :: strike_, dip_, area_, dt_, beta_, lon_, lat_, z_, rupture_, rho_
+      REAL(r32)                                           :: rake_, slip_, slip2_, slip3_
+      REAL(r32),    ALLOCATABLE, DIMENSION(:)             :: mrf_
+#endif
+
       !-----------------------------------------------------------------------------------------------------------------------------
 
       fo = 'srf_' + 'vel_' + num2char(vel) + '_' + 'iter_' + num2char(iter) + '.bin'
@@ -2326,13 +2341,17 @@ print*, 'ok coda ', ok
       ENDIF
 
       IF (pl .eq. 1) THEN
-        WRITE(lu, POS=1) '2.0'                         !< 3 bytes
+        WRITE(lu, POS=1) '2.0'                           !< 3 bytes
         ! WRITE(lu)        'PLANE', SIZE(plane)          !< 5 + 4 bytes
       ENDIF
 
       ! WRITE(lu, POS=3 + 9 + 44*(pl - 1) + 1) lon, lat, nstk, ndip, len, width, stk, dip, dtop, shyp, dhyp       !< 11 * 4 bytes
 
       INQUIRE(lu, POS=offset)        !< get position of where to write next item
+
+#ifdef DEBUG
+      offset_ = offset
+#endif
 
       WRITE(lu, POS=offset) 'POINTS', SUM(nvtr * (2*nutr - 1))         !< total subfaults for current plane (all refinements)
 
@@ -2375,8 +2394,8 @@ print*, 'ok coda ', ok
 
         INQUIRE(lu, POS=offset)
 
-        !$omp parallel do default(shared) private(i, j, iuc, ivc, slip, u, v, w, x, y, z, nrl, strike, dip, rake, icr, rupture)  &
-        !$omp private(beta, rho, mrf, lon, lat, nt) reduction(+: m0) collapse(2)
+        !$omp parallel do ordered default(shared) private(i, j, iuc, ivc, slip, u, v, w, x, y, z, nrl, strike, dip, rake, icr)   &
+        !$omp private(rupture, beta, rho, mrf, lon, lat, nt) reduction(+: m0) collapse(2)
         DO j = 1, nvtr(ref)
           DO i = 1, totnutr
 
@@ -2413,6 +2432,9 @@ print*, 'ok coda ', ok
 
             CALL perturbed_mechanism(strike, dip, rake, nrl)            !< get new strike, dip, rake (all values in radians)
 
+            strike = strike * RAD_TO_DEG
+            dip    = dip * RAD_TO_DEG
+
             ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
             ! ----------------------------------------------- corner parameters ----------------------------------------------------
 
@@ -2420,6 +2442,7 @@ print*, 'ok coda ', ok
               rupture(icr) = MINVAL(nodes(iuc(icr), ivc(icr))%rupture)
               beta(icr)    = vinterp(input%velocity(vel)%depth, input%velocity(vel)%vs, input%velocity(vel)%vsgrad, z(icr))
               rho(icr)     = vinterp(input%velocity(vel)%depth, input%velocity(vel)%rho, input%velocity(vel)%rhograd, z(icr))
+              rake(icr)    = rake(icr) * RAD_TO_DEG
             ENDDO
 
             ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
@@ -2436,23 +2459,23 @@ print*, 'ok coda ', ok
             CALL normalize(mrf, dt)
 
             DO icr = 1, 3
-              CALL utm2geo(lon(icr), lat(icr), input%origin%lon, input%origin%lat, y(icr), x(icr))     !< from UTM to geo coordinates
+              CALL utm2geo(y(icr), x(icr), input%origin%lon, input%origin%lat, lon(icr), lat(icr))     !< from UTM to geo coordinates
             ENDDO
 
             ! all values are referred to triangle (subfault) center. Note that only one thread at a time will first find the next
             ! position in the file, then append a first point block and then a second one. The following thread will be asked to
             ! find the next position in the file and then write. This implies that subfaults will be written in any order.
-            !$omp critical
+            !$omp ordered
             INQUIRE(lu, POS=offset)
 
             WRITE(lu, POS=offset) mean(lon), mean(lat), mean(z)*1.E-03_r32, strike, dip, area, mean(rupture), dt,    &
-                                  mean(beta)*1.E+03_r32, mean(rho)*1.E-02_r32, mean(rake), mean(slip)*1.E+02_r32,    &
+                                  mean(beta)*1.E+02_r32, mean(rho)*1.E-02_r32, mean(rake), mean(slip)*1.E+02_r32,    &
                                   nt, 0._r32, 0, 0._r32, 0
 
             DO it = 1, nt
-              WRITE(lu) mrf(it)             !< append MRF values
+              WRITE(lu) mrf(it) * 1.E+02_r32             !< append MRF values
             ENDDO
-            !$omp end critical
+            !$omp end ordered
 
           ENDDO
         ENDDO
@@ -2471,10 +2494,322 @@ print*, 'ok coda ', ok
         RETURN
       ENDIF
 
+
+#ifdef DEBUG
+
+      OPEN(newunit = lu, file = fo, status = 'old', form = 'unformatted', access = 'stream', action = 'read', IOSTAT = ok)
+
+      IF (ok .ne. 0) THEN
+        CALL report_error('Error while opening file' + TRIM(fo))
+        RETURN
+      ENDIF
+
+      IF (pl .eq. 1) THEN
+
+        READ(lu, POS=1) version_                         !< 3 bytes
+
+        IF (version_ .ne. '2.0') THEN
+          CALL report_error('"version" mismatch: ' + version_)
+          ok = 1
+          RETURN
+        ENDIF
+
+      ENDIF
+
+      READ(lu, POS=offset_ + 6) totnutr_         !< total subfaults for current plane (all refinements)
+      totnutr = SUM(nvtr * (2*nutr - 1))
+
+      IF (assert([totnutr_], totnutr)) THEN
+        CALL report_error('total number of subfaults ("points") mismatch: ' + num2char(totnutr_) + ', ' + num2char(totnutr))
+        ok = 1
+        RETURN
+      ENDIF
+
+      ! select function to compute rupture at grid nodes, depending whether we are dealing with extended- or point-sources
+      ! nodefun => rik_at_nodes
+      !
+      ! IF (input%source%is_point) nodefun => ptrsrc_at_nodes
+
+      ! set "seed" such that random numbers depend on fault plane number and iteration
+      seed = input%source%seed + (iter - 1) * SIZE(plane) + pl
+
+      ! loop over mesh refinements
+      DO ref = 1, SIZE(nvtr)
+
+        dt = timeseries%sp%dt
+
+        npts = SIZE(timeseries%sp%time)
+
+        ALLOCATE(time(npts), mrf(npts), mrf_(npts))
+
+        DO it = 1, npts
+          time(it) = (it - 1) * dt
+        ENDDO
+
+        ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+        ! ------------------------------------------ define RIK model on mesh nodes ------------------------------------------------
+
+        ALLOCATE(nodes(nugr(ref), nvgr(ref)))
+
+        CALL nodefun(ref, pl, vel, seed)                !< define slip, rupture time and rise time on mesh nodes
+
+        totnutr = 2 * nutr(ref) - 1                     !< total triangles in a row
+
+        ! generate fault plane roughness
+        CALL fault_roughness(ok, ref, pl, iter)
+
+        area = dutr(ref) * dvtr(ref) * 0.5_r32 * 1.E+04_r32          !< triangle area in cm^2
+
+        DO j = 1, nvtr(ref)
+          DO i = 1, totnutr
+
+            ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+            ! ---------------------------------------- check corners have non-zero slip --------------------------------------------
+
+            CALL cornr(j, i, iuc, ivc)        !< corner indices for current triangle
+
+            DO icr = 1, 3
+              slip(icr) = SUM(nodes(iuc(icr), ivc(icr))%slip) * 100._r32          !< slip in cm
+            ENDDO
+
+            CALL cornr2uv(iuc, ivc, ref, u, v)        !< on-fault coordinates
+
+            DO icr = 1, 3
+              w(icr) = roughness(iuc(icr), ivc(icr))      !< add roughness (always zero for point-sources)
+            ENDDO
+
+            CALL uvw2xyz(pl, u, v, w, x, y, z)            !< get cartesian coordinates (m)
+
+            DO icr = 1, 3
+              z(icr) = MAX(MIN_DEPTH, z(icr))             !< make sure we never breach the free-surface (clip roughness)
+            ENDDO
+
+            CALL normal2tri(x, y, z, nrl)
+
+            ! always have normal pointing upward (i.e. negative z direction)
+            IF (MOD(i + (j-1)*totnutr, 2) == 0) nrl(:) = -nrl(:)
+
+            strike = plane(pl)%strike * DEG_TO_RAD
+            dip    = plane(pl)%dip    * DEG_TO_RAD
+
+            CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%rake, u, v, rake)
+
+            CALL perturbed_mechanism(strike, dip, rake, nrl)            !< get new strike, dip, rake (all values in radians)
+
+            strike = strike * RAD_TO_DEG
+            dip    = dip * RAD_TO_DEG
+
+            ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+            ! ----------------------------------------------- corner parameters ----------------------------------------------------
+
+            DO icr = 1, 3
+              rupture(icr) = MINVAL(nodes(iuc(icr), ivc(icr))%rupture)
+              beta(icr)    = vinterp(input%velocity(vel)%depth, input%velocity(vel)%vs, input%velocity(vel)%vsgrad, z(icr))
+              rho(icr)     = vinterp(input%velocity(vel)%depth, input%velocity(vel)%rho, input%velocity(vel)%rhograd, z(icr))
+              rake(icr)    = rake(icr) * RAD_TO_DEG
+            ENDDO
+
+            ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+            ! ---------------------------------------- moment rate function of triangle --------------------------------------------
+
+            nt = npts
+
+            IF (input%source%is_point) THEN
+              mrf = dbrune(time, input%source%freq)
+            ELSE
+              CALL mrf_rik(iuc, ivc, dt, rupture, mrf, nt)     !< moment rate function (averaged over corners)
+            ENDIF
+
+            CALL normalize(mrf, dt)
+
+            DO icr = 1, 3
+              CALL utm2geo(y(icr), x(icr), input%origin%lon, input%origin%lat, lon(icr), lat(icr))     !< from UTM to geo coordinates
+            ENDDO
+
+            READ(lu) lon_, lat_, z_, strike_, dip_, area_, rupture_, dt_, beta_, rho_, rake_, slip_, nt_, slip2_, nt2_, slip3_, nt3_
+
+            IF (assert([lon_], mean(lon))) THEN
+              CALL report_error('longitude mismatch: ' + num2char(lon_) + ', ' + num2char(mean(lon)))
+              ok = 1
+              RETURN
+            ENDIF
+
+            IF (assert([lat_], mean(lat))) THEN
+              CALL report_error('latitude mismatch: ' + num2char(lat_) + ', ' + num2char(mean(lat)))
+              ok = 1
+              RETURN
+            ENDIF
+
+            IF (assert([z_], mean(z)*1.E-03_r32)) THEN
+              CALL report_error('depth mismatch: ' + num2char(z_) + ', ' + num2char(mean(z)*1.E-03_r32))
+              ok = 1
+              RETURN
+            ENDIF
+
+            IF (assert([strike_], strike)) THEN
+              CALL report_error('strike mismatch: ' + num2char(strike_) + ', ' + num2char(strike))
+              ok = 1
+              RETURN
+            ENDIF
+
+            IF (assert([dip_], dip)) THEN
+              CALL report_error('dip mismatch: ' + num2char(dip_) + ', ' + num2char(dip))
+              ok = 1
+              RETURN
+            ENDIF
+
+            IF (assert([area_], area)) THEN
+              CALL report_error('area mismatch: ' + num2char(area_) + ', ' + num2char(area))
+              ok = 1
+              RETURN
+            ENDIF
+
+            IF (assert([rupture_], mean(rupture))) THEN
+              CALL report_error('rupture mismatch: ' + num2char(rupture_) + ', ' + num2char(mean(rupture)))
+              ok = 1
+              RETURN
+            ENDIF
+
+            IF (assert([dt_], dt)) THEN
+              CALL report_error('dt mismatch: ' + num2char(dt_) + ', ' + num2char(dt))
+              ok = 1
+              RETURN
+            ENDIF
+
+            IF (assert([beta_], mean(beta)*1.E+02_r32)) THEN
+              CALL report_error('vs mismatch: ' + num2char(beta_) + ', ' + num2char(mean(beta)*1.E+02_r32))
+              ok = 1
+              RETURN
+            ENDIF
+
+            IF (assert([rho_], mean(rho)*1.E-02_r32)) THEN
+              CALL report_error('dens mismatch: ' + num2char(rho_) + ', ' + num2char(mean(rho)*1.E-02_r32))
+              ok = 1
+              RETURN
+            ENDIF
+
+            IF (assert([rake_], mean(rake))) THEN
+              CALL report_error('rake mismatch: ' + num2char(rake_) + ', ' + num2char(mean(rake)))
+              ok = 1
+              RETURN
+            ENDIF
+
+            IF (assert([slip_], mean(slip)*1.E+02_r32)) THEN
+              CALL report_error('slip mismatch: ' + num2char(slip_) + ', ' + num2char(mean(slip)*1.E+02_r32))
+              ok = 1
+              RETURN
+            ENDIF
+
+            IF (assert([nt_], nt)) THEN
+              CALL report_error('mrf samples ("nt") mismatch: ' + num2char(nt_) + ', ' + num2char(nt))
+              ok = 1
+              RETURN
+            ENDIF
+
+            IF (assert([slip2_], 0._r32)) THEN
+              CALL report_error('slip2 mismatch: ' + num2char(slip2_) + ', 0')
+              ok = 1
+              RETURN
+            ENDIF
+
+            IF (assert([nt2_], 0)) THEN
+              CALL report_error('mrf samples ("nt2") mismatch: ' + num2char(nt2_) + ', 0')
+              ok = 1
+              RETURN
+            ENDIF
+
+            IF (assert([slip3_], 0._r32)) THEN
+              CALL report_error('slip3 mismatch: ' + num2char(slip3_) + ', 0')
+              ok = 1
+              RETURN
+            ENDIF
+
+            IF (assert([nt3_], 0)) THEN
+              CALL report_error('mrf samples ("nt3") mismatch: ' + num2char(nt3_) + ', 0')
+              ok = 1
+              RETURN
+            ENDIF
+
+            DO it = 1, nt_
+              READ(lu) mrf_(it)
+              mrf_(it) = mrf_(it) * 1.E+02_r32
+              IF (assert([mrf_(it)], mrf(it))) THEN
+                CALL report_error('mrf mismatch: ' + num2char(mrf_(it)) + ', ' + num2char(mrf(it)))
+                ok = 1
+                RETURN
+              ENDIF
+            ENDDO
+
+          ENDDO
+        ENDDO
+
+        CALL dealloc_nodes()
+
+        DEALLOCATE(time, mrf, mrf_)
+
+      ENDDO        !< end loop over mesh refinements
+
+      CLOSE(lu, iostat = ok)
+
+      IF (ok .ne. 0) THEN
+        CALL report_error('Error while closing file ' + fo)
+        RETURN
+      ENDIF
+
+#endif
+
     END SUBROUTINE write_srf
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    FUNCTION assert_i32(par, v1, v2, strict) RESULT(assert)
+
+      ! Purpose:
+      !   To determine if variable "par" belongs to range [v1, v2]. Square brackets are replaced by round brackets if "strict=.true."
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   18/12/20                  original version
+      !
+
+      INTEGER(i32), DIMENSION(:),           INTENT(IN) :: par
+      INTEGER(i32),               OPTIONAL, INTENT(IN) :: v1, v2
+      LOGICAL,                    OPTIONAL, INTENT(IN) :: strict
+      LOGICAL                                          :: flag, assert
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+#include "assert_incl.f90"
+
+    END FUNCTION assert_i32
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    FUNCTION assert_r32(par, v1, v2, strict) RESULT(assert)
+
+      ! Purpose:
+      !   To determine if variable "par" belongs to range [v1, v2]. Square brackets are replaced by round brackets if "strict=.true."
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   18/12/20                  original version
+      !
+
+      REAL(r32), DIMENSION(:),           INTENT(IN) :: par
+      REAL(r32),               OPTIONAL, INTENT(IN) :: v1, v2
+      LOGICAL,                 OPTIONAL, INTENT(IN) :: strict
+      LOGICAL                                       :: flag, assert
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+#include "assert_incl.f90"
+
+    END FUNCTION assert_r32
 
 END MODULE m_isochron

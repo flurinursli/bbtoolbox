@@ -17,8 +17,8 @@ MODULE m_timeseries
 
   PRIVATE
 
-  PUBLIC :: timeseries
-  PUBLIC :: read_lp, seis2disk, differentiate, stitch
+  PUBLIC :: timeseries, amplification
+  PUBLIC :: read_lp, seis2disk, differentiate, stitch, load_amplification
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -42,6 +42,12 @@ MODULE m_timeseries
   END TYPE tsr
 
   TYPE(tsr) :: timeseries            !< timeseries%lp%x(npts, nrec), timeseries%lp%time(npts), timeseries%lp%dt
+
+  TYPE :: amp
+    REAL(r32), ALLOCATABLE, DIMENSION(:) :: frequency, value
+  END TYPE amp
+
+  TYPE(amp), ALLOCATABLE, DIMENSION(:) :: amplification
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -91,6 +97,108 @@ MODULE m_timeseries
       ! IF (rank .eq. ntasks - 1) CALL echo()
 
     END SUBROUTINE read_lp
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    SUBROUTINE load_amplification(ok)
+
+      INTEGER(i32),             INTENT(OUT) :: ok
+      CHARACTER(:), ALLOCATABLE             :: fo
+      INTEGER(i32)                          :: lu, rcvr, n, lino, rank, ierr, idum
+      REAL(r32)                             :: rdum
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      ok = 0
+
+      fo = TRIM(input%input%amplification)
+
+      IF (fo .eq. 'none') RETURN
+
+      rank = 0
+
+#ifdef MPI
+      CALL mpi_comm_rank(mpi_comm_world, rank, ierr)
+#endif
+
+      ALLOCATE(amplification(SIZE(input%receiver)))
+
+      DO rcvr = 1, SIZE(input%receiver)
+
+        IF (rank .eq. 0) THEN
+
+          fo = TRIM(input%input%amplification) + '/' + TRIM(input%receiver(rcvr)%file) + '.txt'
+
+          OPEN(newunit = lu, file = fo, status = 'old', form = 'formatted', access = 'sequential', action = 'read', iostat = ok)
+
+          IF (ok .ne. 0) THEN
+            CALL report_error('load_amplification - ERROR: opening file ' + TRIM(fo) + ' failed with code ' + num2char(ok))
+            RETURN
+          ENDIF
+
+          n = 0
+
+          DO
+            READ(lu, IOSTAT = ok)
+            IF (ok .ne. 0) THEN
+              IF (IS_IOSTAT_END(ok)) THEN
+                EXIT
+              ELSE
+                RETURN
+              ENDIF
+            ENDIF
+            n = n + 1
+          ENDDO
+
+          REWIND(1, IOSTAT = ok)
+
+          IF (ok .ne. 0) RETURN
+
+          IF (n .le. 0) THEN
+            CALL report_error('load_amplification - ERROR: file ' + TRIM(fo) + ' is empty')
+            ok = 1
+            RETURN
+          ENDIF
+
+          ALLOCATE(amplification(rcvr)%frequency(n), amplification(rcvr)%value(n))
+
+          DO lino = 1, n
+            READ(lu, IOSTAT = ok) amplification(rcvr)%frequency(lino), amplification(rcvr)%value(lino), rdum, rdum, idum
+            IF (ok .ne. 0) EXIT
+          ENDDO
+
+          IF (ok .ne. 0) THEN
+            CALL report_error('load_amplification - ERROR: could not read file ' + fo)
+            RETURN
+          ENDIF
+
+          CLOSE(lu, IOSTAT = ok)
+
+          IF (ok .ne. 0) THEN
+            CALL report_error('load_amplification - ERROR: closing file ' + fo + ' returned error code ' + num2char(ok))
+            RETURN
+          ENDIF
+
+        ENDIF
+
+#ifdef MPI
+        CALL mpi_bcast(ok, 1, mpi_int, 0, mpi_comm_world, ierr)
+
+        IF (ok .ne. 0) RETURN
+
+        CALL mpi_bcast(n, 1, mpi_int, 0, mpi_comm_world, ierr)
+
+        IF (rank .ne. 0) ALLOCATE(amplification(rcvr)%frequency(n), amplification(rcvr)%value(n))
+
+        CALL mpi_bcast(amplification(rcvr)%frequency, n, mpi_real, 0, mpi_comm_world, ierr)
+        CALL mpi_bcast(amplification(rcvr)%value, n, mpi_real, 0, mpi_comm_world, ierr)
+#endif
+
+      ENDDO
+
+    END SUBROUTINE load_amplification
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
@@ -357,7 +465,7 @@ MODULE m_timeseries
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
-      n   = 0
+      n = 0
 
       DO
         READ(lu, IOSTAT = ok)
