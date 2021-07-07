@@ -90,6 +90,14 @@ PROGRAM main
   STOP
 #endif
 
+  CALL load_amplification(ok, rank, ntasks)
+
+#ifdef MPI
+  IF (ok .ne. 0) CALL mpi_abort(mpi_comm_world, ok, ierr)
+#else
+  STOP
+#endif
+
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
   ! ------------------------------------------------------- time stuff -------------------------------------------------------------
 

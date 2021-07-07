@@ -102,7 +102,71 @@ MODULE m_timeseries
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE load_amplification(ok)
+    SUBROUTINE load_amplification(ok, rank, ntasks)
+
+      ! Purpose:
+      !   to read (optional) amplification curves stored in plain ASCII files. On exit, "ok" is not zero if an error occurred.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   01/07/21                  original version
+      !
+
+      INTEGER(i32), INTENT(OUT) :: ok
+      INTEGER(i32), INTENT(IN)  :: rank, ntasks
+      INTEGER(i32)              :: ierr, rcvr, n
+      LOGICAL                   :: is_allocated
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      IF (rank .eq. 0) CALL parse_amplification(ok)
+
+#ifdef MPI
+      CALL mpi_bcast(ok, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr)
+#endif
+
+      IF (ok .ne. 0) RETURN
+
+#ifdef MPI
+
+      is_allocated = ALLOCATED(amplification)
+
+      CALL mpi_bcast(is_allocated, 1, MPI_LOGICAL, 0, MPI_COMM_WORLD, ierr)
+
+      IF (.not.is_allocated) RETURN       !< do nothing if amplification curves are not available
+
+      DO rcvr = 1, SIZE(input%receiver)
+
+        IF (rank .eq. 0) n = SIZE(amplification(rcvr)%frequency)
+
+        CALL mpi_bcast(n, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr)
+
+        IF (rank .ne. 0) ALLOCATE(amplification(rcvr)%frequency(n), amplification(rcvr)%value(n))
+
+        CALL mpi_bcast(amplification(rcvr)%frequency, n, MPI_REAL, 0, MPI_COMM_WORLD, ierr)
+        CALL mpi_bcast(amplification(rcvr)%value, n, MPI_REAL, 0, MPI_COMM_WORLD, ierr)
+
+      ENDDO
+
+#endif
+
+    END SUBROUTINE load_amplification
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    SUBROUTINE parse_amplification(ok)
+
+      ! Purpose:
+      !   to read (optional) amplification curves stored in plain ASCII files. On exit, "ok" is not zero if an error occurred.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   01/07/21                  original version
+      !
 
       INTEGER(i32),             INTENT(OUT) :: ok
       CHARACTER(:), ALLOCATABLE             :: fo
@@ -117,12 +181,6 @@ MODULE m_timeseries
 
       IF (fo .eq. 'none') RETURN
 
-      rank = 0
-
-#ifdef MPI
-      CALL mpi_comm_rank(mpi_comm_world, rank, ierr)
-#endif
-
       ALLOCATE(amplification(SIZE(input%receiver)))
 
       DO rcvr = 1, SIZE(input%receiver)
@@ -134,7 +192,7 @@ MODULE m_timeseries
           OPEN(newunit = lu, file = fo, status = 'old', form = 'formatted', access = 'sequential', action = 'read', iostat = ok)
 
           IF (ok .ne. 0) THEN
-            CALL report_error('load_amplification - ERROR: opening file ' + TRIM(fo) + ' failed with code ' + num2char(ok))
+            CALL report_error('parse_amplification - ERROR: opening file ' + TRIM(fo) + ' failed with code ' + num2char(ok))
             RETURN
           ENDIF
 
@@ -157,7 +215,7 @@ MODULE m_timeseries
           IF (ok .ne. 0) RETURN
 
           IF (n .le. 0) THEN
-            CALL report_error('load_amplification - ERROR: file ' + TRIM(fo) + ' is empty')
+            CALL report_error('parse_amplification - ERROR: file ' + TRIM(fo) + ' is empty')
             ok = 1
             RETURN
           ENDIF
@@ -170,35 +228,22 @@ MODULE m_timeseries
           ENDDO
 
           IF (ok .ne. 0) THEN
-            CALL report_error('load_amplification - ERROR: could not read file ' + fo)
+            CALL report_error('parse_amplification - ERROR: could not read file ' + fo)
             RETURN
           ENDIF
 
           CLOSE(lu, IOSTAT = ok)
 
           IF (ok .ne. 0) THEN
-            CALL report_error('load_amplification - ERROR: closing file ' + fo + ' returned error code ' + num2char(ok))
+            CALL report_error('parse_amplification - ERROR: closing file ' + fo + ' returned error code ' + num2char(ok))
             RETURN
           ENDIF
 
         ENDIF
 
-#ifdef MPI
-        CALL mpi_bcast(ok, 1, mpi_int, 0, mpi_comm_world, ierr)
-
-        IF (ok .ne. 0) RETURN
-
-        CALL mpi_bcast(n, 1, mpi_int, 0, mpi_comm_world, ierr)
-
-        IF (rank .ne. 0) ALLOCATE(amplification(rcvr)%frequency(n), amplification(rcvr)%value(n))
-
-        CALL mpi_bcast(amplification(rcvr)%frequency, n, mpi_real, 0, mpi_comm_world, ierr)
-        CALL mpi_bcast(amplification(rcvr)%value, n, mpi_real, 0, mpi_comm_world, ierr)
-#endif
-
       ENDDO
 
-    END SUBROUTINE load_amplification
+    END SUBROUTINE parse_amplification
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
