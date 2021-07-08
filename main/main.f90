@@ -54,7 +54,6 @@ PROGRAM main
 
   CALL watch_start(tictoc(1))
 
-  ! IF (world_rank .eq. 0) CALL set_log_module(ok, screen = .true.)
   CALL set_log_module(ok, screen = .true., errclr = 'red')      !< errors are printed in red
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
@@ -169,10 +168,10 @@ PROGRAM main
           IF (input%attenuation(1)%lcut(band) .ge. input%coda%fmax) CYCLE         !< skip band if higher than fmax
 
           CALL update_log(num2char('Simulation for', width=30, fill='.') +         &
-                          num2char('Iteration #', width=15, justify='r')   + '|' +   &
-                          num2char('Segment #', width=15, justify='r')  + '|' +   &
-                          num2char('Velocity #', width=15, justify='r') + '|' +   &
-                          num2char('Band #', width=15, justify='r')     + '|')
+                          num2char('Iteration #', width=15, justify='r') + '|' +   &
+                          num2char('Segment #', width=15, justify='r')   + '|' +   &
+                          num2char('Velocity #', width=15, justify='r')  + '|' +   &
+                          num2char('Band #', width=15, justify='r')      + '|')
 
           CALL update_log(num2char('', width=30) + num2char(iter, width=15, justify='r') + '|' +  &
                                                    num2char(pl, width=15, justify='r')   + '|' +  &
@@ -189,14 +188,10 @@ PROGRAM main
 #endif
 
           DO rec = 1, SIZE(input%receiver)
-            ! CALL solve_isochron_integral(ok, rec, band, pl, vel, iter)
+            CALL solve_isochron_integral(ok, rec, band, pl, vel, iter)
           ENDDO
 
-          ! maxband = band        !< highest active frequency band
-
         ENDDO     !< end loop over frequency bands
-
-        ! CALL correct4impz(ok, pl, maxband)         !< correct amplitude due to filter bank
 
         IF (input%source%save2disk .eq. 'y') CALL write_srf(ok, pl, vel, iter)
 
@@ -210,9 +205,11 @@ PROGRAM main
     CALL seis2disk(ok, iter, 'sp')
 #endif
 
-    CALL stitch(ok)
+    CALL stitch(ok)           !< merge LP and SP timeseries
 
-    CALL seis2disk(ok, iter, 'bb')
+    CALL amplify(ok)          !< apply amplification curves (if available)
+
+    CALL seis2disk(ok, iter, 'bb')         !< store hybrid broadband timeseries to disk
 
   ENDDO  !< end loop over iterations
 

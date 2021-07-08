@@ -18,7 +18,7 @@ MODULE m_timeseries
   PRIVATE
 
   PUBLIC :: timeseries, amplification
-  PUBLIC :: read_lp, seis2disk, differentiate, stitch, load_amplification
+  PUBLIC :: read_lp, seis2disk, differentiate, stitch, load_amplification, amplify
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -169,8 +169,9 @@ MODULE m_timeseries
       !
 
       INTEGER(i32),             INTENT(OUT) :: ok
+      CHARACTER(256)                        :: msg
       CHARACTER(:), ALLOCATABLE             :: fo
-      INTEGER(i32)                          :: lu, rcvr, n, lino, rank, ierr, idum
+      INTEGER(i32)                          :: lu, rcvr, n, lino, ierr, idum
       REAL(r32)                             :: rdum
 
       !-----------------------------------------------------------------------------------------------------------------------------
@@ -185,61 +186,65 @@ MODULE m_timeseries
 
       DO rcvr = 1, SIZE(input%receiver)
 
-        IF (rank .eq. 0) THEN
+        fo = TRIM(input%input%amplification) + '/' + TRIM(input%receiver(rcvr)%file) + '.txt'
 
-          fo = TRIM(input%input%amplification) + '/' + TRIM(input%receiver(rcvr)%file) + '.txt'
+        OPEN(NEWUNIT = lu, FILE = fo, STATUS = 'old', FORM = 'formatted', ACCESS = 'sequential', action = 'read', IOSTAT = ok,   &
+             IOMSG = msg)
 
-          OPEN(newunit = lu, file = fo, status = 'old', form = 'formatted', access = 'sequential', action = 'read', iostat = ok)
-
-          IF (ok .ne. 0) THEN
-            CALL report_error('parse_amplification - ERROR: opening file ' + TRIM(fo) + ' failed with code ' + num2char(ok))
-            RETURN
-          ENDIF
-
-          n = 0
-
-          DO
-            READ(lu, IOSTAT = ok)
-            IF (ok .ne. 0) THEN
-              IF (IS_IOSTAT_END(ok)) THEN
-                EXIT
-              ELSE
-                RETURN
-              ENDIF
-            ENDIF
-            n = n + 1
-          ENDDO
-
-          REWIND(1, IOSTAT = ok)
-
-          IF (ok .ne. 0) RETURN
-
-          IF (n .le. 0) THEN
-            CALL report_error('parse_amplification - ERROR: file ' + TRIM(fo) + ' is empty')
-            ok = 1
-            RETURN
-          ENDIF
-
-          ALLOCATE(amplification(rcvr)%frequency(n), amplification(rcvr)%value(n))
-
-          DO lino = 1, n
-            READ(lu, IOSTAT = ok) amplification(rcvr)%frequency(lino), amplification(rcvr)%value(lino), rdum, rdum, idum
-            IF (ok .ne. 0) EXIT
-          ENDDO
-
-          IF (ok .ne. 0) THEN
-            CALL report_error('parse_amplification - ERROR: could not read file ' + fo)
-            RETURN
-          ENDIF
-
-          CLOSE(lu, IOSTAT = ok)
-
-          IF (ok .ne. 0) THEN
-            CALL report_error('parse_amplification - ERROR: closing file ' + fo + ' returned error code ' + num2char(ok))
-            RETURN
-          ENDIF
-
+        IF (ok .ne. 0) THEN
+          CALL report_error('parse_amplification - ERROR: ' + TRIM(msg))
+          RETURN
         ENDIF
+
+        n = 0
+
+        DO
+          READ(lu, *, IOSTAT = ok, IOMSG = msg)
+          IF (ok .ne. 0) THEN
+            IF (IS_IOSTAT_END(ok)) THEN
+              EXIT
+            ELSE
+              CALL report_error('parse_amplification - ERROR: ' + TRIM(msg))
+              RETURN
+            ENDIF
+          ENDIF
+          n = n + 1
+        ENDDO
+
+        REWIND(lu, IOSTAT = ok, IOMSG = msg)
+
+        IF (ok .ne. 0) THEN
+          CALL report_error('parse_amplification - ERROR: ' + TRIM(msg))
+          RETURN
+        ENDIF
+
+        IF (n .le. 0) THEN
+          CALL report_error('parse_amplification - ERROR: file ' + TRIM(fo) + ' is empty')
+          ok = 1
+          RETURN
+        ENDIF
+
+        ALLOCATE(amplification(rcvr)%frequency(n), amplification(rcvr)%value(n))
+
+        DO lino = 1, n
+          READ(lu, *, IOSTAT = ok, IOMSG = msg) amplification(rcvr)%frequency(lino), amplification(rcvr)%value(lino),       &
+                                                rdum, rdum, idum
+          IF (ok .ne. 0) THEN
+            CALL report_error('parse_amplification - ERROR: ' + TRIM(msg))
+            RETURN
+          ENDIF
+        ENDDO
+
+        CLOSE(lu, IOSTAT = ok, IOMSG = msg)
+
+        IF (ok .ne. 0) THEN
+          CALL report_error('parse_amplification - ERROR: ' + TRIM(msg))
+          RETURN
+        ENDIF
+
+
+amplification(rcvr)%value(:) = 2.
+
 
       ENDDO
 
@@ -260,11 +265,12 @@ MODULE m_timeseries
       !   08/03/21                  original version
       !
 
-      INTEGER(i32),                             INTENT(OUT) :: ok
-      CHARACTER(:), ALLOCATABLE                             :: fo, extension
-      INTEGER(i32)                                          :: lu, rcvr
-      REAL(r32)                                             :: dt
-      REAL(r32),    ALLOCATABLE, DIMENSION(:)               :: time, x, y, z
+      INTEGER(i32),                            INTENT(OUT) :: ok
+      CHARACTER(256)                                       :: msg
+      CHARACTER(:),  ALLOCATABLE                           :: fo, extension
+      INTEGER(i32)                                         :: lu, rcvr
+      REAL(r32)                                            :: dt
+      REAL(r32),     ALLOCATABLE, DIMENSION(:)             :: time, x, y, z
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
@@ -313,10 +319,11 @@ MODULE m_timeseries
 
         fo = TRIM(input%input%folder) + '/' + TRIM(input%receiver(rcvr)%file) + extension
 
-        OPEN(newunit = lu, file = fo, status = 'old', form = 'formatted', access = 'sequential', action = 'read', iostat = ok)
+        OPEN(NEWUNIT = lu, FILE = fo, STATUS = 'old', FORM = 'formatted', ACCESS = 'sequential', ACTION = 'read', IOSTAT = ok,  &
+             IOMSG = msg)
 
         IF (ok .ne. 0) THEN
-          CALL report_error('disk2seis - ERROR: opening file ' + TRIM(fo) + ' failed with code ' + num2char(ok))
+          CALL report_error('disk2seis - ERROR: ' + TRIM(msg))
           RETURN
         ENDIF
 
@@ -327,10 +334,10 @@ MODULE m_timeseries
           RETURN
         ENDIF
 
-        CLOSE(lu, IOSTAT = ok)
+        CLOSE(lu, IOSTAT = ok, IOMSG = msg)
 
         IF (ok .ne. 0) THEN
-          CALL report_error('disk2seis - ERROR: closing file ' + fo + ' returned error code ' + num2char(ok))
+          CALL report_error('disk2seis - ERROR: ' + TRIM(msg))
           RETURN
         ENDIF
 
@@ -439,30 +446,35 @@ MODULE m_timeseries
       !   08/03/21                  original version
       !
 
-      INTEGER(i32),                              INTENT(OUT) :: ok
-      INTEGER(i32),                              INTENT(IN)  :: lu
-      REAL(r32),    ALLOCATABLE, DIMENSION(:),   INTENT(OUT) :: time, x, y, z
-      INTEGER(i32)                                           :: ios, n, lino
+      INTEGER(i32),                             INTENT(OUT) :: ok
+      INTEGER(i32),                             INTENT(IN)  :: lu
+      REAL(r32),     ALLOCATABLE, DIMENSION(:), INTENT(OUT) :: time, x, y, z
+      CHARACTER(256)                                        :: msg
+      INTEGER(i32)                                          :: ios, n, lino
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
-      n   = 0
+      n = 0
 
       DO
-        READ(lu, IOSTAT = ok)
+        READ(lu, *, IOSTAT = ok, IOMSG = msg)
         IF (ok .ne. 0) THEN
           IF (IS_IOSTAT_END(ok)) THEN
             EXIT
           ELSE
+            CALL report_error('parse_sw4 - ERROR: ' + TRIM(msg))
             RETURN
           ENDIF
         ENDIF
         n = n + 1
       ENDDO
 
-      REWIND(1, IOSTAT = ok)
+      REWIND(1, IOSTAT = ok, IOMSG = msg)
 
-      IF (ok .ne. 0) RETURN
+      IF (ok .ne. 0) THEN
+        CALL report_error('parse_sw4 - ERROR: ' + TRIM(msg))
+        RETURN
+      ENDIF
 
       n = n - SW4_HEADER_LINE
 
@@ -475,13 +487,19 @@ MODULE m_timeseries
       ALLOCATE(time(n), x(n), y(n), z(n))
 
       DO lino = 1, SW4_HEADER_LINE
-        READ(lu, IOSTAT = ok)
-        IF (ok .ne. 0) RETURN
+        READ(lu, *, IOSTAT = ok, IOMSG = msg)
+        IF (ok .ne. 0) THEN
+          CALL report_error('parse_sw4 - ERROR: ' + TRIM(msg))
+          RETURN
+        ENDIF
       ENDDO
 
       DO lino = 1, n
-        READ(lu, IOSTAT = ok) time(lino), x(lino), y(lino), z(lino)
-        IF (ok .ne. 0) RETURN
+        READ(lu, *, IOSTAT = ok, IOMSG = msg) time(lino), x(lino), y(lino), z(lino)
+        IF (ok .ne. 0) THEN
+          CALL report_error('parse_sw4 - ERROR: ' + TRIM(msg))
+          RETURN
+        ENDIF
       ENDDO
 
     END SUBROUTINE parse_sw4
@@ -503,30 +521,35 @@ MODULE m_timeseries
       !   08/03/21                  original version
       !
 
-      INTEGER(i32),                              INTENT(OUT) :: ok
-      INTEGER(i32),                              INTENT(IN)  :: lu
-      REAL(r32),    ALLOCATABLE, DIMENSION(:),   INTENT(OUT) :: time, x, y, z
-      INTEGER(i32)                                           :: ios, n, lino
+      INTEGER(i32),                               INTENT(OUT) :: ok
+      INTEGER(i32),                               INTENT(IN)  :: lu
+      REAL(r32),     ALLOCATABLE, DIMENSION(:),   INTENT(OUT) :: time, x, y, z
+      CHARACTER(256)                                          :: msg
+      INTEGER(i32)                                            :: ios, n, lino
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
       n = 0
 
       DO
-        READ(lu, IOSTAT = ok)
+        READ(lu, IOSTAT = ok, IOMSG = msg)
         IF (ok .ne. 0) THEN
           IF (IS_IOSTAT_END(ok)) THEN
             EXIT
           ELSE
+            CALL report_error('parse_plaintxt - ERROR: ' + TRIM(msg))
             RETURN
           ENDIF
         ENDIF
         n = n + 1
       ENDDO
 
-      REWIND(1, IOSTAT = ok)
+      REWIND(1, IOSTAT = ok, IOMSG = msg)
 
-      IF (ok .ne. 0) RETURN
+      IF (ok .ne. 0) THEN
+        CALL report_error('parse_plaintxt - ERROR: ' + TRIM(msg))
+        RETURN
+      ENDIF
 
       IF (n .le. 0) THEN
         CALL report_error('parse_plaintxt - ERROR: file is empty')
@@ -537,8 +560,11 @@ MODULE m_timeseries
       ALLOCATE(time(n), x(n), y(n), z(n))
 
       DO lino = 1, n
-        READ(lu, IOSTAT = ok) time(lino), x(lino), y(lino), z(lino)
-        IF (ok .ne. 0) RETURN
+        READ(lu, IOSTAT = ok, IOMSG = msg) time(lino), x(lino), y(lino), z(lino)
+        IF (ok .ne. 0) THEN
+          CALL report_error('parse_plaintxt - ERROR: ' + TRIM(msg))
+          RETURN
+        ENDIF
       ENDDO
 
     END SUBROUTINE parse_plaintxt
@@ -688,7 +714,7 @@ MODULE m_timeseries
             fo = TRIM(input%output%folder) + '/' + uppercase(input%output%variable(1:3)) + '_' + num2char(iter) + '_' +    &
                  TRIM(input%receiver(rcvr)%file) + '.' + m_cp + '.' + seis + extension
 
-            OPEN(newunit = lu, file = fo, status = 'replace', form = 'formatted', access= 'sequential', action= 'write', iostat= ok)
+            OPEN(NEWUNIT = lu, FILE = fo, STATUS = 'replace', FORM = 'formatted', access= 'sequential', action= 'write', IOSTAT= ok)
 
             IF (ok .ne. 0) THEN
               CALL report_error('seis2disk - ERROR: opening file ' + TRIM(fo) + ' failed with code ' + num2char(ok))
@@ -774,7 +800,7 @@ MODULE m_timeseries
 
           fo = TRIM(input%output%folder) + '/' + TRIM(input%receiver(rcvr)%file) + '_' + seis + '_' + num2char(iter) + extension
 
-          OPEN(newunit = lu, file = fo, status = 'replace', form = 'formatted', access = 'sequential', action = 'write', iostat= ok)
+          OPEN(NEWUNIT = lu, FILE = fo, STATUS = 'replace', FORM = 'formatted', ACCESS = 'sequential', action = 'write', IOSTAT= ok)
 
           IF (ok .ne. 0) THEN
             CALL report_error('seis2disk - ERROR: opening file ' + TRIM(fo) + ' failed with code ' + num2char(ok))
@@ -1195,7 +1221,7 @@ MODULE m_timeseries
 
       INTEGER(i32),                           INTENT(OUT) :: ok
       CHARACTER(:), ALLOCATABLE                           :: fo
-      INTEGER(i32)                                        :: i, ic, rec, npts, l, lu, i0, n
+      INTEGER(i32)                                        :: i, ic, rcvr, npts, l, lu, i0, n
       COMPLEX(r32), ALLOCATABLE, DIMENSION(:)             :: lspectrum, sspectrum
       REAL(r32)                                           :: df
       REAL(r32),    ALLOCATABLE, DIMENSION(:)             :: lpres, freq, win
@@ -1243,19 +1269,19 @@ MODULE m_timeseries
           win(i) = 1._r32
         ENDDO
 
-        DO rec = 1, SIZE(input%receiver)
+        DO rcvr = 1, SIZE(input%receiver)
           DO ic = 1, 3
 
-            CALL interpolate(ptime, lp(:, ic, rec), stime, lpres)            !< resample long-period timeseries
+            CALL interpolate(ptime, lp(:, ic, rcvr), stime, lpres)            !< resample long-period timeseries
 
             CALL fft(lpres, lspectrum)
-            CALL fft(sp(:, ic, rec), sspectrum)
+            CALL fft(sp(:, ic, rcvr), sspectrum)
 
             DO i = 1, npts/2 + 1
               sspectrum(i) = lspectrum(i) * (1._r32 - win(i)) + sspectrum(i) * win(i)      !< spectrum hybrid timeseries
             ENDDO
 
-            CALL ifft(bb(:, ic, rec), sspectrum)
+            CALL ifft(bb(:, ic, rcvr), sspectrum)
 
           ENDDO
         ENDDO
@@ -1268,7 +1294,7 @@ MODULE m_timeseries
 
       fo = 'matched.txt'
 
-      OPEN(newunit = lu, file = fo, status = 'replace', form = 'formatted', access = 'sequential', action = 'write', iostat= ok)
+      OPEN(NEWUNIT = lu, FILE = fo, STATUS = 'replace', FORM = 'formatted', ACCESS = 'sequential', action = 'write', IOSTAT= ok)
 
       IF (ok .ne. 0) THEN
         CALL report_error('Error while opening file' + TRIM(fo))
@@ -1279,7 +1305,7 @@ MODULE m_timeseries
         WRITE(lu, *) freq(i), win(i)
       ENDDO
 
-      CLOSE(lu, iostat = ok)
+      CLOSE(lu, IOSTAT = ok)
 
       IF (ok .ne. 0) THEN
         CALL report_error('Error while closing file ' + fo)
@@ -1289,16 +1315,75 @@ MODULE m_timeseries
 #endif
 
     END SUBROUTINE stitch
-    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
-    !===============================================================================================================================
-    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
-
-
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
+    SUBROUTINE amplify(ok)
 
+      ! Purpose:
+      !   to apply user-defined amplification curves (if available) to every broadband timeseries.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      INTEGER(i32),                           INTENT(OUT) :: ok
+      COMPLEX(r32), ALLOCATABLE, DIMENSION(:)             :: spectrum
+      INTEGER(i32)                                        :: npts, i, rcvr, ic
+      REAL(r32)                                           :: df
+      REAL(r32),   ALLOCATABLE, DIMENSION(:)              :: freq, x
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      ok = 0
+
+      IF (TRIM(input%input%amplification) .eq. 'none') RETURN             !< do nothing if amplification curves are not available
+
+      CALL setup_interpolation('linear', 'zero', ok)
+
+      IF (ok .ne. 0) RETURN
+
+      npts = SIZE(timeseries%bb%time)
+
+      ALLOCATE(freq(npts/2 + 1), x(npts/2 + 1), spectrum(npts/2 + 1))
+
+      CALL make_fftw_plan([npts])
+
+      df = 1._r32 / (timeseries%bb%dt * npts)
+
+      ! frequency vector
+      DO i = 1, npts/2 + 1
+        freq(i) = (i - 1) * df
+      ENDDO
+
+      DO rcvr = 1, SIZE(input%receiver)
+
+        CALL interpolate(amplification(rcvr)%frequency, amplification(rcvr)%value, freq, x)
+
+        DO ic = 1, 3
+
+          CALL fft(timeseries%bb%xyz(:, ic, rcvr), spectrum)
+
+          DO i = 1, npts/2 + 1
+            spectrum(i) = spectrum(i) * x(i)
+          ENDDO
+
+          CALL ifft(timeseries%bb%xyz(:, ic, rcvr), spectrum)
+
+        ENDDO
+
+      ENDDO
+
+      CALL destroy_fftw_plan([npts])
+
+    END SUBROUTINE amplify
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
 END MODULE m_timeseries

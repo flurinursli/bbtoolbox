@@ -9,26 +9,26 @@ model = 'hv' a = 0.736 b = 2.78 ak = 765.87 f0 = 1.09  alpha = 2.5e-04
 
 # info for input low-frequency synthetics (amplification is optional)
 input folder = '/home/walter/Backedup/Software/bbtoolbox/test/lf' format = 'sw4' variable = 'velocity'  + 
-      amplification = '/home/walter/Backedup/Software/bbtoolbox/AmpFunctions'
+      amplification = '/home/walter/Backedup/Software/bbtoolbox/test/AmpFunctions/Elastic'
 
 # info for output hybrid synthetics
-output folder = '/home/walter/Backedup/Software/bbtoolbox/test/hf' format = 'paz' variable = 'velocity'
+output folder = '/home/walter/Backedup/Software/bbtoolbox/test/hf' format = 'txt' variable = 'velocity'
 
 # define (point-)source (use lon/lat if rec is given in lon/lat)
 # required fields are "x"/"y"/"z" (or "lon"/"lat"/"z" is receivers position is given in geographical coordinates), "strike", "dip", "rake" ...
 # ... "m0", "type" (default "Brune") and "freq" (default=6.28)
 #source x= 20350 y=15010 z=5000 strike=10 dip=90 rake=15 m0=1.0e+19 type='brune' freq=6.28
-#source lon=-116.25 lat=34.50 z=3000 strike=20 dip=70 rake=30 m0=1.0e+19 type='brune' freq=6.28
+source lon=-116.25 lat=34.50 z=3000 strike=20 dip=70 rake=30 m0=1.0e+19 type='brune' freq=6.28
 
 # ... or extended source (incl. roughness and RIK parameters: these are optional)
 # file format is determined from file extension
 # for FSP, required fields are "file", "corr", "l0", "aparam", "vrfact" and "seed"
 # for SRF, required fields are "file"
 # roughness is typically in the range [-3, -2]
-rupture file = '/home/walter/Software/bbtoolbox/test/s1999HECTOR01JONS.fsp' roughness=-2.3  +
+#rupture file = '/home/walter/Software/bbtoolbox/test/s1999HECTOR01JONS.fsp' roughness=-2.3  +
 #rupture file = '/home/walter/Software/bbtoolbox/test/sample.srf' roughness=-2.0  +
 # rik
-corr=0.7 l0=0.3 aparam=1.0 vrfact=0.85 seed = 74921 save = 'y'
+#corr=0.7 l0=0.3 aparam=1.0 vrfact=0.85 seed = 74921 save = 'y'
 
 # set position of geographical reference point (needed if we are working with geographical coordinates)
 origin lon=-116.32645 lat=34.68132      # that's station BM52
@@ -54,35 +54,40 @@ layer vp = 3800 vs = 2200 rho = 2700 depth = 2100
 #attenuation gpp = [0.003,0.0015,0.0007,0.0003,0.00015] gps = [0.025,0.012,0.006,0.003,0.0015] gss = [0.01,0.005,0.0025,0.0012,0.006] +
 #            b = [0.01,0.02,0.03,0.02,0.01] frequency = [1,2; 2,4; 4,8; 8,16; 16,32]
 
-#attenuation gpp = [0.00015, 0.00015, 0.00015] gps = [0.0012, 0.0012, 0.0012] gss = [0.0005, 0.0005, 0.0005] +
-#            b = [0.002, 0.002, 0.002] frequency = [1,2;2,4;4,8]
+attenuation gpp = [0.00015, 0.00015, 0.00015] gps = [0.0012, 0.0012, 0.0012] gss = [0.0005, 0.0005, 0.0005] +
+            b = [0.002, 0.002, 0.002] frequency = [1,2;2,4;4,8]
 
 #attenuation gpp = [0.00015] gps = [0.0012] gss = [0.0005] +
 #            b = [0.0002] frequency = [1,8]
-attenuation gpp = [0., 0., 0.] gps = [0., 0., 0.] gss = [0., 0., 0.] +
-            b = [0., 0., 0.] frequency = [1,2; 2,4; 4,8]
+#attenuation gpp = [0., 0., 0.] gps = [0., 0., 0.] gss = [0., 0., 0.] +
+#            b = [0., 0., 0.] frequency = [1,2; 2,4; 4,8]
 
 # second model
 #attenuation gpp = [0.003,0.0015,0.0007,0.0003,0.00015] gps = [0.025,0.012,0.006,0.003,0.0015] gss = [0.01,0.005,0.0025,0.0012,0.006] +
 #            b = [0.001,0.002,0.003,0.002,0.001] frequency = [1,2; 2,4; 4,8; 8,16; 16,32]
 
 
-#attenuation gpp = [0.00015, 0.00015, 0.00015] gps = [0.0012, 0.0012, 0.0012] gss = [0.0005, 0.0005, 0.0005] +
-#            b = [0.002, 0.002, 0.002] frequency = [1,2;2,4;4,8]
+attenuation gpp = [0.00015, 0.00015, 0.00015] gps = [0.0012, 0.0012, 0.0012] gss = [0.0005, 0.0005, 0.0005] +
+            b = [0.002, 0.002, 0.002] frequency = [1,2;2,4;4,8]
 
 #attenuation gpp = [0.00015] gps = [0.0012] gss = [0.0005] +
 #            b = [0.002] frequency = [1,8]
-attenuation gpp = [0., 0., 0.] gps = [0., 0., 0.] gss = [0., 0., 0.] +
-            b = [0., 0., 0.] frequency = [1,2; 2,4; 4,8]
+#attenuation gpp = [0., 0., 0.] gps = [0., 0., 0.] gss = [0., 0., 0.] +
+#            b = [0., 0., 0.] frequency = [1,2; 2,4; 4,8]
 
 # set receiver-related fields
 # required fields are "x"/"y"/"z" (or "lon"/"lat"/"z"), "file", "velocity" (default=1) and "attenuation" (default=1)
 #rec x=2100 y=100 z=0 file ='st01' velocity = 1 attenuation = 1
-rec lon=-116.31209 lat=34.63536 z=0 file= 'STCH' velocity = 1 attenuation = 2
-rec lon=-116.17601 lat=34.49103 z=0 file= 'EBON' velocity = 1 attenuation = 2
-rec lon=-116.14020 lat=34.33330 z=0 file= 'ISBO' velocity = 1 attenuation = 2
-rec lon=-116.42070 lat=34.78498 z=0 file= 'HECT' velocity=1   attenuation= 2
-rec lon=-116.02762 lat=34.28803 z=0 file= 'DUMB' velocity=1   attenuation= 2
+#rec lon=-116.31209 lat=34.63536 z=0 file= 'STCH' velocity = 1 attenuation = 2
+#rec lon=-116.17601 lat=34.49103 z=0 file= 'EBON' velocity = 1 attenuation = 2
+#rec lon=-116.14020 lat=34.33330 z=0 file= 'ISBO' velocity = 1 attenuation = 2
+#rec lon=-116.42070 lat=34.78498 z=0 file= 'HECT' velocity=1   attenuation= 2
+#rec lon=-116.02762 lat=34.28803 z=0 file= 'DUMB' velocity=1   attenuation= 2
+rec lon=-116.31209 lat=34.63536 z=0 file= 'BALST' velocity = 1 attenuation = 2
+rec lon=-116.17601 lat=34.49103 z=0 file= 'BERGE' velocity = 1 attenuation = 2
+rec lon=-116.14020 lat=34.33330 z=0 file= 'DAGMA' velocity = 1 attenuation = 2
+rec lon=-116.42070 lat=34.78498 z=0 file= 'EMING' velocity=1   attenuation= 2
+rec lon=-116.02762 lat=34.28803 z=0 file= 'EMMET' velocity=1   attenuation= 2
 #rec x=1000 y=5250 z=0 file= 'st02' velocity=1 attenuation= 2
 
 #rec lon=11.23 lat=43.89 z=0 file ='st01' velocity = 1 attenuation = 1

@@ -56,12 +56,13 @@ MODULE m_logfile
       !   02/09/20                  original version
       !
 
-      INTEGER(i32),                       INTENT(OUT) :: ok
-      LOGICAL,                  OPTIONAL, INTENT(IN)  :: disk, screen
-      CHARACTER(*),             OPTIONAL, INTENT(IN)  :: errclr, trueclr
-      CHARACTER(8)                                    :: date
-      CHARACTER(10)                                   :: time
-      CHARACTER(:), ALLOCATABLE                       :: fo, timestamp
+      INTEGER(i32),                        INTENT(OUT) :: ok
+      LOGICAL,                   OPTIONAL, INTENT(IN)  :: disk, screen
+      CHARACTER(*),              OPTIONAL, INTENT(IN)  :: errclr, trueclr
+      CHARACTER(8)                                     :: date
+      CHARACTER(10)                                    :: time
+      CHARACTER(256)                                   :: msg
+      CHARACTER(:),  ALLOCATABLE                       :: fo, timestamp
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
@@ -76,10 +77,10 @@ MODULE m_logfile
 
             fo = 'logfile_' // timestamp // '.txt'
 
-            OPEN(stderr, file = fo, status = 'unknown', form = 'formatted', iostat = ok)
+            OPEN(NEWUNIT = stderr, FILE = fo, STATUS = 'replace', FORM = 'formatted', IOSTAT = ok, IOMSG = msg)
 
             IF (ok .ne. 0) THEN
-              WRITE(stdout, *) 'Error: it was not possible to open log file ' // fo
+              WRITE(stdout, *) 'set_log_module - ERROR: ' // TRIM(msg)
               RETURN
             ENDIF
 
@@ -146,8 +147,7 @@ MODULE m_logfile
     SUBROUTINE report_assert(assert, true_msg, false_msg)
 
       ! Purpose:
-      !   to convert an error code into an error message based on the provided external funtion and to report content to selected
-      !   units.
+      !   to report a different message (in different colors) depending whether "assert" is true or not.
       !
       ! Revisions:
       !     Date                    Description of change
@@ -167,7 +167,6 @@ MODULE m_logfile
       IF (ALLOCATED(log_units)) n = SIZE(log_units)
 
       clr = set_ecolor
-
 
       IF (assert) THEN
         msg = true_msg
