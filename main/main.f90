@@ -112,9 +112,10 @@ PROGRAM main
     timeseries%lp%time(i) = (i - 1) * timeseries%lp%dt
   ENDDO
 
-  timeseries%bb%dt = 0.5_r32 / 16 !(input%coda%fmax * 2)
-  timeseries%sp%dt = 0.5_r32 / 16 !(input%coda%fmax * 2)
-  timeseries%cd%dt = 0.5_r32 / 16 !(input%coda%fmax * 2)
+  ! Nyquist frequency of high-frequency timeseries is twice maximum target frequency
+  timeseries%bb%dt = 0.5_r32 / (input%coda%fmax * 2)
+  timeseries%sp%dt = 0.5_r32 / (input%coda%fmax * 2)
+  timeseries%cd%dt = 0.5_r32 / (input%coda%fmax * 2)
 
   npts = SIZE(timeseries%lp%time)
 
