@@ -77,7 +77,7 @@ MODULE m_logfile
 
             fo = 'logfile_' // timestamp // '.txt'
 
-            OPEN(NEWUNIT = stderr, FILE = fo, STATUS = 'replace', FORM = 'formatted', IOSTAT = ok, IOMSG = msg)
+            OPEN(stderr, FILE = fo, STATUS = 'replace', FORM = 'formatted', IOSTAT = ok, IOMSG = msg)
 
             IF (ok .ne. 0) THEN
               WRITE(stdout, *) 'set_log_module - ERROR: ' // TRIM(msg)

@@ -8,7 +8,7 @@ coda fmax = 2. matching frequency = 1.0 bandwidth = 0.25 seed = 759203  samples 
 model = 'hv' a = 0.736 b = 2.78 ak = 765.87 f0 = 1.09  alpha = 2.5e-04
 
 # info for input low-frequency synthetics (amplification is optional)
-input folder = '/home/walter/Backedup/Software/bbtoolbox/test/lf' format = 'sw4' variable = 'velocity'  + 
+input folder = '/home/walter/Backedup/Software/bbtoolbox/test/lf' format = 'sw4' variable = 'velocity'  +
       amplification = '/home/walter/Backedup/Software/bbtoolbox/test/AmpFunctions/Elastic'
 
 # info for output hybrid synthetics
@@ -18,7 +18,7 @@ output folder = '/home/walter/Backedup/Software/bbtoolbox/test/hf' format = 'txt
 # required fields are "x"/"y"/"z" (or "lon"/"lat"/"z" is receivers position is given in geographical coordinates), "strike", "dip", "rake" ...
 # ... "m0", "type" (default "Brune") and "freq" (default=6.28)
 #source x= 20350 y=15010 z=5000 strike=10 dip=90 rake=15 m0=1.0e+19 type='brune' freq=6.28
-source lon=-116.25 lat=34.50 z=3000 strike=20 dip=70 rake=30 m0=1.0e+19 type='brune' freq=6.28
+source lon=-116.25 lat=34.50 z=300 strike=20 dip=70 rake=30 m0=1.0e+19 type='brune' freq=6.28
 
 # ... or extended source (incl. roughness and RIK parameters: these are optional)
 # file format is determined from file extension
@@ -36,16 +36,41 @@ origin lon=-116.32645 lat=34.68132      # that's station BM52
 # define velocity model(s)
 # fields are "vp", "vs", "rho", "depth" (default=0), "vpgrad" (default=0), "vsgrad" (default=0)
 # first model
-layer vp = 1400 vs = 800  rho = 2000
-layer vp = 2400 vs = 1400 rho = 2400 depth = 500 vpgrad=0.7 vsgrad=0.4 rhograd=0.4
-layer vp = 3800 vs = 2200 rho = 2700 depth = 2100
+#layer vp = 1400 vs = 800  rho = 2000
+#layer vp = 2400 vs = 1400 rho = 2400 depth = 500 vpgrad=0.7 vsgrad=0.4 rhograd=0.4
+#layer vp = 3800 vs = 2200 rho = 2700 depth = 2100
 #layer vp=4000 vs=3500 rho=2800
 
 # second model
-#layer vp = 850  vs = 500 rho = 1800
+#layer vp = 850  vs = 500  rho = 1800
 #layer vp = 2600 vs = 1500 rho = 2400 depth = 350
 #layer vp = 4650 vs = 2700 rho = 2800 depth = 1800
 #layer vp=2600 vs=500 rho=2400
+
+# swiss reference model
+layer vs = 1000 vsgrad = 6.35 vp = 3890 rho = 2000
+layer vs = 1635 vsgrad = 4.51 depth = 100 vp = 4000 rho = 2000
+layer vs = 2086 vsgrad = 3.21 depth = 200 vp = 4002 rho = 2000
+layer vs = 2407 vsgrad = 2.29 depth = 300 vp = 4004 rho = 2000
+layer vs = 2636 vsgrad = 1.63 depth = 400 vp = 4006 rho = 2000
+layer vs = 2799 vsgrad = 1.15 depth = 500 vp = 4008 rho = 2000
+layer vs = 2914 vsgrad = 0.83 depth = 600 vp = 4010 rho = 2000
+layer vs = 2997 vsgrad = 0.58 depth = 700 vp = 4012 rho = 2000
+layer vs = 3055 vsgrad = 0.42 depth = 800 vp = 4014 rho = 2000
+layer vs = 3097 vsgrad = 0.30 depth = 900 vp = 4016 rho = 2000
+layer vs = 3127 vsgrad = 0.21 depth = 1000 vp = 4018 rho = 2000
+layer vs = 3148 vsgrad = 0.15 depth = 1100 vp = 4020 rho = 2000
+layer vs = 3163 vsgrad = 0.11 depth = 1200 vp = 4022 rho = 2000
+layer vs = 3174 vsgrad = 0.07 depth = 1300 vp = 4024 rho = 2000
+layer vs = 3181 vsgrad = 0.06 depth = 1400 vp = 4026 rho = 2000
+layer vs = 3187 vsgrad = 0.03 depth = 1500 vp = 4028 rho = 2000
+layer vs = 3190 vsgrad = 0.02 depth = 1600 vp = 4030 rho = 2000
+layer vs = 3198 depth = 2000 vp = 4100 rho = 2000
+
+
+
+
+
 
 # define attenuation model(s) (all fields are mandatory) (units: 1/km)
 # note: these properties are the same for the whole model
