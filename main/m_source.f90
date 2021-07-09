@@ -850,11 +850,10 @@ MODULE m_source
 
         ! first condition for point-sources: lambda_min >> d, where d is diagonal of a square fault
         ! diagonal = l*sqrt(2) = 2*sqrt(2)*du (l = 2*du)
-        du = PTSRC_FACTOR * beta / input%coda%fmax / SQRT(2._r32) / 2._r32
-
-        ! ASSOCIATE(model => input%attenuation(1), fmax => input%coda%fmax)
-        !   du = PTSRC_FACTOR * beta / MIN(model%hcut(band), fmax) / SQRT(2._r32) / 2._r32
-        ! END ASSOCIATE
+        ! du = PTSRC_FACTOR * beta / input%coda%fmax / SQRT(2._r32) / 2._r32
+        ASSOCIATE(model => input%attenuation(1), fmax => input%coda%fmax)
+          du = PTSRC_FACTOR * beta / MIN(model%hcut(band), fmax) / SQRT(2._r32) / 2._r32
+        END ASSOCIATE
 
         plane(pl)%u = [-du, 0._r32, du]
         plane(pl)%v = [-du, 0._r32, du]
@@ -862,11 +861,10 @@ MODULE m_source
         ! plane(pl)%v = [-du, du] / 2._r32
 
         ! second condition for point-source: max(rupture time) << tr, where tr is the shortes period observed (i.e. 1/fmax)
-        dt = PTSRC_FACTOR / input%coda%fmax
-
-        ! ASSOCIATE(model => input%attenuation(1), fmax => input%coda%fmax)
-        !   dt = PTSRC_FACTOR / MIN(model%hcut(band), fmax)
-        ! END ASSOCIATE
+        ! dt = PTSRC_FACTOR / input%coda%fmax
+        ASSOCIATE(model => input%attenuation(1), fmax => input%coda%fmax)
+          dt = PTSRC_FACTOR / MIN(model%hcut(band), fmax)
+        END ASSOCIATE
 
         plane(pl)%rupture(:, 1) = dt * [1._r32, 1._r32/SQRT(2._r32), 1._r32]                   !< proceed along-strike (along u)
         plane(pl)%rupture(:, 2) = dt * [1._r32/SQRT(2._r32), 0._r32, 1._r32/SQRT(2._r32)]

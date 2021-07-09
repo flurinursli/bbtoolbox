@@ -32,6 +32,19 @@ MODULE m_noise
 
     SUBROUTINE generate_noise(ok, iter, rank)
 
+      ! Purpose:
+      !   to compute high-frequency timeseries for all receivers (and components) representing scattered coda waves. The timeseries
+      !   can be later shaped by scaled envelope functions to simulate actual coda. The high-frequency timeseries are characterized
+      !   by white spectrum, zero mean, unitary standard deviation and spatial correlation based on the select coherency model.
+      !   Note that the actual appearence of the timeseries depends on the seed number (modified by "iter") and the required number
+      !   of time samples (depending on maximum time and time-step).
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
       INTEGER(i32), INTENT(OUT) :: ok
       INTEGER(i32), INTENT(IN)  :: iter, rank
       INTEGER(i32)              :: i, lu
@@ -45,7 +58,7 @@ MODULE m_noise
           cohfun => vanmarcke
       END SELECT
 
-      ! CALL cpdf(ok, iter, rank)
+      ! CALL cpdf(ok, iter, rank)        !< do not use because not yet validated
 
       CALL cdra(ok, iter, rank)
 
@@ -527,13 +540,15 @@ MODULE m_noise
 
           z = z / SQRT(var)
 
-          IF (comp .eq. 1) THEN
-            CALL ifft(timeseries%cd%xyz(:, 1, rcvr), z)
-          ELSEIF (comp .eq. 2) THEN
-            CALL ifft(timeseries%cd%xyz(:, 2, rcvr), z)
-          ELSEIF (comp .eq. 3) THEN
-            CALL ifft(timeseries%cd%xyz(:, 3, rcvr), z)
-          ENDIF
+          CALL ifft(timeseries%cd%xyz(:, comp, rcvr), z)
+
+          ! IF (comp .eq. 1) THEN
+          !   CALL ifft(timeseries%cd%xyz(:, 1, rcvr), z)
+          ! ELSEIF (comp .eq. 2) THEN
+          !   CALL ifft(timeseries%cd%xyz(:, 2, rcvr), z)
+          ! ELSEIF (comp .eq. 3) THEN
+          !   CALL ifft(timeseries%cd%xyz(:, 3, rcvr), z)
+          ! ENDIF
 
         ENDDO     !< end loop over receivers
 
