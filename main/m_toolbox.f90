@@ -47,7 +47,7 @@ MODULE m_toolbox
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
-  REAL(r32), PARAMETER :: DEFAULT_VPGRAD = 0.01_r32, DEFAULT_VSGRAD = 0.01_r32, DEFAULT_RHOGRAD = 0._r32
+  REAL(r32), PARAMETER :: DEFAULT_VPGRAD = 0.001_r32, DEFAULT_VSGRAD = 0.001_r32, DEFAULT_RHOGRAD = 0._r32
 
   TYPE :: src
     CHARACTER(1)   :: save2disk = "n"

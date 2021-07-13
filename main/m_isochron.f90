@@ -46,8 +46,9 @@ MODULE m_isochron
   REAL(r32), PARAMETER :: RAD_TO_DEG = 180._r32 / PI
   REAL(r32), PARAMETER :: BIG = HUGE(0._r32)
   REAL(r32), PARAMETER :: DP = 0.002_r32, DPSM = 0.07_r32              !< free-surface smoothing parameters
-  REAL(r32), PARAMETER :: DCP = 1._r32, DCT = 0.5_r32                  !< resolution coda tablau (path in km, traveltime in s)
+  REAL(r32), PARAMETER :: DCP = 1._r32, DCT = 0.5_r32                  !< resolution coda tableau (path in km, traveltime in s)
   REAL(r32), PARAMETER :: ISQRT3 = 1._r32 / SQRT(3._r32)
+  REAL(r32), PARAMETER :: GSS_MIN = 0.0001_r32                         !< lowest non-zero scattering coefficient
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -864,8 +865,11 @@ print*, 'weight ', weight
 
         ASSOCIATE(model => input%attenuation(1), fmax => input%coda%fmax)
 
-          CALL make_iir_plan(ok, 'butter', dt, [model%lcut(band), MIN(model%hcut(band), fmax)], 'pass', 2, zphase = .true.)
-          ! CALL make_iir_plan(ok, 'butter', dt, [model%lcut(band), 8.], 'pass', 2, zphase = .true.)
+          IF (band .eq. 1) THEN
+            CALL make_iir_plan(ok, 'butter', dt, [0.25_r32, MIN(model%hcut(band), fmax)], 'pass', 2, zphase = .true.)
+          ELSE
+            CALL make_iir_plan(ok, 'butter', dt, [model%lcut(band), MIN(model%hcut(band), fmax)], 'pass', 2, zphase = .true.)
+          ENDIF
 
           IF (ok .ne. 0) THEN
             CALL report_error(filter_error(ok))
@@ -879,7 +883,7 @@ print*, 'weight ', weight
             CALL hilbert(iseis(:, ic))
 
             DO it = 1, npts
-              rseis(it, ic) = (rseis(it, ic) - iseis(it, ic)) * dt               !< "dt" is from convolution
+              rseis(it, ic) = (rseis(it, ic) + iseis(it, ic)) * dt               !< "dt" is from convolution
             ENDDO
 
             rseis(:, ic) = iir(rseis(:, ic), ok)                                 !< filter
@@ -942,7 +946,7 @@ print*, 'area ', dutr(ref) * dvtr(ref) * 0.5_r32
       ENDDO        !< end loop over mesh refinements
 
       scale = plane(pl)%targetm0 / moment          !< scaling factor to scale to desired moment
-      scale = scale * 1.E-18_r32                   !< take into account the fact that units for "q" were km, g/cm^3, km/s
+      scale = scale * 1.E-15_r32                   !< take into account the fact that units for "q" were km, g/cm^3, km/s
 
 print*, 'scale ', scale, moment
 
@@ -1869,9 +1873,11 @@ print*, 'scale ', scale, moment
 
           IF (model%lcut(band) .ge. fmax) EXIT
 
-          CALL make_iir_plan(ok, 'butter', dt, [model%lcut(band), MIN(model%hcut(band), fmax)], 'pass', 2, zphase = .true.)
-
-! print*, 'correct4impz ', ok, [model%lcut(1), MIN(model%hcut(band), fmax)], dt
+          IF (band .eq. 1) THEN
+            CALL make_iir_plan(ok, 'butter', dt, [0.25_r32, MIN(model%hcut(band), fmax)], 'pass', 2, zphase = .true.)
+          ELSE
+            CALL make_iir_plan(ok, 'butter', dt, [model%lcut(band), MIN(model%hcut(band), fmax)], 'pass', 2, zphase = .true.)
+          ENDIF
 
           CALL freqz(freq, amp, phase, dt, SIZE(timeseries%sp%time))
 
@@ -1893,9 +1899,7 @@ print*, 'scale ', scale, moment
         IF (band .gt. 1) THEN
 
           ! we want the composite filter reponse to look identical to that of a filter between lowest fcut and highest fcut(/fmax)
-          CALL make_iir_plan(ok, 'butter', dt, [model%lcut(1), MIN(model%hcut(band), fmax)], 'pass', 2, zphase = .true.)
-
-! print*, 'correct4impz ', ok, [model%lcut(1), MIN(model%hcut(band), fmax)], dt
+          CALL make_iir_plan(ok, 'butter', dt, [0.25_r32, MIN(model%hcut(band), fmax)], 'pass', 2, zphase = .true.)
 
           CALL freqz(freq, amp, phase, dt, SIZE(timeseries%sp%time))
 
@@ -2109,10 +2113,15 @@ print*, 'scale ', scale, moment
 
             vs = r / ts
 
-            CALL rtt(time, tp, ts, model%gpp(band), model%gps(band), gsp, model%gss(band), model%b(band), vs, wp, ws,   &
-                      0.25_r32, d0, coda%penvelope(:, i, j), ok)
+            IF (model%gss(band) .ge. GSS_MIN) THEN
+              CALL rtt(time, tp, ts, model%gpp(band), model%gps(band), gsp, model%gss(band), model%b(band), vs, wp, ws,   &
+                       0.25_r32, d0, coda%penvelope(:, i, j), ok)
 
-            coda%pdirect(i, j) = d0(1)
+              coda%pdirect(i, j) = d0(1)
+            ELSE
+              coda%penvelope(:, i, j) = 0._r32
+              coda%pdirect(i, j)      = 1._r32
+            ENDIF
 
             ! print*, 'P ', tp, r, ts, vs, ok, SIZE(time)
 
@@ -2141,10 +2150,15 @@ print*, 'scale ', scale, moment
 
             vs = r / ts
 
-            CALL rtt(time, tp, ts, model%gpp(band), model%gps(band), gsp, model%gss(band), model%b(band), vs, wp, ws,   &
-                      0.25_r32, d0, coda%senvelope(:, i, j), ok)
+            IF (model%gss(band) .ge. GSS_MIN) THEN
+              CALL rtt(time, tp, ts, model%gpp(band), model%gps(band), gsp, model%gss(band), model%b(band), vs, wp, ws,   &
+                       0.25_r32, d0, coda%senvelope(:, i, j), ok)
 
-            coda%sdirect(i, j) = d0(2)
+              coda%sdirect(i, j) = d0(2)
+            ELSE
+              coda%senvelope(:, i, j) = 0._r32
+              coda%sdirect(i, j)      = 1._r32
+            ENDIF
 
             ! print*, 'S ', ts, r, tp, vs, ok
 

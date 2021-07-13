@@ -104,7 +104,7 @@ PROGRAM main
 
   timeseries%lp%dt = 0.5_r32 / 4
 
-  npts = NINT(40._r32 / timeseries%lp%dt) + 1
+  npts = NINT(25._r32 / timeseries%lp%dt) + 1
 
   ALLOCATE(timeseries%lp%time(npts), timeseries%lp%xyz(npts, 3, nrecs))
 
@@ -120,7 +120,7 @@ PROGRAM main
   npts = SIZE(timeseries%lp%time)
 
   !npts = NINT(timeseries%lp%time(npts) / timeseries%sp%dt) + 1
-  npts = NINT(40._r32 / timeseries%sp%dt) + 1
+  npts = NINT(25._r32 / timeseries%sp%dt) + 1
 
   ALLOCATE(timeseries%bb%xyz(npts, 3, nrecs))
   ALLOCATE(timeseries%sp%xyz(npts, 3, nrecs))
