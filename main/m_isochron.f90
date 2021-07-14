@@ -42,7 +42,7 @@ MODULE m_isochron
 #endif
 
   REAL(r32), PARAMETER :: PI = 3.14159265358979323846_r64
-  REAL(r32), PARAMETER :: DEG_TO_RAD = PI / 180._r32
+  ! REAL(r32), PARAMETER :: DEG_TO_RAD = PI / 180._r32
   REAL(r32), PARAMETER :: RAD_TO_DEG = 180._r32 / PI
   REAL(r32), PARAMETER :: BIG = HUGE(0._r32)
   REAL(r32), PARAMETER :: DP = 0.002_r32, DPSM = 0.07_r32              !< free-surface smoothing parameters
@@ -377,8 +377,8 @@ print*, 'weight ', weight
             ! always have normal pointing upward (i.e. negative z direction)
             IF (MOD(i + (j-1)*totnutr, 2) == 0) nrl(:) = -nrl(:)
 
-            strike = plane(pl)%strike * DEG_TO_RAD
-            dip    = plane(pl)%dip    * DEG_TO_RAD
+            strike = plane(pl)%strike !* DEG_TO_RAD
+            dip    = plane(pl)%dip    !* DEG_TO_RAD
 
             CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%rake, u, v, rake)
 
@@ -1440,8 +1440,8 @@ print*, 'scale ', scale, moment
             ! always have normal pointing upward (i.e. negative)
             IF (MOD(i + (j-1)*totnutr, 2) == 0) nrl(:) = -nrl(:)
 
-            strike = plane(pl)%strike * DEG_TO_RAD
-            dip    = plane(pl)%dip    * DEG_TO_RAD
+            strike = plane(pl)%strike !* DEG_TO_RAD
+            dip    = plane(pl)%dip    !* DEG_TO_RAD
 
             CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%rake, u, v, rake)
 
@@ -1606,7 +1606,7 @@ print*, 'scale ', scale, moment
       IF (ALLOCATED(shooting)) DEALLOCATE(shooting)
       IF (ALLOCATED(wkbj)) DEALLOCATE(wkbj)
 
-      delta = MAXVAL(ABS(roughness)) * COS(plane(pl)%dip * DEG_TO_RAD)
+      delta = MAXVAL(ABS(roughness)) * COS(plane(pl)%dip)! * DEG_TO_RAD)
 
       w = [0._r32, 0._r32, 0._r32]
 
@@ -2249,8 +2249,8 @@ print*, 'ok coda ', ok
           ! always have normal pointing upward (i.e. negative z direction)
           IF (MOD(i + (j-1)*totnutr, 2) == 0) nrl(:) = -nrl(:)
 
-          strike = plane(pl)%strike * DEG_TO_RAD
-          dip    = plane(pl)%dip    * DEG_TO_RAD
+          strike = plane(pl)%strike !* DEG_TO_RAD
+          dip    = plane(pl)%dip    !* DEG_TO_RAD
 
           CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%rake, u, v, rake)
 
@@ -2439,8 +2439,8 @@ print*, 'ok coda ', ok
             ! always have normal pointing upward (i.e. negative z direction)
             IF (MOD(i + (j-1)*totnutr, 2) == 0) nrl(:) = -nrl(:)
 
-            strike = plane(pl)%strike * DEG_TO_RAD
-            dip    = plane(pl)%dip    * DEG_TO_RAD
+            strike = plane(pl)%strike !* DEG_TO_RAD
+            dip    = plane(pl)%dip    !* DEG_TO_RAD
 
             CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%rake, u, v, rake)
 
@@ -2603,8 +2603,8 @@ print*, 'ok coda ', ok
             ! always have normal pointing upward (i.e. negative z direction)
             IF (MOD(i + (j-1)*totnutr, 2) == 0) nrl(:) = -nrl(:)
 
-            strike = plane(pl)%strike * DEG_TO_RAD
-            dip    = plane(pl)%dip    * DEG_TO_RAD
+            strike = plane(pl)%strike !* DEG_TO_RAD
+            dip    = plane(pl)%dip    !* DEG_TO_RAD
 
             CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%rake, u, v, rake)
 

@@ -27,7 +27,7 @@ MODULE m_rik
   INTEGER(i32), PARAMETER :: PDFNU = 200, PDFNV = 100
   INTEGER(i32), PARAMETER :: MAXCOR = 100
   REAL(r32),    PARAMETER :: PI = 3.14159265358979323846_r64
-  REAL(r32),    PARAMETER :: DEG_TO_RAD = PI / 180._r32
+  ! REAL(r32),    PARAMETER :: DEG_TO_RAD = PI / 180._r32
   REAL(r32),    PARAMETER :: TWOPI = 2._r64 * PI
   REAL(r32),    PARAMETER :: BIG = HUGE(0._r32)
 
@@ -519,7 +519,7 @@ MODULE m_rik
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! ---------------------------------------- slip, rupture and rise-time at nodes ----------------------------------------------
 
-      sd = SIN(plane(pl)%dip * DEG_TO_RAD)
+      sd = SIN(plane(pl)%dip)! * DEG_TO_RAD)
       z0 = plane(pl)%z
 
       !$omp parallel do default(shared) private(iv, iu, v, du, u, x, nsubs, n, i, subvr, rise, rupture, sub2node)

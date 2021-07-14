@@ -97,7 +97,7 @@ MODULE m_source
 
       INTEGER(i32), INTENT(OUT) :: ok
       INTEGER(i32), INTENT(IN)  :: rank, ntasks
-      INTEGER(i32)              :: i, ierr
+      INTEGER(i32)              :: i, ierr, pl
       !REAL(r32)                 :: du, dt, beta
 
       !-----------------------------------------------------------------------------------------------------------------------------
@@ -123,7 +123,7 @@ MODULE m_source
         ! plane(1)%slip(2, 2) = 1._r32
         plane(1)%slip(:,:) = 1._r32
 
-        plane(1)%rake(:,:) = input%source%rake * DEG_TO_RAD
+        plane(1)%rake(:,:) = input%source%rake !* DEG_TO_RAD
 
         plane(1)%rise(:,:) = input%source%freq
 
@@ -155,6 +155,27 @@ MODULE m_source
       ENDIF
 
       IF (rank .eq. ntasks - 1) CALL echo()
+
+      ! convert source parameters to radians and enforce Aki&Richard definition for strike, dip and rake (as required by the
+      ! "m_isochron" module)
+      DO pl = 1, SIZE(plane)
+
+        ! dip must be positive to avoid problems during uvw-to-xyz coordinates conversion
+        IF (plane(pl)%dip .lt. 0._r32) plane(pl)%dip = 180._r32 + plane(pl)%dip
+
+        ! dip cannot exceed 90 degrees
+        ! IF (plane(pl)%dip .gt. 90._r32) THEN
+        !   plane(pl)%strike    = plane(pl)%strike + 180._r32           !< reverse direction
+        !   plane(pl)%dip       = 180._r32 - plane(pl)%dip              !< reverse dip
+        !   plane(pl)%rake(:,:) = 180._r32 - plane(pl)%rake(:,:)        !< reverse rake
+        ! ENDIF
+
+        ! now convert to radians
+        plane(pl)%dip       = plane(pl)%dip * DEG_TO_RAD
+        plane(pl)%strike    = plane(pl)%strike * DEG_TO_RAD
+        plane(pl)%rake(:,:) = plane(pl)%rake(:,:) * DEG_TO_RAD
+
+      ENDDO
 
     END SUBROUTINE setup_source
 
@@ -284,7 +305,7 @@ MODULE m_source
       CALL parse(ok, dip, lu, 'DIP', ['=', ' '], '% Mech')
       CALL parse(ok, rake, lu, 'RAKE', ['=', ' '], '% Mech')
 
-      rake = rake * DEG_TO_RAD
+      ! rake = rake * DEG_TO_RAD
 
       IF (is_empty(m0)) m0 = -1._r32
 
@@ -379,7 +400,7 @@ MODULE m_source
                     CALL geo2utm(numeric(ilon), numeric(ilat), input%origin%lon, input%origin%lat, plane(k)%y, plane(k)%x)
                   ENDIF
 
-                  IF (irake .gt. 0) rake = numeric(irake) * DEG_TO_RAD
+                  IF (irake .gt. 0) rake = numeric(irake) !* DEG_TO_RAD
 
                   plane(k)%slip(i, j) = numeric(islip)
                   plane(k)%rake(i, j) = rake
@@ -568,7 +589,7 @@ MODULE m_source
 
             plane(pl)%targetm0 = plane(pl)%targetm0 + area * slip1 * density * vs**2        !< scalar moment (dyne*cm)
 
-            rake = rake * DEG_TO_RAD              !< convert deg to rad
+            ! rake = rake * DEG_TO_RAD              !< convert deg to rad
             slip1 = slip1 * 1.0e-02_r32           !< convert cm to m
 
             plane(pl)%slip(i, j) = slip1
@@ -837,7 +858,7 @@ MODULE m_source
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
-      sd = SIN(plane(pl)%dip * DEG_TO_RAD)
+      sd = SIN(plane(pl)%dip)! * DEG_TO_RAD)
 
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! ------------------------------------------------ point-source case  --------------------------------------------------------
@@ -1038,7 +1059,7 @@ print*, 'rupture ', maxval(plane(pl)%rupture)
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
-      sd = SIN(plane(pl)%dip * DEG_TO_RAD)
+      sd = SIN(plane(pl)%dip)! * DEG_TO_RAD)
 
       ASSOCIATE(model => input%velocity(vel))
 
@@ -1444,7 +1465,7 @@ print*, 'rupture ', maxval(plane(pl)%rupture)
       ALLOCATE(vsvr(nu, nv), solution(nu, nv))
 
       z0 = plane(pl)%z
-      sd = SIN(plane(pl)%dip * DEG_TO_RAD)
+      sd = SIN(plane(pl)%dip)! * DEG_TO_RAD)
 
       ASSOCIATE(model => input%velocity(vel))
 
@@ -1629,8 +1650,8 @@ print*, 'rupture ', maxval(plane(pl)%rupture)
 
       nu = SIZE(plane(pl)%u)
 
-      dip    = plane(pl)%dip * DEG_TO_RAD
-      strike = plane(pl)%strike * DEG_TO_RAD
+      dip    = plane(pl)%dip !* DEG_TO_RAD
+      strike = plane(pl)%strike !* DEG_TO_RAD
 
       ! input grid-step
       du = plane(pl)%u(3) - plane(pl)%u(2)
@@ -1721,8 +1742,8 @@ print*, 'rupture ', maxval(plane(pl)%rupture)
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
-      dip    = plane(pl)%dip * DEG_TO_RAD
-      strike = plane(pl)%strike * DEG_TO_RAD
+      dip    = plane(pl)%dip !* DEG_TO_RAD
+      strike = plane(pl)%strike !* DEG_TO_RAD
 
       ! input grid-step
       du = plane(pl)%u(3) - plane(pl)%u(2)
@@ -1856,8 +1877,8 @@ print*, 'rupture ', maxval(plane(pl)%rupture)
       y = v
       z = w
 
-      dip    = plane(pl)%dip * DEG_TO_RAD
-      strike = plane(pl)%strike * DEG_TO_RAD
+      dip    = plane(pl)%dip !* DEG_TO_RAD
+      strike = plane(pl)%strike !* DEG_TO_RAD
 
       CALL rotate(x, y, z, dip, 0._r32, strike)
 
@@ -1896,8 +1917,8 @@ print*, 'rupture ', maxval(plane(pl)%rupture)
         z(i) = w(i)
       ENDDO
 
-      dip    = plane(pl)%dip * DEG_TO_RAD
-      strike = plane(pl)%strike * DEG_TO_RAD
+      dip    = plane(pl)%dip !* DEG_TO_RAD
+      strike = plane(pl)%strike !* DEG_TO_RAD
 
       CALL rotate(x, y, z, dip, 0._r32, strike)
 

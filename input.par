@@ -17,7 +17,8 @@ output folder = '/home/walter/Backedup/Software/bbtoolbox/test/hf' format = 'sw4
 # define (point-)source (use lon/lat if rec is given in lon/lat)
 # required fields are "x"/"y"/"z" (or "lon"/"lat"/"z" is receivers position is given in geographical coordinates), "strike", "dip", "rake" ...
 # ... "m0", "type" (default "Brune") and "freq" (default=6.28)
-source x= 50000 y=50000 z=10000 strike=45 dip=90 rake=0 m0=1.0e+15 type='brune' freq=12.57
+source x= 50000 y=50000 z=2200 strike=200 dip=60 rake=-30 m0=1.0e+15 type='brune' freq=12.57
+#source x= 50000 y=50000 z=10000 strike=20 dip=120 rake=30 m0=1.0e+15 type='brune' freq=12.57
 #source lon=-116.25 lat=34.50 z=300 strike=20 dip=70 rake=30 m0=1.0e+19 type='brune' freq=6.28
 
 # ... or extended source (incl. roughness and RIK parameters: these are optional)
@@ -39,15 +40,13 @@ source x= 50000 y=50000 z=10000 strike=45 dip=90 rake=0 m0=1.0e+15 type='brune' 
 #layer vp = 1400 vs = 800  rho = 2000
 #layer vp = 2400 vs = 1400 rho = 2400 depth = 500 vpgrad=0.7 vsgrad=0.4 rhograd=0.4
 #layer vp = 3800 vs = 2200 rho = 2700 depth = 2100
-#layer vp=4000 vs=3500 rho=2800
 
 # second model
-#layer vp = 850  vs = 500  rho = 1800
-#layer vp = 2600 vs = 1500 rho = 2400 depth = 350
-#layer vp = 4650 vs = 2700 rho = 2800 depth = 1800
-#layer vp=2600 vs=500 rho=2400
+layer vp = 3500 vs = 2000 rho = 2000
+layer vp = 3700 vs = 2100 rho = 2400 depth = 500 
+layer vp = 3900 vs = 2200 rho = 2700 depth = 2100
 
-layer vp=3500 vs=2000 rho=2700
+#layer vp=3500 vs=2000 rho=2700
 
 # swiss reference model
 #layer vs = 1000 vsgrad = 6.35              vp = 1732 vpgrad = 11   rho = 2700
@@ -73,7 +72,7 @@ layer vp=3500 vs=2000 rho=2700
 # note: these properties are the same for the whole model
 # tip: to specify no scattering/attenuation, give a single frequency band (e.g. frequency=[1,30]) and set other fields to zero (i.e. gss = [0.], etc.)
 # first model
-attenuation gpp = [0, 0, 0] gps = [0, 0, 0] gss = [0, 0, 0] b = [0, 0, 0] frequency = [1,2; 2,4; 4,8]
+attenuation gpp = [0] gps = [0] gss = [0] b = [0] frequency = [1,8]
 
 #attenuation gpp = [0.0015, 0.0015, 0.0015] gps = [0.012, 0.012, 0.012] gss = [0.01, 0.01, 0.01] +
 #            b = [0.0002, 0.0002, 0.0002] frequency = [1,2;2,4;4,8]
@@ -124,5 +123,7 @@ rec x=53536 y=46464 z=0 file='s10'
 rec x=64142 y=35858 z=0 file='s11' 
 rec x=74749 y=25251 z=0 file='s12' 
 
+#rec x=200000 y=50000 z=0 file='sboo'
+
 # set optional parameters (all fields are optional)
-advanced pmw = 4 avecuts = 20 waves = 0 verbose = 2
+advanced pmw = 4 avecuts = 5 waves = 0 verbose = 2
