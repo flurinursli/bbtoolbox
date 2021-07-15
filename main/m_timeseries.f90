@@ -469,7 +469,7 @@ amplification(rcvr)%value(:) = 2.
         n = n + 1
       ENDDO
 
-      REWIND(1, IOSTAT = ok, IOMSG = msg)
+      REWIND(lu, IOSTAT = ok, IOMSG = msg)
 
       IF (ok .ne. 0) THEN
         CALL report_error('parse_sw4 - ERROR: ' + TRIM(msg))
@@ -544,7 +544,7 @@ amplification(rcvr)%value(:) = 2.
         n = n + 1
       ENDDO
 
-      REWIND(1, IOSTAT = ok, IOMSG = msg)
+      REWIND(lu, IOSTAT = ok, IOMSG = msg)
 
       IF (ok .ne. 0) THEN
         CALL report_error('parse_plaintxt - ERROR: ' + TRIM(msg))
@@ -1211,7 +1211,12 @@ amplification(rcvr)%value(:) = 2.
       ! Purpose:
       !   to merge long- and short-period timeseries for receiver "recvr" together. On exit, "ok" is not zero if an error occurred.
       !   The subroutine follows the procedure outlined in Mai&Beroza (2003) based on a couple of matched filters (Hann windows)
-      !   whose characteristics are controlled by "input%coda%matching" and "input%coda%bandwidth".
+      !   whose characteristics are controlled by "input%coda%matching" and "input%coda%bandwidth". In particular, the latter controls
+      !   the width of the filter (size half window), while the fist the central frequency (i.e. frequency where filter amplitude is
+      !   0.5Hz). For instance if "input%coda%matching"=1 and "input%coda%bandwidth"=0.5, stitching occurs in the interval
+      !   [0.75 1.25].
+      !   Recommendations: avoid too narrow (< 0.5Hz) bandwidths since this will likely produce ringing in the composite timeseries,
+      !   especially if long- and short-period components have somewhat different spectra in the spectral matching region.
       !
       ! Revisions:
       !     Date                    Description of change

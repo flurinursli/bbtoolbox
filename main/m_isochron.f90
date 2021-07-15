@@ -1492,7 +1492,7 @@ print*, 'scale ', scale, moment
       !   initial values at each corner, while in output they refer to the new orientation.
       !   The algorithm first computes the normal and slip vectors for the unperturbed case (as given by strike, dip and rake). These
       !   are used to define the pressure axis P and then (by plugging in the new normal) the new rake angle.
-      !   WARNING: input values are expected to follow the N, E, D coordinates system, with dip <= 90. Internally the E, N, U system
+      !   WARNING: input values are expected to follow the N, E, D coordinates system (with dip <= 90 ?). Internally the E, N, U system
       !            is assumed. "nrl" must be normalized to 1.
       !   Output values are in the range [0, pi] or [-pi, 0] (slip and rake) or [0, pi] dip.
       !

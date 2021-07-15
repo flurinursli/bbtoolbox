@@ -973,21 +973,21 @@ MODULE m_toolbox
       CALL update_log('Summary of input parameters', blankline = .false.)
 
       CALL update_log(num2char('Input folder LF seismograms', width=30, fill='.') +  &
-                      num2char(TRIM(input%input%folder), width=79, justify = 'c') + '|')
+                      num2char(TRIM(input%input%folder), width=95, justify = 'c') + '|')
       CALL update_log(num2char('Format LF seismograms', width=30, fill='.') +  &
-                      num2char(TRIM(input%input%format), width=79, justify='c') + '|', blankline = .false.)
+                      num2char(TRIM(input%input%format), width=95, justify='c') + '|', blankline = .false.)
       CALL update_log(num2char('Variable LF seismograms', width=30, fill='.') +  &
-                      num2char(TRIM(input%input%variable), width=79, justify='c') + '|', blankline = .false.)
+                      num2char(TRIM(input%input%variable), width=95, justify='c') + '|', blankline = .false.)
 
       CALL update_log(num2char('Input folder amplification', width=30, fill='.') +  &
-                      num2char(TRIM(input%input%amplification), width=79, justify = 'c') + '|')
+                      num2char(TRIM(input%input%amplification), width=95, justify = 'c') + '|')
 
       CALL update_log(num2char('Output folder HF seismograms', width=30, fill='.') +  &
-                      num2char(TRIM(input%output%folder), width=79, justify = 'c') + '|')
+                      num2char(TRIM(input%output%folder), width=95, justify = 'c') + '|')
       CALL update_log(num2char('Format HF seismograms', width=30, fill='.') +  &
-                      num2char(TRIM(input%output%format), width=79, justify='c') + '|', blankline = .false.)
+                      num2char(TRIM(input%output%format), width=95, justify='c') + '|', blankline = .false.)
       CALL update_log(num2char('Variable HF seismograms', width=30, fill='.') +  &
-                      num2char(TRIM(input%output%variable), width=79, justify='c') + '|', blankline = .false.)
+                      num2char(TRIM(input%output%variable), width=95, justify='c') + '|', blankline = .false.)
 
       CALL update_log(num2char('Coda parameters', width=30, fill='.') + num2char('Fmax', width=15, justify='r') + '|' +  &
                       num2char('Matching fr.', width=15, justify='r') + '|' + num2char('Bandwidth', width=15, justify='r') + '|' + &
