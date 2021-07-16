@@ -12,7 +12,7 @@ input folder = '/home/walter/Backedup/Software/bbtoolbox/validation/output_s20d1
 #      amplification = '/home/walter/Backedup/Software/bbtoolbox/test/AmpFunctions/Elastic'
 
 # info for output hybrid synthetics
-output folder = '/home/walter/Backedup/Software/bbtoolbox/test/hf' format = 'sw4' variable = 'velocity'
+output folder = '/home/walter/Backedup/Software/bbtoolbox/test/hf' format = 'mseed' variable = 'velocity'
 
 # define (point-)source (use lon/lat if rec is given in lon/lat)
 # required fields are "x"/"y"/"z" (or "lon"/"lat"/"z" is receivers position is given in geographical coordinates), "strike", "dip", "rake" ...

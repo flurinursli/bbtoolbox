@@ -18,7 +18,7 @@ MODULE m_timeseries
   PRIVATE
 
   PUBLIC :: timeseries, amplification
-  PUBLIC :: read_lp, seis2disk, differentiate, stitch, load_amplification, amplify
+  PUBLIC :: read_lp, seis2disk, differentiate, stitch, amplify
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
@@ -44,7 +44,8 @@ MODULE m_timeseries
   TYPE(tsr) :: timeseries            !< timeseries%lp%x(npts, nrec), timeseries%lp%time(npts), timeseries%lp%dt
 
   TYPE :: amp
-    REAL(r32), ALLOCATABLE, DIMENSION(:) :: frequency, value
+    REAL(r32), ALLOCATABLE, DIMENSION(:)   :: frequency
+    REAL(r32), ALLOCATABLE, DIMENSION(:,:) :: value
   END TYPE amp
 
   TYPE(amp), ALLOCATABLE, DIMENSION(:) :: amplification
@@ -66,12 +67,13 @@ MODULE m_timeseries
     SUBROUTINE read_lp(ok, rank, ntasks)
 
       ! Purpose:
-      !   to read long-period timeseries. On exit, "ok" is not zero if an error occurred.
+      !   to read long-period timeseries and (optional) amplification curves. On exit, "ok" is not zero if an error occurred.
       !
       ! Revisions:
       !     Date                    Description of change
       !     ====                    =====================
       !   08/03/21                  original version
+      !   01/07/21                  added part for amplification curves
       !
 
       INTEGER(i32), INTENT(OUT) :: ok
@@ -81,6 +83,14 @@ MODULE m_timeseries
       !-----------------------------------------------------------------------------------------------------------------------------
 
       IF (rank .eq. 0) CALL disk2seis(ok)
+
+#ifdef MPI
+      CALL mpi_bcast(ok, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr)
+#endif
+
+      IF (ok .ne. 0) RETURN
+
+      IF (rank .eq. 0) CALL disk2amp(ok)
 
 #ifdef MPI
       CALL mpi_bcast(ok, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr)
@@ -102,7 +112,7 @@ MODULE m_timeseries
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE load_amplification(ok, rank, ntasks)
+    SUBROUTINE disk2amp(ok)
 
       ! Purpose:
       !   to read (optional) amplification curves stored in plain ASCII files. On exit, "ok" is not zero if an error occurred.
@@ -113,66 +123,11 @@ MODULE m_timeseries
       !   01/07/21                  original version
       !
 
-      INTEGER(i32), INTENT(OUT) :: ok
-      INTEGER(i32), INTENT(IN)  :: rank, ntasks
-      INTEGER(i32)              :: ierr, rcvr, n
-      LOGICAL                   :: is_allocated
-
-      !-----------------------------------------------------------------------------------------------------------------------------
-
-      IF (rank .eq. 0) CALL parse_amplification(ok)
-
-#ifdef MPI
-      CALL mpi_bcast(ok, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr)
-#endif
-
-      IF (ok .ne. 0) RETURN
-
-#ifdef MPI
-
-      is_allocated = ALLOCATED(amplification)
-
-      CALL mpi_bcast(is_allocated, 1, MPI_LOGICAL, 0, MPI_COMM_WORLD, ierr)
-
-      IF (.not.is_allocated) RETURN       !< do nothing if amplification curves are not available
-
-      DO rcvr = 1, SIZE(input%receiver)
-
-        IF (rank .eq. 0) n = SIZE(amplification(rcvr)%frequency)
-
-        CALL mpi_bcast(n, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr)
-
-        IF (rank .ne. 0) ALLOCATE(amplification(rcvr)%frequency(n), amplification(rcvr)%value(n))
-
-        CALL mpi_bcast(amplification(rcvr)%frequency, n, MPI_REAL, 0, MPI_COMM_WORLD, ierr)
-        CALL mpi_bcast(amplification(rcvr)%value, n, MPI_REAL, 0, MPI_COMM_WORLD, ierr)
-
-      ENDDO
-
-#endif
-
-    END SUBROUTINE load_amplification
-
-    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
-    !===============================================================================================================================
-    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
-
-    SUBROUTINE parse_amplification(ok)
-
-      ! Purpose:
-      !   to read (optional) amplification curves stored in plain ASCII files. On exit, "ok" is not zero if an error occurred.
-      !
-      ! Revisions:
-      !     Date                    Description of change
-      !     ====                    =====================
-      !   01/07/21                  original version
-      !
-
-      INTEGER(i32),             INTENT(OUT) :: ok
-      CHARACTER(256)                        :: msg
-      CHARACTER(:), ALLOCATABLE             :: fo
-      INTEGER(i32)                          :: lu, rcvr, n, lino, ierr, idum
-      REAL(r32)                             :: rdum
+      INTEGER(i32),                           INTENT(OUT) :: ok
+      CHARACTER(256)                                      :: msg
+      CHARACTER(:),  ALLOCATABLE                          :: fo
+      INTEGER(i32)                                        :: lu, rcvr, n
+      REAL(r32),     ALLOCATABLE, DIMENSION(:)            :: frequency, x, y, z
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
@@ -180,7 +135,7 @@ MODULE m_timeseries
 
       fo = TRIM(input%input%amplification)
 
-      IF (fo .eq. 'none') RETURN
+      IF (fo .eq. 'none') RETURN               !< return immediately if no amplification curves are not available
 
       ALLOCATE(amplification(SIZE(input%receiver)))
 
@@ -192,63 +147,34 @@ MODULE m_timeseries
              IOMSG = msg)
 
         IF (ok .ne. 0) THEN
-          CALL report_error('parse_amplification - ERROR: ' + TRIM(msg))
+          CALL report_error('disk2amp - ERROR: ' + TRIM(msg))
           RETURN
         ENDIF
 
-        n = 0
+        CALL parse_plaintxt(ok, lu, frequency, x, y, z)
 
-        DO
-          READ(lu, *, IOSTAT = ok, IOMSG = msg)
-          IF (ok .ne. 0) THEN
-            IF (IS_IOSTAT_END(ok)) THEN
-              EXIT
-            ELSE
-              CALL report_error('parse_amplification - ERROR: ' + TRIM(msg))
-              RETURN
-            ENDIF
-          ENDIF
-          n = n + 1
-        ENDDO
+        amplification(rcvr)%frequency = frequency
 
-        REWIND(lu, IOSTAT = ok, IOMSG = msg)
+        n = SIZE(frequency)
 
-        IF (ok .ne. 0) THEN
-          CALL report_error('parse_amplification - ERROR: ' + TRIM(msg))
-          RETURN
-        ENDIF
+        ALLOCATE(amplification(rcvr)%value(n, 3))
 
-        IF (n .le. 0) THEN
-          CALL report_error('parse_amplification - ERROR: file ' + TRIM(fo) + ' is empty')
-          ok = 1
-          RETURN
-        ENDIF
+        amplification(rcvr)%value(:, 1) = x
+        amplification(rcvr)%value(:, 2) = y
+        amplification(rcvr)%value(:, 3) = z
 
-        ALLOCATE(amplification(rcvr)%frequency(n), amplification(rcvr)%value(n))
-
-        DO lino = 1, n
-          READ(lu, *, IOSTAT = ok, IOMSG = msg) amplification(rcvr)%frequency(lino), amplification(rcvr)%value(lino),       &
-                                                rdum, rdum, idum
-          IF (ok .ne. 0) THEN
-            CALL report_error('parse_amplification - ERROR: ' + TRIM(msg))
-            RETURN
-          ENDIF
-        ENDDO
+        DEALLOCATE(frequency, x, y, z)
 
         CLOSE(lu, IOSTAT = ok, IOMSG = msg)
 
         IF (ok .ne. 0) THEN
-          CALL report_error('parse_amplification - ERROR: ' + TRIM(msg))
+          CALL report_error('disk2amp - ERROR: ' + TRIM(msg))
           RETURN
         ENDIF
 
-
-amplification(rcvr)%value(:) = 2.
-
-
       ENDDO
 
-    END SUBROUTINE parse_amplification
+    END SUBROUTINE disk2amp
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
@@ -407,15 +333,18 @@ amplification(rcvr)%value(:) = 2.
       !     Date                    Description of change
       !     ====                    =====================
       !   08/03/21                  original version
+      !   01/07/21                  added broadcasting of amplification curves
       !
 
-      INTEGER(i32)               :: rcvr, ierr
+      INTEGER(i32)               :: rcvr, ierr, l
       INTEGER(i32), DIMENSION(3) :: n
+      LOGICAL                    :: is_allocated
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
 #ifdef MPI
 
+      ! broadcast long-period timeseries
       n = SHAPE(timeseries%lp%xyz)
 
       CALL mpi_bcast(n, 3, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr)
@@ -426,6 +355,28 @@ amplification(rcvr)%value(:) = 2.
 
       CALL mpi_bcast(timeseries%lp%xyz, n(1)*n(2)*n(3), MPI_REAL, 0, MPI_COMM_WORLD, ierr)
       CALL mpi_bcast(timeseries%lp%time, n(1), MPI_REAL, 0, MPI_COMM_WORLD, ierr)
+
+      ! broadcast amplification curves
+      is_allocated = ALLOCATED(amplification)
+
+      CALL mpi_bcast(is_allocated, 1, MPI_LOGICAL, 0, MPI_COMM_WORLD, ierr)
+
+      IF (.not.is_allocated) RETURN       !< return immediately if amplification curves are not available
+
+      DO rcvr = 1, SIZE(input%receiver)
+
+        l = SIZE(amplification(rcvr)%frequency)
+
+        CALL mpi_bcast(l, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr)
+
+        IF (.not.ALLOCATED(amplification(rcvr)%frequency)) THEN
+          ALLOCATE(amplification(rcvr)%frequency(l), amplification(rcvr)%value(l, 3))
+        ENDIF
+
+        CALL mpi_bcast(amplification(rcvr)%frequency, l, MPI_REAL, 0, MPI_COMM_WORLD, ierr)
+        CALL mpi_bcast(amplification(rcvr)%value, l*3, MPI_REAL, 0, MPI_COMM_WORLD, ierr)
+
+      ENDDO
 
 #endif
 
@@ -654,28 +605,32 @@ amplification(rcvr)%value(:) = 2.
       INTEGER(i32),                           INTENT(OUT) :: ok
       INTEGER(i32),                           INTENT(IN)  :: iter
       CHARACTER(2),                           INTENT(IN)  :: seis
-      CHARACTER(:), ALLOCATABLE                           :: fo, extension
+      CHARACTER(:), ALLOCATABLE                           :: fo, fmt, extension
       INTEGER(i32)                                        :: lu, rcvr, ic
       REAL(r32)                                           :: dt
       REAL(r32),    ALLOCATABLE, DIMENSION(:)             :: time, x, y, z
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
-      fo = TRIM(input%output%format)
+      fmt = TRIM(input%output%format)
 
-      IF ( (fo .eq. 'sw4') .or. (fo .eq. 'SW4') ) THEN
+      IF (lowercase(fmt) .eq. 'sw4') THEN
         extension = '.txt'
         wsubr => write_sw4
 
-      ELSEIF ( (fo .eq. 'txt') .or. (fo .eq. 'TXT') ) THEN
+      ELSEIF (lowercase(fmt) .eq. 'txt') THEN
         extension = '.txt'
         wsubr => write_plaintxt
 
-      ELSEIF ( (fo .eq. 'paz') .or. (fo .eq. 'PAZ') ) THEN
+      ELSEIF (lowercase(fmt) .eq. 'paz') THEN
         extension = '.txt'
         wsubr => write_bafu
 
-      ELSEIF ( (fo .eq. 'usr') .or. (fo .eq. 'USR') ) THEN
+      ELSEIF (lowercase(fmt) .eq. 'mseed') THEN
+        extension = '.mseed.ascii'
+        wsubr => write_mseed
+
+      ELSEIF (lowercase(fmt) .eq. 'usr') THEN
         extension = '.txt'
         wsubr => write_usr
 
@@ -695,24 +650,43 @@ amplification(rcvr)%value(:) = 2.
       IF (TRIM(input%output%variable) .eq. 'acceleration') pfun => differentiate
 
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
-      ! ------------------------------------------ BAFU format (one component per file) --------------------------------------------
+      ! --------------------------------------- BAFU, SEED formats (one component per file) ----------------------------------------
 
-      IF ( (fo .eq. 'paz') .or. (fo .eq. 'PAZ') ) THEN
+      IF ( (lowercase(fmt) .eq. 'paz') .or. (lowercase(fmt) .eq. 'mseed') ) THEN
 
         DO rcvr = 1, SIZE(input%receiver)
 
           DO ic = 1, 3
 
             IF (ic .eq. 1) THEN
-              m_cp = 'NS'
+              IF (lowercase(fmt) .eq. 'paz') THEN
+                m_cp = 'NS'
+              ELSEIF (lowercase(fmt) .eq. 'mseed') THEN
+                m_cp = 'N'
+              ENDIF
             ELSEIF (ic .eq. 2) THEN
-              m_cp = 'EW'
+              IF (lowercase(fmt) .eq. 'paz') THEN
+                m_cp = 'EW'
+              ELSEIF (lowercase(fmt) .eq. 'mseed') THEN
+                m_cp = 'E'
+              ENDIF
             ELSE
-              m_cp = 'UD'
+              IF (lowercase(fmt) .eq. 'paz') THEN
+                m_cp = 'UD'
+              ELSEIF (lowercase(fmt) .eq. 'mseed') THEN
+                m_cp = 'Z'
+              ENDIF
             ENDIF
 
-            fo = TRIM(input%output%folder) + '/' + uppercase(input%output%variable(1:3)) + '_' + num2char(iter) + '_' +    &
-                 TRIM(input%receiver(rcvr)%file) + '.' + m_cp + '.' + seis + extension
+            fo = TRIM(input%output%folder) + '/'
+
+            IF (lowercase(fmt) .eq. 'paz') THEN
+              fo = fo + uppercase(input%output%variable(1:3)) + '_' + num2char(iter, digits=3) + '_'+     &
+                   uppercase(TRIM(input%receiver(rcvr)%file)) + '.' + TRIM(m_cp) + '.' + seis + extension
+            ELSEIF (lowercase(fmt) .eq. 'mseed') THEN
+              fo = fo + '000000000000' + num2char(iter, digits=2) + '_CH_' +   &
+                   uppercase(TRIM(input%receiver(rcvr)%file)) + '_' + uppercase(seis) + TRIM(m_cp) + extension
+            ENDIF
 
             OPEN(NEWUNIT = lu, FILE = fo, STATUS = 'replace', FORM = 'formatted', access= 'sequential', action= 'write', IOSTAT= ok)
 
@@ -725,7 +699,9 @@ amplification(rcvr)%value(:) = 2.
 
               ASSOCIATE(x => timeseries%lp%xyz(:, ic, rcvr), time => timeseries%lp%time, dt => timeseries%lp%dt)
 
-                IF (ASSOCIATED(pfun)) x = pfun(x, dt) * 100._r32       !< move from m to cm
+                IF (ASSOCIATED(pfun)) x = pfun(x, dt)
+
+                IF (lowercase(fo) .eq. 'paz') x = x * 100._r32      !< move from m to cm
 
                 m_iter = iter         !< pass values to module aliases
                 m_rcvr = rcvr
@@ -738,7 +714,9 @@ amplification(rcvr)%value(:) = 2.
 
               ASSOCIATE(x => timeseries%sp%xyz(:, ic, rcvr), time => timeseries%sp%time, dt => timeseries%sp%dt)
 
-                IF (ASSOCIATED(pfun)) x = pfun(x, dt) * 100._r32        !< move from m to cm
+                IF (ASSOCIATED(pfun)) x = pfun(x, dt)
+
+                IF (lowercase(fo) .eq. 'paz') x = x * 100._r32      !< move from m to cm
 
                 m_iter = iter         !< pass values to module aliases
                 m_rcvr = rcvr
@@ -751,7 +729,9 @@ amplification(rcvr)%value(:) = 2.
 
               ASSOCIATE(x => timeseries%bb%xyz(:, ic, rcvr), time => timeseries%bb%time, dt => timeseries%bb%dt)
 
-                IF (ASSOCIATED(pfun)) x = pfun(x, dt) * 100._r32        !< move from m to cm
+                IF (ASSOCIATED(pfun)) x = pfun(x, dt)
+
+                IF (lowercase(fo) .eq. 'paz') x = x * 100._r32      !< move from m to cm
 
                 m_iter = iter         !< pass values to module aliases
                 m_rcvr = rcvr
@@ -764,7 +744,9 @@ amplification(rcvr)%value(:) = 2.
 
               ASSOCIATE(x => timeseries%cd%xyz(:, ic, rcvr), time => timeseries%cd%time, dt => timeseries%cd%dt)
 
-                IF (ASSOCIATED(pfun)) x = pfun(x, dt) * 100._r32        !< move from m to cm
+                IF (ASSOCIATED(pfun)) x = pfun(x, dt)
+
+                IF (lowercase(fo) .eq. 'paz') x = x * 100._r32      !< move from m to cm
 
                 m_iter = iter         !< pass values to module aliases
                 m_rcvr = rcvr
@@ -798,7 +780,8 @@ amplification(rcvr)%value(:) = 2.
 
         DO rcvr = 1, SIZE(input%receiver)
 
-          fo = TRIM(input%output%folder) + '/' + TRIM(input%receiver(rcvr)%file) + '_' + seis + '_' + num2char(iter) + extension
+          fo = TRIM(input%output%folder) + '/' + TRIM(input%receiver(rcvr)%file) + '_' + seis + '_' + num2char(iter, digits=3) +  &
+               extension
 
           OPEN(NEWUNIT = lu, FILE = fo, STATUS = 'replace', FORM = 'formatted', ACCESS = 'sequential', action = 'write', IOSTAT= ok)
 
@@ -922,7 +905,8 @@ amplification(rcvr)%value(:) = 2.
       CHARACTER(5)                                        :: zone
       CHARACTER(8)                                        :: date
       CHARACTER(10)                                       :: hms
-      CHARACTER(:), ALLOCATABLE                           :: timestamp, lonlat, xy, msg
+      CHARACTER(256)                                      :: msg
+      CHARACTER(:),  ALLOCATABLE                          :: timestamp, lonlat, xy
       INTEGER(i32)                                        :: lino
 
       !-----------------------------------------------------------------------------------------------------------------------------
@@ -942,7 +926,7 @@ amplification(rcvr)%value(:) = 2.
         RETURN
       ENDIF
 
-      WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) '# Scenario: ' + num2char(m_iter)
+      WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) '# Scenario: ' + num2char(m_iter, digits=3)
       IF (ok .ne. 0) THEN
         CALL report_error('write_sw4 - ERROR: ' + msg)
         RETURN
@@ -1045,11 +1029,11 @@ amplification(rcvr)%value(:) = 2.
       !   08/03/21                  original version
       !
 
-      INTEGER(i32),                           INTENT(OUT) :: ok
-      INTEGER(i32),                           INTENT(IN)  :: lu
-      REAL(r32),                DIMENSION(:), INTENT(IN)  :: time, x, y, z
-      CHARACTER(:), ALLOCATABLE                           :: msg
-      INTEGER(i32)                                        :: lino
+      INTEGER(i32),                INTENT(OUT) :: ok
+      INTEGER(i32),                INTENT(IN)  :: lu
+      REAL(r32),     DIMENSION(:), INTENT(IN)  :: time, x, y, z
+      CHARACTER(256)                           :: msg
+      INTEGER(i32)                             :: lino
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
@@ -1090,7 +1074,8 @@ amplification(rcvr)%value(:) = 2.
       CHARACTER(5)                                        :: zone
       CHARACTER(8)                                        :: date
       CHARACTER(10)                                       :: hms
-      CHARACTER(:), ALLOCATABLE                           :: timestamp, msg
+      CHARACTER(256)                                      :: msg
+      CHARACTER(:), ALLOCATABLE                           :: timestamp
       INTEGER(i32)                                        :: lino
 
       !-----------------------------------------------------------------------------------------------------------------------------
@@ -1201,6 +1186,69 @@ amplification(rcvr)%value(:) = 2.
       ENDDO
 
     END SUBROUTINE write_bafu
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    SUBROUTINE write_mseed(ok, lu, time, x, y, z)
+
+      ! Purpose:
+      !   to write ASCII output files where timeseries are stored based on the mseed SLIST described in https://
+      !   docs.obspy.org/tutorial/code_snippets/export_seismograms_to_ascii.html). On exit, "ok" is not zero if an error occurred.
+      !   Note that in this case "x", "y" and "z" all refer to the same vector.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   02/07/21                  original version
+      !
+
+      INTEGER(i32),                            INTENT(OUT) :: ok
+      INTEGER(i32),                            INTENT(IN)  :: lu
+      REAL(r32),                 DIMENSION(:), INTENT(IN)  :: time, x, y, z
+      CHARACTER(256)                                       :: msg
+      CHARACTER(:),  ALLOCATABLE                           :: header
+      INTEGER(i32)                                         :: lino, fs, j, npts
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      fs = NINT(1._r32 / (time(2) - time(1)))
+
+      npts = SIZE(time)
+
+      ! work with multiple of 6 lines
+      npts = 6 * (npts / 6)
+
+      header = 'TIMESERIES CH_' + uppercase(TRIM(input%receiver(m_rcvr)%file)) + '__HG' + TRIM(m_cp) + '_D, ' +    &
+               num2char(npts) + ' samples, ' + num2char(fs) + 'sps, 0000-00-00 00:00:' + num2char(m_iter, digits=2) +  &
+               '.000000, SLIST'
+
+#ifdef DOUBLE_PREC
+      header = header + ', DOUBLE,'
+#else
+      header = header + ', FLOAT,'
+#endif
+
+      WRITE(lu, '(A)', IOSTAT = ok, IOMSG = msg) header
+      IF (ok .ne. 0) THEN
+        CALL report_error('write_mseed - ERROR: ' + TRIM(msg))
+        RETURN
+      ENDIF
+
+      DO lino = 0, npts - 1, 6
+#ifdef DOUBLE_PREC
+        WRITE(lu, '(6(ES23.13))', IOSTAT = ok, IOMSG = msg) x(lino + 1:lino + 6)
+#else
+        WRITE(lu, '(6(ES15.5))', IOSTAT = ok, IOMSG = msg) x(lino + 1:lino + 6)
+#endif
+        IF (ok .ne. 0) THEN
+          CALL report_error('write_mseed - ERROR: ' + TRIM(msg))
+          RETURN
+        ENDIF
+      ENDDO
+
+    END SUBROUTINE write_mseed
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
@@ -1348,7 +1396,7 @@ amplification(rcvr)%value(:) = 2.
 
       IF (TRIM(input%input%amplification) .eq. 'none') RETURN             !< do nothing if amplification curves are not available
 
-      CALL setup_interpolation('linear', 'zero', ok)
+      CALL setup_interpolation('linear', 'copy', ok)
 
       IF (ok .ne. 0) RETURN
 
@@ -1366,10 +1414,9 @@ amplification(rcvr)%value(:) = 2.
       ENDDO
 
       DO rcvr = 1, SIZE(input%receiver)
-
-        CALL interpolate(amplification(rcvr)%frequency, amplification(rcvr)%value, freq, x)
-
         DO ic = 1, 3
+
+          CALL interpolate(amplification(rcvr)%frequency, amplification(rcvr)%value(:, ic), freq, x)
 
           CALL fft(timeseries%bb%xyz(:, ic, rcvr), spectrum)
 
@@ -1380,7 +1427,6 @@ amplification(rcvr)%value(:) = 2.
           CALL ifft(timeseries%bb%xyz(:, ic, rcvr), spectrum)
 
         ENDDO
-
       ENDDO
 
       CALL destroy_fftw_plan([npts])

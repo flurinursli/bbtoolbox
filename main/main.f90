@@ -81,15 +81,7 @@ PROGRAM main
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
   ! ------------------------------------------------- load input time-series  ------------------------------------------------------
 
-  ! CALL read_lp(ok, rank, ntasks)
-
-#ifdef MPI
-  IF (ok .ne. 0) CALL mpi_abort(mpi_comm_world, ok, ierr)
-#else
-  STOP
-#endif
-
-  CALL load_amplification(ok, rank, ntasks)
+  CALL read_lp(ok, rank, ntasks)
 
 #ifdef MPI
   IF (ok .ne. 0) CALL mpi_abort(mpi_comm_world, ok, ierr)
@@ -99,14 +91,6 @@ PROGRAM main
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
   ! ------------------------------------------------------- time stuff -------------------------------------------------------------
-
-  CALL read_lp(ok, rank, ntasks)
-
-#ifdef MPI
-  IF (ok .ne. 0) CALL mpi_abort(mpi_comm_world, ok, ierr)
-#else
-  STOP
-#endif
 
   nrecs = SIZE(input%receiver)
 
