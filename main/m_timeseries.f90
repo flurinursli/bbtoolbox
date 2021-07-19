@@ -1221,7 +1221,7 @@ MODULE m_timeseries
       npts = 6 * (npts / 6)
 
       header = 'TIMESERIES CH_' + uppercase(TRIM(input%receiver(m_rcvr)%file)) + '__HG' + TRIM(m_cp) + '_D, ' +    &
-               num2char(npts) + ' samples, ' + num2char(fs) + 'sps, 0000-00-00 00:00:' + num2char(m_iter, digits=2) +  &
+               num2char(npts) + ' samples, ' + num2char(fs) + ' sps, 0000-00-00 00:00:' + num2char(m_iter, digits=2) +  &
                '.000000, SLIST'
 
 #ifdef DOUBLE_PREC

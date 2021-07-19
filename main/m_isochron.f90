@@ -762,8 +762,8 @@ print*, 'weight ', weight
 
                 IF (wtp .eq. 1) THEN
 
-                  a0 = (2._r32 * ABS(mean(q)) * mean(mu) * mean(slip)) * 0.44_r32 * 2._r32 * attenuation * ISQRT3 * area
-                  a0 = a0 / maxsheets(wtp)                           !< each sheet contributes equally
+                  a0 = (2._r32 * ABS(mean(q)) * mean(mu) * mean(slip)) * area * attenuation * 2._r32 * 0.44_r32 * ISQRT3
+                  a0 = a0 / maxsheets(wtp)                            !< each sheet contributes equally
                   a0 = a0 / coda%pdirect(itc, ipc) * weight(wtp)
 
                   DO it = 1, npts - shift
@@ -780,7 +780,7 @@ print*, 'weight ', weight
 
                 ELSE
 
-                  a0 = (2._r32 * ABS(mean(q)) * mean(mu) * mean(slip)) * 0.60_r32 * 2._r32 * attenuation * ISQRT3 * area
+                  a0 = (2._r32 * ABS(mean(q)) * mean(mu) * mean(slip)) * area * attenuation * 2._r32 * 0.60_r32 * ISQRT3
                   a0 = a0 / maxsheets(wtp)                            !< each sheet contributes equally
                   a0 = a0 / coda%sdirect(itc, ipc) * weight(wtp)
 
@@ -802,8 +802,8 @@ print*, 'weight ', weight
 
             ENDDO    !< end loop over wave types
 
-            ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
-            ! --------------------------------------------- convolution with MRF -------------------------------------------------
+            ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+            ! --------------------------------------------- convolution with MRF ---------------------------------------------------
 
 #ifdef PERF
             CALL watch_start(tictoc, COMM)
@@ -830,8 +830,8 @@ print*, 'weight ', weight
             ostopwatch(9) = ostopwatch(9) + tictoc
 #endif
 
-            ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
-            ! -------------------------------------------- rotate & stack --------------------------------------------------------
+            ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+            ! -------------------------------------------- rotate & stack ----------------------------------------------------------
 
             ! move back from "u/t" (fault-parallel/fault-normal) to "x/y" coordinates
             CALL rotate(rtri(:, 1), rtri(:, 2), rtri(:, 3), 0._r32, 0._r32, strike)
@@ -2176,7 +2176,7 @@ print*, 'ok coda ', ok
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    subroutine integration_step(ok, ref, rec, pl, vel, iter, step)
+    SUBROUTINE integration_step(ok, ref, rec, pl, vel, iter, step)
 
       INTEGER(i32),              INTENT(OUT) :: ok
       INTEGER(i32),              INTENT(IN)  :: ref, rec, pl, vel, iter

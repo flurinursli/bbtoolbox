@@ -441,15 +441,15 @@ MODULE m_rik
       !   08/03/21                  original version
       !
 
-      INTEGER(i32),                                  INTENT(IN)  :: ref, pl, vel, seed
-      INTEGER(i32)                                               :: iv, iu, nsubs, n, i, skip, ok, nrefs
-      REAL(r32)                                                  :: x, v, du, u, rise, rupture, phi, r, subvr, sd, z0
-      REAL(r32)                                                  :: lc, umax, umin
-      REAL(r32),                 DIMENSION(3)                    :: lvec, hvec
-      REAL(r32),                 DIMENSION(subtot)               :: pu, pv, subrupt
-      REAL(r32),    ALLOCATABLE, DIMENSION(:)                    :: sub2node
-      REAL(r32),                 DIMENSION(2,subtot)             :: z
-      REAL(r64)                                                  :: tictoc
+      INTEGER(i32),                                  INTENT(IN) :: ref, pl, vel, seed
+      INTEGER(i32)                                              :: iv, iu, nsubs, n, i, skip, ok, nrefs
+      REAL(r32)                                                 :: x, v, du, u, rise, rupture, phi, r, subvr, sd, z0
+      REAL(r32)                                                 :: lc, umax, umin
+      REAL(r32),                 DIMENSION(3)                   :: lvec, hvec
+      REAL(r32),                 DIMENSION(subtot)              :: pu, pv, subrupt
+      REAL(r32),    ALLOCATABLE, DIMENSION(:)                   :: sub2node
+      REAL(r32),                 DIMENSION(2,subtot)            :: z
+      REAL(r64)                                                 :: tictoc
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
