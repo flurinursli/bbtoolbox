@@ -19,6 +19,7 @@ MODULE m_noise
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
   REAL(r32), PARAMETER :: TWOPI = 3.14159265358979323846_r64 * 2._r64
+  REAL(r32), PARAMETER :: ISQRT3 = 1._r32 / SQRT(3._r32)
 
   PROCEDURE(luco), POINTER :: cohfun
 
@@ -35,9 +36,9 @@ MODULE m_noise
       ! Purpose:
       !   to compute high-frequency timeseries for all receivers (and components) representing scattered coda waves. The timeseries
       !   can be later shaped by scaled envelope functions to simulate actual coda. The high-frequency timeseries are characterized
-      !   by white spectrum, zero mean, unitary standard deviation and spatial correlation based on the select coherency model.
+      !   by white spectrum (mean value ~ 0.5), zero mean and spatial correlation based on the selected coherency model.
       !   Note that the actual appearence of the timeseries depends on the seed number (modified by "iter") and the required number
-      !   of time samples (depending on maximum time and time-step).
+      !   of time samples, the latter depending on maximum time and time-step (i.e. max desired frequency).
       !
       ! Revisions:
       !     Date                    Description of change
@@ -132,7 +133,8 @@ MODULE m_noise
       !   to compute a set of timeseries as zero-mean, Gaussian white noise being characterized by the desired frequency-dependent
       !   coherence model according to the conditional probability density function method (see Chapter 8 in Zerva's book).
       !
-      ! NOTE: the accuracy of this subroutine hasn't been verified yet!
+      ! WARNING: the accuracy of this subroutine hasn't been verified yet!
+      ! WARNING: variance of resulting timeseries hasn't been verified yet!
       !
       ! Revisions:
       !     Date                    Description of change
@@ -529,16 +531,17 @@ MODULE m_noise
 
         DO rcvr = 1, n
 
-          var = 0._r32
+          ! var = 0._r32
 
           DO fr = 1, npts
             z(fr) = CMPLX(fc_a(fr, rcvr), fc_b(fr, rcvr))
-            var   = var + ABS(z(fr))**2
+            ! var   = var + ABS(z(fr))**2
           ENDDO
 
-          var = 2._r32 * var / SIZE(timeseries%cd%time)**2
+          ! var = 2._r32 * var / SIZE(timeseries%cd%time)**2
 
-          z = z / SQRT(var)
+          ! z = z / SQRT(var)                    !< resulting timeseries will have unitary variance
+          z = z * npts * ISQRT3                  !< normalize such that |z| ~ 0.5 (or ~ 1 for single-sided spectra)
 
           CALL ifft(timeseries%cd%xyz(:, comp, rcvr), z)
 

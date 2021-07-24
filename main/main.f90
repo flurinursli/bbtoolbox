@@ -96,7 +96,7 @@ PROGRAM main
 
   timeseries%lp%dt = 0.5_r32 / 4
 
-  npts = NINT(40._r32 / timeseries%lp%dt) + 1
+  npts = NINT(80._r32 / timeseries%lp%dt) + 1
 
   ALLOCATE(timeseries%lp%time(npts), timeseries%lp%xyz(npts, 3, nrecs))
 
@@ -112,7 +112,7 @@ PROGRAM main
   ! npts = SIZE(timeseries%lp%time)
   !
   ! npts = NINT(timeseries%lp%time(npts) / timeseries%sp%dt) + 1
-  npts = NINT(40._r32 / timeseries%sp%dt) + 1
+  npts = NINT(80._r32 / timeseries%sp%dt) + 1
 
   ALLOCATE(timeseries%bb%xyz(npts, 3, nrecs))
   ALLOCATE(timeseries%sp%xyz(npts, 3, nrecs))
@@ -177,7 +177,7 @@ PROGRAM main
           IF (input%source%add_rik) CALL rik(ok, pl, vel, iter)
 
 #ifdef DEBUG
-          CALL node2disk(ok, pl, vel, iter)
+          CALL node2disk(ok, band, pl, vel, iter)
 #endif
 
           DO rec = 1, SIZE(input%receiver)

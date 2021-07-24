@@ -2,8 +2,8 @@
 # tmax is given by tmax of lf-seis
 # rupture and source are mutually exclusive
 
-# set coda parameters (coherency parameters are optional)
-coda fmax = 10. matching frequency = 1.5 bandwidth = 0.5 seed = 759203  samples = 2  +
+# set coda parameters (coherency parameters are optional)  
+coda fmax = 10. matching frequency = 1.5 bandwidth = 0.5 seed = 7592003  samples = 1  +
 # coherency
 model = 'hv' a = 0.736 b = 2.78 ak = 765.87 f0 = 1.09  alpha = 2.5e-04
 
@@ -12,13 +12,14 @@ input folder = '/home/walter/Backedup/Software/bbtoolbox/validation/output_s20d1
 #      amplification = '/home/walter/Backedup/Software/bbtoolbox/test/AmpFunctions/Elastic'
 
 # info for output hybrid synthetics
-output folder = '/home/walter/Backedup/Software/bbtoolbox/test/hf' format = 'sw4' variable = 'velocity'
+output folder = '/home/walter/Backedup/Software/bbtoolbox/test/hf' format = 'mseed' variable = 'velocity'
 
 # define (point-)source (use lon/lat if rec is given in lon/lat)
 # required fields are "x"/"y"/"z" (or "lon"/"lat"/"z" is receivers position is given in geographical coordinates), "strike", "dip", "rake" ...
 # ... "m0", "type" (default "Brune") and "freq" (default=6.28)
 #source x= 50000 y=50000 z=5000 strike=200 dip=60 rake=-30 m0=1.0e+15 type='brune' freq=12.57
-source x= 50000 y=50000 z=10000 strike=20 dip=120 rake=30 m0=1.0e+15 type='brune' freq=6.28
+source x= 80000 y=80000 z=10000 strike=20 dip=120 rake=30 m0=1.0e+15 type='brune' freq=25.04
+#source x= 80000 y=80000 z=10000 strike=0 dip=90 rake=0 m0=1.0e+15 type='brune' freq=25.04
 #source lon=-116.25 lat=34.50 z=300 strike=20 dip=70 rake=30 m0=1.0e+19 type='brune' freq=6.28
 
 # ... or extended source (incl. roughness and RIK parameters: these are optional)
@@ -73,23 +74,13 @@ layer vp=3500 vs=2000 rho=2700
 # note: these properties are the same for the whole model
 # tip: to specify no scattering/attenuation, give a single frequency band (e.g. frequency=[1,30]) and set other fields to zero (i.e. gss = [0.], etc.)
 # first model
-attenuation gpp = [0.002] gps = [0.006] gss = [0.01] b = [0] frequency = [1,12]
-#attenuation gpp = [0.002, 0.002, 0.002] gps = [0.006, 0.006, 0.006] gss = [0.01, 0.01, 0.01] b = [0, 0, 0] frequency = [1,2; 2,4; 4,12]
-
-#attenuation gpp = [0.0015, 0.0015, 0.0015] gps = [0.012, 0.012, 0.012] gss = [0.01, 0.01, 0.01] +
-#            b = [0.0002, 0.0002, 0.0002] frequency = [1,2;2,4;4,8]
-
-#attenuation gpp = [0.0015] gps = [0.012] gss = [0.01] b = [0.0002] frequency = [1,8]
-#attenuation gpp = [0., 0., 0.] gps = [0., 0., 0.] gss = [0., 0., 0.] +
-#            b = [0., 0., 0.] frequency = [1,2; 2,4; 4,8]
+#attenuation gpp = [0.00002] gps = [0.00006] gss = [0.0001] b = [0.] frequency = [1,12]
+#attenuation gpp = [0.002, 0.002, 0.002] gps = [0.006, 0.006, 0.006] gss = [0.01, 0.01, 0.01] b = [0.1, 0.1, 0.1] frequency = [1,2; 2,4; 4,12]
+attenuation gpp = [0.002, 0.0002, 0.00002] gps = [0.006, 0.0006, 0.00006] gss = [0.01, 0.001, 0.0001] b = [0.001, 0.01, 0.1] frequency = [1,2; 2,4; 4,12]
 
 # second model
 #attenuation gpp = [0.003,0.0015,0.0007,0.0003,0.00015] gps = [0.025,0.012,0.006,0.003,0.0015] gss = [0.01,0.005,0.0025,0.0012,0.006] +
 #            b = [0.001,0.002,0.003,0.002,0.001] frequency = [1,2; 2,4; 4,8; 8,16; 16,32]
-
-#attenuation gpp = [0.0015] gps = [0.012] gss = [0.01]  b = [0.0002] frequency = [1,8]
-#attenuation gpp = [0., 0., 0.] gps = [0., 0., 0.] gss = [0., 0., 0.] +
-#            b = [0., 0., 0.] frequency = [1,2; 2,4; 4,8]
 
 # set receiver-related fields
 # required fields are "x"/"y"/"z" (or "lon"/"lat"/"z"), "file", "velocity" (default=1) and "attenuation" (default=1)
@@ -121,18 +112,39 @@ attenuation gpp = [0.002] gps = [0.006] gss = [0.01] b = [0] frequency = [1,12]
 #rec x=74749 y=25251 z=0 file='s12'
 
 # one receiver every 30deg at 35km from source located at x=y=50 z=10
-rec x=85000 y=50000 z=0 file='s01'
-rec x=80311 y=67500 z=0 file='s02'
-rec x=67500 y=80311 z=0 file='s03'
-rec x=50000 y=85000 z=0 file='s04'
-rec x=32500 y=80311 z=0 file='s05'
-rec x=19689 y=67500 z=0 file='s06'
-rec x=15000 y=50000 z=0 file='s07'
-rec x=19689 y=32500 z=0 file='s08'
-rec x=32500 y=19689 z=0 file='s09'
-rec x=50000 y=15000 z=0 file='s10'
-rec x=67500 y=19689 z=0 file='s11'
-rec x=80311 y=32500 z=0 file='s12'
+#rec x=85000 y=50000 z=0 file='s01'
+#rec x=80311 y=67500 z=0 file='s02'
+#rec x=67500 y=80311 z=0 file='s03'
+#rec x=50000 y=85000 z=0 file='s04'
+#rec x=32500 y=80311 z=0 file='s05'
+#rec x=19689 y=67500 z=0 file='s06'
+#rec x=15000 y=50000 z=0 file='s07'
+#rec x=19689 y=32500 z=0 file='s08'
+#rec x=32500 y=19689 z=0 file='s09'
+#rec x=50000 y=15000 z=0 file='s10'
+#rec x=67500 y=19689 z=0 file='s11'
+#rec x=80311 y=32500 z=0 file='s12'
+
+rec x=110853 y=81703  z=0 file='s01'
+rec x=86158  y=71163  z=0 file='s02'
+rec x=76217  y=78353  z=0 file='s03'
+rec x=130703 y=30481  z=0 file='s04'
+rec x=39500  y=43489  z=0 file='s05'
+rec x=58213  y=144240 z=0 file='s06'
+rec x=62051  y=141143 z=0 file='s07'
+rec x=88659  y=112231 z=0 file='s08'
+rec x=48919  y=111581 z=0 file='s09'
+rec x=115799 y=27512  z=0 file='s10'
+rec x=53895  y=80664  z=0 file='s11'
+rec x=46978  y=33754  z=0 file='s12'
+rec x=96100  y=64154  z=0 file='s13'
+rec x=3120   y=70637  z=0 file='s14'
+rec x=55477  y=33445  z=0 file='s15'
+rec x=78782  y=8565   z=0 file='s16'
+rec x=77407  y=101479 z=0 file='s17'
+rec x=43588  y=147358 z=0 file='s18'
+rec x=75711  y=137079 z=0 file='s19'
+rec x=128344 y=51992  z=0 file='s20'
 
 # set optional parameters (all fields are optional)
-advanced pmw = 4 avecuts = 20 waves = 0 verbose = 2
+advanced pmw = 4 avecuts = 10 waves = 0 verbose = 2

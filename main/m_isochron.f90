@@ -1,5 +1,32 @@
 MODULE m_isochron
 
+  ! Purpose:
+  !   this module is the core of the broadband tool and contains a collection of subprograms to carry out the isochron integration
+  !   and related helper functions
+  !
+  !   solve_isochron_integral -> does the actual integration
+  !   integration_step        -> set the integration step based on desired accuracy ("cuts")
+  !   hilbert                 -> compute the Hilbert transform
+  !
+  !
+  !   lookup_fs, setfs, rnmc  -> produce a lookup table of (complex-valued) P-SV free-surface amplification coefficients
+  !
+  !   rayshooting, raycorner  -> compute ray parameters (spreading, traveltime, etc.) for each triangle
+  !
+  !   perturbed_mechanism     -> return strike, dip and rake for each geometrically perturbed (rough) triangle
+  !
+  !   node2disk, write_srf    -> write rupture model to disk
+  !
+  !   correct4impz            -> correct for filter response at several frequency bands (e.g. 1-2, 2-4, 4-8, etc)
+  !
+  !
+  ! Revisions:
+  !     Date                    Description of change
+  !     ====                    =====================
+  !   08/03/21                  original version
+  !
+
+
   USE, NON_INTRINSIC :: m_precisions
   USE, NON_INTRINSIC :: m_interpolation_r32
   USE, NON_INTRINSIC :: m_compgeo
@@ -42,7 +69,6 @@ MODULE m_isochron
 #endif
 
   REAL(r32), PARAMETER :: PI = 3.14159265358979323846_r64
-  ! REAL(r32), PARAMETER :: DEG_TO_RAD = PI / 180._r32
   REAL(r32), PARAMETER :: RAD_TO_DEG = 180._r32 / PI
   REAL(r32), PARAMETER :: BIG = HUGE(0._r32)
   REAL(r32), PARAMETER :: DP = 0.002_r32, DPSM = 0.07_r32              !< free-surface smoothing parameters
@@ -243,17 +269,18 @@ print*, 'weight ', weight
           ENDDO
         ENDDO
 
-        ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
-        ! --------------------------------------------------- interpolate noise ------------------------------------------------------
+        ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+        ! --------------------------------------------------- interpolate noise ----------------------------------------------------
 
         ALLOCATE(nseis(npts, 3))
 
+        ! no need to filter before since integration "dt" is always smaller than noise (or output) "dt"
         DO ic = 1, 3
           CALL interpolate(timeseries%cd%time, timeseries%cd%xyz(:, ic, rec), time, nseis(:, ic))
         ENDDO
 
-        noslip    = 0       !< total triangles having zero slip
-        ncuts(:)  = 0       !< total isochron cuts for each wave type
+        noslip      = 0       !< total triangles having zero slip
+        ncuts(:)    = 0       !< total isochron cuts for each wave type
         tricross(:) = 0       !< total triangles that were cut
 
         ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
@@ -492,7 +519,7 @@ print*, 'weight ', weight
                 CALL watch_start(tictoc, COMM)
 #endif
 
-                CALL raypar_at_corners(sheet, shooting, repi, z, shot, wtp, p, path, trvt, q)
+                CALL raycorner(sheet, shooting, repi, z, shot, wtp, p, path, trvt, q)
 
 #ifdef PERF
                 CALL watch_stop(tictoc, COMM)
@@ -760,27 +787,29 @@ print*, 'weight ', weight
                 ! is distributed evenly amongst the three directions of motion. Product "envelope * noise" is independent of the
                 ! time-shift due to rupture.
 
-                IF (wtp .eq. 1) THEN
+!                 IF (wtp .eq. 1) THEN
+!
+!                   a0 = (2 * ABS(mean(q)) * mean(mu) * mean(slip)) * area * attenuation * 2._r32 * 0.33_r32 * ISQRT3 / 2.
+!                   a0 = a0 / maxsheets(wtp)                            !< each sheet contributes equally
+!                   a0 = a0 / coda%pdirect(itc, ipc) * weight(wtp)
+!
+!                   DO it = 1, npts - shift
+!                     rtri(it + shift, 1) = rtri(it + shift, 1) + coda%penvelope(it, itc, ipc) * a0 * nseis(it, 1)
+!                     rtri(it + shift, 2) = rtri(it + shift, 2) + coda%penvelope(it, itc, ipc) * a0 * nseis(it, 2)
+!                     rtri(it + shift, 3) = rtri(it + shift, 3) + coda%penvelope(it, itc, ipc) * a0 * nseis(it, 3)
+!                   ENDDO
+!
+! #ifdef DEBUG
+!                   DO it = 1, npts - shift
+!                     ctri(it + shift) = ctri(it + shift) + coda%penvelope(it, itc, ipc) * a0
+!                   ENDDO
+! #endif
+!
+!                 ELSE      !< contribution of both SH- and SV-waves
 
-                  a0 = (2._r32 * ABS(mean(q)) * mean(mu) * mean(slip)) * area * attenuation * 2._r32 * 0.44_r32 * ISQRT3
-                  a0 = a0 / maxsheets(wtp)                            !< each sheet contributes equally
-                  a0 = a0 / coda%pdirect(itc, ipc) * weight(wtp)
+                IF (wtp .eq. 2) THEN
 
-                  DO it = 1, npts - shift
-                    rtri(it + shift, 1) = rtri(it + shift, 1) + coda%penvelope(it, itc, ipc) * a0 * nseis(it, 1)
-                    rtri(it + shift, 2) = rtri(it + shift, 2) + coda%penvelope(it, itc, ipc) * a0 * nseis(it, 2)
-                    rtri(it + shift, 3) = rtri(it + shift, 3) + coda%penvelope(it, itc, ipc) * a0 * nseis(it, 3)
-                  ENDDO
-
-#ifdef DEBUG
-                  DO it = 1, npts - shift
-                    ctri(it + shift) = ctri(it + shift) + coda%penvelope(it, itc, ipc) * a0
-                  ENDDO
-#endif
-
-                ELSE
-
-                  a0 = (2._r32 * ABS(mean(q)) * mean(mu) * mean(slip)) * area * attenuation * 2._r32 * 0.60_r32 * ISQRT3
+                  a0 = (ABS(mean(q)) * mean(mu) * mean(slip)) * area * attenuation * 2._r32 * 0.6_r32 * ISQRT3 / 2.
                   a0 = a0 / maxsheets(wtp)                            !< each sheet contributes equally
                   a0 = a0 / coda%sdirect(itc, ipc) * weight(wtp)
 
@@ -926,8 +955,6 @@ print*, 'weight ', weight
 
         ENDIF
 
-print*, 'area ', dutr(ref) * dvtr(ref) * 0.5_r32
-
 #ifdef DEBUG
 
         CALL interpolate(time, ctri(:), timeseries%sp%time, stack)      !< resampling
@@ -947,8 +974,6 @@ print*, 'area ', dutr(ref) * dvtr(ref) * 0.5_r32
 
       scale = plane(pl)%targetm0 / moment          !< scaling factor to scale to desired moment
       scale = scale * 1.E-15_r32                   !< take into account the fact that units for "q" were km, g/cm^3, km/s
-
-print*, 'scale ', scale, moment
 
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! ---------------------------------------------- scale to desired moment -----------------------------------------------------
@@ -1007,7 +1032,7 @@ print*, 'scale ', scale, moment
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE raypar_at_corners(sheet, shooting, repi, z, shot, wtp, p, path, trvt, q)
+    SUBROUTINE raycorner(sheet, shooting, repi, z, shot, wtp, p, path, trvt, q)
 
       INTEGER(i32),               INTENT(IN)    :: sheet
       REAL(r32),    DIMENSION(:), INTENT(IN)    :: shooting
@@ -1041,7 +1066,7 @@ print*, 'scale ', scale, moment
 
       ENDDO
 
-    END SUBROUTINE raypar_at_corners
+    END SUBROUTINE raycorner
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
@@ -1342,10 +1367,11 @@ print*, 'scale ', scale, moment
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE node2disk(ok, pl, vel, iter)
+    SUBROUTINE node2disk(ok, band, pl, vel, iter)
 
       ! Purpose:
-      !   to write to disk the rupture parameters defined for plane "pl" embedded in velocity model "vel" and iteration "iter".
+      !   to write to disk the rupture parameters defined for frequency babd "band", plane "pl" embedded in velocity model "vel" and
+      !   iteration "iter".
       !
       ! Revisions:
       !     Date                    Description of change
@@ -1354,7 +1380,7 @@ print*, 'scale ', scale, moment
       !
 
       INTEGER(i32),                          INTENT(OUT) :: ok
-      INTEGER(i32),                          INTENT(IN)  :: pl, vel, iter
+      INTEGER(i32),                          INTENT(IN)  :: band, pl, vel, iter
       CHARACTER(:), ALLOCATABLE                          :: fo
       INTEGER(i32)                                       :: i, j, ref, lu, icr, totnutr, seed
       INTEGER(i32),             DIMENSION(3)             :: iuc, ivc
@@ -1367,7 +1393,7 @@ print*, 'scale ', scale, moment
 
       IF (ok .ne. 0) RETURN
 
-      fo = 'node_' + num2char(pl) + '_' + num2char(vel) + '_' + num2char(iter) + '.bin'
+      fo = 'node_band' + num2char(band) + '_pl' + num2char(pl) + '_vel' + num2char(vel) + '_iter' + num2char(iter) + '.bin'
 
       OPEN(newunit = lu, file = fo, status = 'replace', form = 'unformatted', access = 'stream', action = 'write', IOSTAT = ok)
 
@@ -2022,7 +2048,7 @@ print*, 'scale ', scale, moment
 
             DO wave = 1, 2
 
-              CALL raypar_at_corners(sheet, shooting, repi, z, shot, wave, p(:, wave), path(:, wave), trvt(:, wave), q(:, wave))
+              CALL raycorner(sheet, shooting, repi, z, shot, wave, p(:, wave), path(:, wave), trvt(:, wave), q(:, wave))
 
               IF (ALL(trvt(:, wave) .ne. 0._r32)) THEN
                 minbounds(1, wave) = MIN(minbounds(1, wave), mean(path(:, wave)))
@@ -2102,32 +2128,32 @@ print*, 'scale ', scale, moment
         wp = 1._r32
         ws = 0._r32
 
-        !$omp parallel do default(shared) private(i, j, tp, ts, r, vs, d0) reduction(max: ok)
-        DO j = 1, np
-          DO i = 1, nt
-
-            tp = coda%lotrvt(1) + (i - 1) * DCT
-            r  = coda%lopath(1) + (j - 1) * DCP
-
-            ts = tp * vratio
-
-            vs = r / ts
-
-            IF (model%gss(band) .ge. GSS_MIN) THEN
-              CALL rtt(time, tp, ts, model%gpp(band), model%gps(band), gsp, model%gss(band), model%b(band), vs, wp, ws,   &
-                       0.25_r32, d0, coda%penvelope(:, i, j), ok)
-
-              coda%pdirect(i, j) = d0(1)
-            ELSE
-              coda%penvelope(:, i, j) = 0._r32
-              coda%pdirect(i, j)      = 1._r32
-            ENDIF
-
-            ! print*, 'P ', tp, r, ts, vs, ok, SIZE(time)
-
-          ENDDO
-        ENDDO
-        !$omp end parallel do
+!        !$omp parallel do default(shared) private(i, j, tp, ts, r, vs, d0) reduction(max: ok)
+        ! DO j = 1, np
+        !   DO i = 1, nt
+        !
+        !     tp = coda%lotrvt(1) + (i - 1) * DCT
+        !     r  = coda%lopath(1) + (j - 1) * DCP
+        !
+        !     ts = tp * vratio
+        !
+        !     vs = r / ts
+        !
+        !     IF (model%gss(band) .ge. GSS_MIN) THEN
+        !       CALL rtt(time, tp, ts, model%gpp(band), model%gps(band), gsp, model%gss(band), model%b(band), vs, wp, ws,   &
+        !                0.25_r32, d0, coda%penvelope(:, i, j), ok)
+        !
+        !       coda%pdirect(i, j) = d0(1)
+        !     ELSE
+        !       coda%penvelope(:, i, j) = 0._r32
+        !       coda%pdirect(i, j)      = 1._r32
+        !     ENDIF
+        !
+        !     ! print*, 'P ', tp, r, ts, vs, ok, SIZE(time)
+        !
+        !   ENDDO
+        ! ENDDO
+!        !$omp end parallel do
 
         np = NINT( (coda%uppath(2) - coda%lopath(2)) / DCP ) + 1
         nt = NINT( (coda%uptrvt(2) - coda%lotrvt(2)) / DCT ) + 1
@@ -2136,8 +2162,10 @@ print*, 'scale ', scale, moment
 
         ALLOCATE(coda%senvelope(SIZE(time), nt, np), coda%sdirect(nt, np))
 
-        wp = 0._r32
-        ws = 1._r32
+        ! wp = 0._r32
+        ! ws = 1._r32
+        wp = 1._r32
+        ws = 23.4_r32
 
         !$omp parallel do default(shared) private(i, j, tp, ts, r, vs, d0) reduction(max: ok)
         DO j = 1, np
@@ -2294,7 +2322,7 @@ print*, 'ok coda ', ok
 
             DO sheet = 1, maxsheets(wtp)
 
-              CALL raypar_at_corners(sheet, shooting, repi, z, shot, wtp, p, path, trvt, q)
+              CALL raycorner(sheet, shooting, repi, z, shot, wtp, p, path, trvt, q)
 
               IF (ANY(trvt .eq. 0._r32)) CYCLE       !< all corners must belong to same sheet
 
