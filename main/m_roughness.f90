@@ -14,7 +14,7 @@ MODULE m_roughness
 
   PRIVATE
 
-  PUBLIC :: fault_roughness
+  PUBLIC :: fault_roughness, perturbed_mechanism
   PUBLIC :: roughness
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
@@ -32,6 +32,16 @@ MODULE m_roughness
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
     SUBROUTINE fault_roughness(ok, ref, pl, iter)
+
+      ! Purpose:
+      !   to generate random perturbations on fault plane "pl", discretized by mesh refinement "ref", in terms of strike and dip.
+      !   Make use of the SCARF3D library assuming a fractal autocorrelation function (see Shi and Day, 2013).
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
 
       INTEGER(i32),                              INTENT(OUT) :: ok
       INTEGER(i32),                              INTENT(IN)  :: ref, pl, iter
@@ -175,6 +185,95 @@ MODULE m_roughness
       ENDIF
 
     END SUBROUTINE fault_roughness
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    SUBROUTINE perturbed_mechanism(strike, dip, rake, nrl)
+
+      ! Purpose:
+      !   to return strike dip and rake of a triangle (described by its normal "nrl") whose initial orientation has been changed and
+      !   now described by its normal "nrl". In input, "strike" and "dip" are two scalars and "rake" a vector representing the
+      !   initial values at each corner, while in output they refer to the new orientation.
+      !   The algorithm first computes the normal and slip vectors for the unperturbed case (as given by strike, dip and rake). These
+      !   are used to define the pressure axis P and then (by plugging in the new normal) the new rake angle.
+      !   WARNING: input values are expected to follow the N, E, D coordinates system (with dip <= 90 ?). Internally the E, N, U system
+      !            is assumed. "nrl" must be normalized to 1.
+      !   Output values are in the range [0, pi] or [-pi, 0] (slip and rake) or [0, pi] dip.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      REAL(r32),                 INTENT(INOUT) :: strike, dip
+      REAL(r32),   DIMENSION(3), INTENT(INOUT) :: rake
+      REAL(r32),   DIMENSION(3), INTENT(IN)    :: nrl
+      INTEGER(i32)                             :: i
+      REAL(r32)                                :: p, cs, ss, cd, sd, cr, sr, arg, hn2
+      REAL(r32),   DIMENSION(3)                :: unrl, ul, l, h
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      ! strike vector (perturbed case)
+      h(1) = -nrl(1)   !< east
+      h(2) = nrl(2)    !< north
+      h(3) = 0._r32
+
+      hn2 = NORM2(h)
+
+      cs = COS(strike)
+      ss = SIN(strike)
+      cd = COS(dip)
+      sd = SIN(dip)
+
+      ! normal vector (unperturbed case)
+      unrl(1) = cs * sd     !< east
+      unrl(2) = -ss * sd    !< north
+      unrl(3) = cd          !< up
+
+      DO i = 1, 3
+
+        cr = COS(rake(i))
+        sr = SIN(rake(i))
+
+        ! slip vector (unperturbed case)
+        ul(1) = ss * cr - cs * cd * sr    !< east
+        ul(2) = cs * cr + ss * cd * sr    !< north
+        ul(3) = sd * sr                   !< up
+
+        ! slip vector for triangle with normal "nrl", where P axis is based on unperturbed geometry
+        ! sqrt(2)*P = unrl - ul
+        ! l = nrl - sqrt(2)*P = nrl - (unrl - ul)
+        ! note that we reverted (1,2) indices for input normal as it assumes N-E-D reference system
+        l(1) = nrl(2) - (unrl(1) - ul(1))
+        l(2) = nrl(1) - (unrl(2) - ul(2))
+        l(3) = -nrl(3) - (unrl(3) - ul(3))
+
+        p = NORM2(l) * hn2
+
+        arg = (h(1)*l(1) + h(2)*l(2)) / p
+
+        arg = SIGN(MIN(1._r32, ABS(arg)), arg)          !< prevent roundoff errors, enforcing |arg| <= 1
+
+        ! sign of rake angle depends on vertical component of slip vector
+        rake(i) = SIGN(ACOS(arg), l(3))       !< values in range [0 pi] or [-pi 0]
+
+      ENDDO
+
+      ! remember that ATAN2(y,x) is in the interval [0,pi] when y>=0, in the interval (-pi, 0) otherwise
+
+      ! perturbed strike in the range [0 pi] or [-pi 0]
+      strike = ATAN2(-REAL(nrl(1), r64), REAL(nrl(2), r64))
+
+      ! IF (strike .lt. 0._r32) strike = 2._r32 * PI + strike
+
+      ! perturbed dip in the range [0 pi]
+      dip = ATAN2(HYPOT(REAL(nrl(1), r64), REAL(nrl(2), r64)), -REAL(nrl(3), r64))    !< revert sign vertical because input reference system is N-E-D
+
+    END SUBROUTINE perturbed_mechanism
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================

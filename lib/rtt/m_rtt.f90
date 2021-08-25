@@ -1455,8 +1455,9 @@ MODULE m_rtt
       DO i = 1, npts
         ! envelope(i) = (e0(i) + e1(i) + em(i)) * EXP(-b * time(i))
         ! envelope(i) = (e0(i) + em(i)) * EXP(-bi * time(i))
-        envelope(i) = SQRT(em(i) * EXP(-bi * time(i)))
+        envelope(i) = SQRT(ABS(em(i)) * EXP(-bi * time(i)))
         ! envelope(i) = SQRT( (e0(i) + em(i)) * EXP(-bi * time(i)) )
+        IF (em(i) .lt. 0._r32) ok = 1
       ENDDO
 
 #ifdef PERF

@@ -854,7 +854,7 @@ MODULE m_source
 
       INTEGER(i32), INTENT(IN) :: pl, vel, band
       INTEGER(i32)             :: nu, nv, layer, bottom, i
-      REAL(r32)                :: du, dv, dt, beta, sd, ztop, zmax, vbottom, vs, eps
+      REAL(r32)                :: du, dv, dt, beta, sd, ztop, zmax, vbottom, vs, eps, z
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
@@ -933,13 +933,16 @@ print*, 'rupture ', maxval(plane(pl)%rupture)
         ztop = plane(pl)%z                         !< depth fault plane upper edge
         zmax = ztop + plane(pl)%width * sd         !< depth fault plane lower edge
 
+        z = ztop
+
         ASSOCIATE(model => input%velocity(vel))
 
           vbottom = vinterp(model%depth, model%vs, model%vsgrad, zmax, bottom)        !< vs at lower edge
 
           DO
 
-            vs = vinterp(model%depth, model%vs, model%vsgrad, ztop, layer)
+            ! vs = vinterp(model%depth, model%vs, model%vsgrad, ztop, layer)
+            vs = vinterp(model%depth, model%vs, model%vsgrad, z, layer)
 
             IF (layer .ne. bottom) THEN
 
@@ -964,6 +967,15 @@ print*, 'rupture ', maxval(plane(pl)%rupture)
               du = vs / MIN(model%hcut(band), fmax) / input%advanced%pmw
             END ASSOCIATE
 
+            ! triangles along down-dip direction
+            nv = INT(((zmax - plane(pl)%z) / sd - (ztop - plane(pl)%z) / sd) / du  + 0.5_r32)
+
+            ! move directly to next layer if we don't have at least two triangles
+            IF (nv .lt. 2) THEN
+              z = model%depth(layer + 1)           !< in this case "ztop" is not updated
+              CYCLE
+            ENDIF
+
             IF (ALLOCATED(vmingr)) THEN
 
               vmingr = [vmingr, (ztop - plane(pl)%z) / sd]
@@ -985,6 +997,8 @@ print*, 'rupture ', maxval(plane(pl)%rupture)
 
             IF (layer .ne. bottom) ztop = model%depth(layer + 1)         !< set top to next layer
             IF (layer .eq. bottom) EXIT      !< fault top and bottom are inside same layer, no need to continue
+
+            z = ztop
 
           ENDDO
 

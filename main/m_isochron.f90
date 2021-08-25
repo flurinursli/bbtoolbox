@@ -56,12 +56,6 @@ MODULE m_isochron
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 
-  INTERFACE assert
-    MODULE PROCEDURE assert_i32, assert_r32
-  END INTERFACE assert
-
-  ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
-
 #ifdef MPI
   INTEGER(i32), PARAMETER :: COMM = MPI_COMM_SELF
 #else
@@ -71,7 +65,7 @@ MODULE m_isochron
   REAL(r32), PARAMETER :: PI = 3.14159265358979323846_r64
   REAL(r32), PARAMETER :: RAD_TO_DEG = 180._r32 / PI
   REAL(r32), PARAMETER :: BIG = HUGE(0._r32)
-  REAL(r32), PARAMETER :: DP = 0.002_r32, DPSM = 0.07_r32              !< free-surface smoothing parameters
+  REAL(r32), PARAMETER :: DP = 0.0002_r32, DPSM = 0.007_r32            !< free-surface smoothing parameters
   REAL(r32), PARAMETER :: DCP = 1._r32, DCT = 0.5_r32                  !< resolution coda tableau (path in km, traveltime in s)
   REAL(r32), PARAMETER :: ISQRT3 = 1._r32 / SQRT(3._r32)
   REAL(r32), PARAMETER :: GSS_MIN = 0.0001_r32                         !< lowest non-zero scattering coefficient
@@ -448,6 +442,7 @@ print*, 'weight ', weight
             u = x
             v = y
             w = 0._r32
+
             CALL rotate(u, v, w, 0._r32, 0._r32, -strike)
 
             ! find shooting points above/below
@@ -590,7 +585,7 @@ print*, 'weight ', weight
                   cthf = signp * SQRT(1._r32 - sthf**2)
 
                   ! dot products
-                  ! the fault normal points in the -y. direction for a 90 degree dip, and a positive u component of slip
+                  ! the fault normal points in the -y direction for a 90 degree dip, and a positive u component of slip
                   ! correspond to a left lateral strike slip motion
                   rn = sthf * spsi * sd + cthf * cd          !< r.n (direction r and normal to plane)
                   rv = cthf * sd - sthf * spsi * cd          !< r.v (directions r and dip-slip)
@@ -809,7 +804,7 @@ print*, 'weight ', weight
 
                 IF (wtp .eq. 2) THEN
 
-                  a0 = (ABS(mean(q)) * mean(mu) * mean(slip)) * area * attenuation * 2._r32 * 0.6_r32 * ISQRT3 / 2.
+                  a0 = (ABS(mean(q)) * mean(mu) * mean(slip)) * area * attenuation * 2._r32 * 0.6_r32 * ISQRT3 / 2._r32
                   a0 = a0 / maxsheets(wtp)                            !< each sheet contributes equally
                   a0 = a0 / coda%sdirect(itc, ipc) * weight(wtp)
 
@@ -1034,6 +1029,16 @@ print*, 'weight ', weight
 
     SUBROUTINE raycorner(sheet, shooting, repi, z, shot, wtp, p, path, trvt, q)
 
+      ! Purpose:
+      !   to compute ray parameter "p", travelled distance "path", traveltime "trvt" and spreading factor "q" for a corner at depth
+      !   "z" and referred to wave type "wtp" and sheet "sheet", by interpolating values pre-computed at discrete depth levels.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
       INTEGER(i32),               INTENT(IN)    :: sheet
       REAL(r32),    DIMENSION(:), INTENT(IN)    :: shooting
       REAL(r32),    DIMENSION(3), INTENT(IN)    :: repi, z
@@ -1165,6 +1170,17 @@ print*, 'weight ', weight
 
     SUBROUTINE setfs(ok, vp, vs, irort, fsp, fxp, fzp)
 
+      ! Purpose:
+      !   to compute a set of complex-valued free-surface amplification coefficients for P- and SV-waves in the radial ("fxp") and
+      !   vertical ("fzp") direction for a set of ray parameters "fsp". These coefficients are smoothed with a window determined by
+      !   "irort".
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
       INTEGER(i32),               INTENT(OUT) :: ok
       REAL(r32),                  INTENT(IN)  :: vp, vs
       INTEGER(i32),               INTENT(IN)  :: irort
@@ -1245,6 +1261,16 @@ print*, 'weight ', weight
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
     SUBROUTINE rnmnc(ok, a, irort)
+
+      ! Purpose:
+      !   to smooth complex free-surface amplification coefficients "a" based on a window controlled by "irort". Triangular windows
+      !   (i.e. "irort = 1") seems to return best results.
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
 
       INTEGER(i32),                            INTENT(OUT)   :: ok
       COMPLEX(r32),              DIMENSION(:), INTENT(INOUT) :: a
@@ -1510,849 +1536,17 @@ print*, 'weight ', weight
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    SUBROUTINE perturbed_mechanism(strike, dip, rake, nrl)
-
-      ! Purpose:
-      !   to return strike dip and rake of a triangle (described by its normal "nrl") whose initial orientation has been changed and
-      !   now described by its normal "nrl". In input, "strike" and "dip" are two scalars and "rake" a vector representing the
-      !   initial values at each corner, while in output they refer to the new orientation.
-      !   The algorithm first computes the normal and slip vectors for the unperturbed case (as given by strike, dip and rake). These
-      !   are used to define the pressure axis P and then (by plugging in the new normal) the new rake angle.
-      !   WARNING: input values are expected to follow the N, E, D coordinates system (with dip <= 90 ?). Internally the E, N, U system
-      !            is assumed. "nrl" must be normalized to 1.
-      !   Output values are in the range [0, pi] or [-pi, 0] (slip and rake) or [0, pi] dip.
-      !
-      ! Revisions:
-      !     Date                    Description of change
-      !     ====                    =====================
-      !   08/03/21                  original version
-      !
-
-      REAL(r32),                 INTENT(INOUT) :: strike, dip
-      REAL(r32),   DIMENSION(3), INTENT(INOUT) :: rake
-      REAL(r32),   DIMENSION(3), INTENT(IN)    :: nrl
-      INTEGER(i32)                             :: i
-      REAL(r32)                                :: p, cs, ss, cd, sd, cr, sr, arg, hn2
-      REAL(r32),   DIMENSION(3)                :: unrl, ul, l, h
-
-      !-----------------------------------------------------------------------------------------------------------------------------
-
-      ! strike vector (perturbed case)
-      h(1) = -nrl(1)   !< east
-      h(2) = nrl(2)    !< north
-      h(3) = 0._r32
-
-      hn2 = NORM2(h)
-
-      cs = COS(strike)
-      ss = SIN(strike)
-      cd = COS(dip)
-      sd = SIN(dip)
-
-      ! normal vector (unperturbed case)
-      unrl(1) = cs * sd     !< east
-      unrl(2) = -ss * sd    !< north
-      unrl(3) = cd          !< up
-
-      DO i = 1, 3
-
-        cr = COS(rake(i))
-        sr = SIN(rake(i))
-
-        ! slip vector (unperturbed case)
-        ul(1) = ss * cr - cs * cd * sr    !< east
-        ul(2) = cs * cr + ss * cd * sr    !< north
-        ul(3) = sd * sr                   !< up
-
-        ! slip vector for triangle with normal "nrl", where P axis is based on unperturbed geometry
-        ! sqrt(2)*P = unrl - ul
-        ! l = nrl - sqrt(2)*P = nrl - (unrl - ul)
-        ! note that we reverted (1,2) indices for input normal as it assumes N-E-D reference system
-        l(1) = nrl(2) - (unrl(1) - ul(1))
-        l(2) = nrl(1) - (unrl(2) - ul(2))
-        l(3) = -nrl(3) - (unrl(3) - ul(3))
-
-        p = NORM2(l) * hn2
-
-        arg = (h(1)*l(1) + h(2)*l(2)) / p
-
-        arg = SIGN(MIN(1._r32, ABS(arg)), arg)          !< prevent roundoff errors, enforcing |arg| <= 1
-
-        ! sign of rake angle depends on vertical component of slip vector
-        rake(i) = SIGN(ACOS(arg), l(3))       !< values in range [0 pi] or [-pi 0]
-
-      ENDDO
-
-      ! remember that ATAN2(y,x) is in the interval [0,pi] when y>=0, in the interval (-pi, 0) otherwise
-
-      ! perturbed strike in the range [0 pi] or [-pi 0]
-      strike = ATAN2(-REAL(nrl(1), r64), REAL(nrl(2), r64))
-
-      ! IF (strike .lt. 0._r32) strike = 2._r32 * PI + strike
-
-      ! perturbed dip in the range [0 pi]
-      dip = ATAN2(HYPOT(REAL(nrl(1), r64), REAL(nrl(2), r64)), -REAL(nrl(3), r64))    !< revert sign vertical because input reference system is N-E-D
-
-    END SUBROUTINE perturbed_mechanism
-
-    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
-    !===============================================================================================================================
-    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
-
-    SUBROUTINE rayshooting(ok, ref, pl, vel)
-
-      ! Purpose:
-      !   to compute a set of ray-related quantities (ray parameter, horizontal distance, traveltime, ray amplitude) for a set of
-      !   point-like sources covering fault plane "pl" embedded in velocity model "vel". These quantities refer to direct P- and S-
-      !   waves.
-      !
-      ! Revisions:
-      !     Date                    Description of change
-      !     ====                    =====================
-      !   08/03/21                  original version
-      !
-
-      INTEGER(i32),                           INTENT(OUT) :: ok
-      INTEGER(i32),                           INTENT(IN) :: ref, pl, vel
-      CHARACTER(:), ALLOCATABLE                          :: fo
-      INTEGER(i32)                                       :: iface, i, j, wavetype, rec, sheets, totnutr, icr, layers, lu
-      INTEGER(i32),              DIMENSION(3)            :: iuc, ivc
-      REAL(r32)                                          :: zmin, zmax, delta, vtop, vbottom, vs, dz, zo, alpha, beta, rho, rmax
-      REAL(r32),                              PARAMETER  :: GAP = 10._r32
-      REAL(r32),                 DIMENSION(3)            :: u, v, w, x, y, z
-      REAL(r32),    ALLOCATABLE, DIMENSION(:)            :: distance
-      REAL(r32),    ALLOCATABLE, DIMENSION(:,:)          :: velocity
-      REAL(r64),                 DIMENSION(1)            :: tictoc
-
-
-      !-----------------------------------------------------------------------------------------------------------------------------
-
-      ok = 0
-
-      IF (ALLOCATED(shooting)) DEALLOCATE(shooting)
-      IF (ALLOCATED(wkbj)) DEALLOCATE(wkbj)
-
-      delta = MAXVAL(ABS(roughness)) * COS(plane(pl)%dip)! * DEG_TO_RAD)
-
-      w = [0._r32, 0._r32, 0._r32]
-
-      CALL cornr(1, 1, iuc, ivc)                !< corner indices for first triangle first row
-      CALL cornr2uv(iuc, ivc, ref, u, v)        !< on-fault coordinates
-      CALL uvw2xyz(pl, u, v, w, x, y, z)        !< get cartesian coordinates
-
-      zmin = MINVAL(z)
-
-      CALL cornr(nvtr(ref), 1, iuc, ivc)        !< corner indices for first triangle last row
-      CALL cornr2uv(iuc, ivc, ref, u, v)        !< on-fault coordinates
-      CALL uvw2xyz(pl, u, v, w, x, y, z)        !< get cartesian coordinates
-
-      zmax = MAXVAL(z)
-
-      ASSOCIATE(model => input%velocity(vel))
-
-        vtop    = vinterp(model%depth, model%vs, model%vsgrad, zmin)        !< vs at upper edge
-        vbottom = vinterp(model%depth, model%vs, model%vsgrad, zmax)        !< vs at lower edge
-
-        vs = MIN(vtop, vbottom)     !< min shear wave speed over current mesh
-
-        dz = vs / input%coda%fmax / input%advanced%pmw        !< desired spacing between shooting points
-        ! dz = vs / input%coda%fmax
-
-        ! add max deviation from planarity
-        zmin = MAX(MIN_DEPTH, zmin - delta)                   !< don't go too close free-surface (i.e. above MIN_DEPTH)
-        zmax = zmax + delta
-
-        ALLOCATE(distance(SIZE(model%depth)))
-
-        ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
-        ! ---------------------------------------------- define shooting points ----------------------------------------------------
-
-        ! handle shallowest shooting point
-        distance = ABS(zmin - model%depth)
-        iface    = MINLOC(distance, DIM=1)
-
-        ! shooting points cannot coincide with velocity discontinuities
-        IF (distance(iface) .lt. GAP) zmin = MAX(MIN_DEPTH, model%depth(iface) - GAP*2)   !< move it just above interface if too close
-
-        shooting = [zmin]
-
-        zo = MIN(zmin + dz, zmax)            !< move to following source depth (can be directly "zmax" if very close to "zmin")
-
-        DO
-
-          distance = ABS(zo - model%depth)
-          iface    = MINLOC(distance, DIM=1)
-
-          IF (distance(iface) .lt. GAP) zo = model%depth(iface) + GAP*2        !< move source just below interface
-
-          shooting = [shooting, zo]        !< append shooting point
-
-          IF (zo .ge. zmax) EXIT           !< we have covered depth interval as needed
-
-          zo = zo + dz
-
-        ENDDO
-
-      END ASSOCIATE
-
-      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
-      ! -------------------------------------------------- max s/r distance --------------------------------------------------------
-
-      totnutr = 2 * nutr(ref) - 1                     !< total triangles in a row
-
-      rmax = 0._r32
-
-      !$omp parallel do default(shared) private(i, j, iuc, ivc, u, v, w, x, y, z, rec) reduction(max: rmax)
-      DO j = 1, nvtr(ref)
-        DO i = 1, totnutr
-
-          CALL cornr(j, i, iuc, ivc)                 !< corner indices for current triangle
-          CALL cornr2uv(iuc, ivc, ref, u, v)         !< on-fault coordinates
-
-          DO icr = 1, 3
-            w(icr) = roughness(iuc(icr), ivc(icr))
-          ENDDO
-
-          CALL uvw2xyz(pl, u, v, w, x, y, z)            !< get cartesian coordinates
-
-          ! compute max source-receiver distance
-          DO icr = 1, 3
-            DO rec = 1, SIZE(input%receiver)
-              rmax = MAX(rmax, HYPOT(x(icr) - input%receiver(rec)%x, y(icr) - input%receiver(rec)%y))
-            ENDDO
-          ENDDO
-
-        ENDDO
-      ENDDO
-      !$omp end parallel do
-
-      IF (input%advanced%verbose .eq. 2) THEN
-
-        zmin = BIG
-        zmax = -BIG
-
-        DO i = 2, SIZE(shooting)
-          zo   = shooting(i) - shooting(i - 1)
-          zmin = MIN(zmin, zo)
-          zmax = MAX(zmax, zo)
-        ENDDO
-
-        CALL update_log(num2char('<ray shooting>', justify='c', width=30) + num2char('Points', width=15, justify='r') + '|' +  &
-                        num2char('Rmax', width=15, justify='r') + '|' +  &
-                        num2char('Zmin', width=15, justify='r') + '|' + num2char('Zmax', width=15, justify='r') + '|' +  &
-                        num2char('Avg Dz', width=15, justify='r') + '|')
-
-        CALL update_log(num2char('', width=30, justify='c')  +  &
-                        num2char(SIZE(shooting), width=15, justify='r') + '|' + &
-                        num2char(rmax*1.E-03_r32, width=15, notation='f', precision=3, justify='r') + '|' + &
-                        num2char(MINVAL(shooting)*1.E-03_r32, width=15, notation='f', precision=3, justify='r') + '|' + &
-                        num2char(MAXVAL(shooting)*1.E-03_r32, width=15, notation='f', precision=3, justify='r') + '|' +  &
-                        ! num2char(num2char(zmin, notation='f', width=6, precision=2) + ', ' +   &
-                        !          num2char(zmax, notation='f', width=6, precision=2), width=15, justify='r') + '|',blankline=.false.)
-                        num2char(mean([zmin, zmax])*1.E-03_r32, notation='f', width=15, precision=3, justify='r') + '|',    &
-                        blankline=.false.)
-
-      ENDIF
-
-      rmax = 1.2 * rmax / 1000._r32            !< slightly increase maximum distance
-
-      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
-      ! --------------------------------------------- prepare velocity model -------------------------------------------------------
-
-      ASSOCIATE(model => input%velocity(vel))
-
-        layers = SIZE(model%depth)
-
-        ALLOCATE(velocity(4, 2*layers))
-
-        DO i = 1, layers
-
-          IF (i .gt. 1) THEN
-
-            zo = model%depth(i) - GAP
-
-            alpha = vinterp(model%depth, model%vp, model%vpgrad, zo)
-            beta  = vinterp(model%depth, model%vs, model%vsgrad, zo)
-            rho   = vinterp(model%depth, model%rho, model%rhograd, zo)
-
-            velocity(:, (i - 1)*2) = [zo, alpha, beta, rho] / 1000._r32         !< slightly above interface
-
-          ENDIF
-
-          zo = model%depth(i) + GAP
-
-          IF (i .eq. 1) zo = 0._r32
-
-          alpha = vinterp(model%depth, model%vp, model%vpgrad, zo)
-          beta  = vinterp(model%depth, model%vs, model%vsgrad, zo)
-          rho   = vinterp(model%depth, model%rho, model%rhograd, zo)
-
-          velocity(:, (i - 1)*2 + 1) = [zo, alpha, beta, rho]  / 1000._r32      !< slightly below interface
-
-        ENDDO
-
-        zo = 100000._r32
-
-        alpha = vinterp(model%depth, model%vp, model%vpgrad, zo)
-        beta  = vinterp(model%depth, model%vs, model%vsgrad, zo)
-        rho   = vinterp(model%depth, model%rho, model%rhograd, zo)
-
-        velocity(:, 2*layers) = [zo, alpha, beta, rho] / 1000._r32
-
-      END ASSOCIATE
-
-      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
-      ! ----------------------------------------------------- shoot rays -----------------------------------------------------------
-
-#ifdef DEBUG
-      fo = 'spred_' + num2char(ref) + '_' + num2char(pl) + '_' + num2char(vel) + '.txt'
-
-      OPEN(newunit = lu, file = TRIM(fo), status = 'unknown', form = 'formatted', access = 'sequential', action = 'write',  &
-           iostat = ok)
-
-      IF (ok .ne. 0) THEN
-        CALL report_error('Error while opening file' + TRIM(fo))
-        RETURN
-      ENDIF
-#endif
-
-      ALLOCATE(wkbj(SIZE(shooting), 2))
-
-#ifdef PERF
-      CALL watch_start(tictoc(1), COMM)
-#endif
-
-      DO wavetype = 1, 2
-
-        maxsheets(wavetype) = 0
-        minsheets(wavetype) = HUGE(0)
-
-        DO i = 1, SIZE(shooting)
-
-          CALL spred(ok, velocity, rmax, shooting(i) / 1000._r32, i, wavetype, lu, sheets)
-
-          maxsheets(wavetype) = MAX(maxsheets(wavetype), sheets)     !< max number of sheets for each wave type
-          minsheets(wavetype) = MIN(minsheets(wavetype), sheets)
-
-        ENDDO
-
-      ENDDO
-
-#ifdef PERF
-      CALL watch_stop(tictoc(1), COMM)
-#endif
-
-#ifdef DEBUG
-      CLOSE(lu, iostat = ok)
-
-      IF (ok .ne. 0) THEN
-        CALL report_error('Error while closing file ' + fo)
-        RETURN
-      ENDIF
-#endif
-
-      IF (input%advanced%verbose .eq. 2) THEN
-
-        CALL update_log(num2char('<sheets (min, max)>', justify='c', width=30) +       &
-                        num2char('P-wave', width=15, justify='r') + '|' + num2char('S-wave', width=15, justify='r') + '|')
-
-        CALL update_log(num2char('', width=30, justify='c')  +  &
-                        num2char(num2char(minsheets(1), width=2) + ', ' +   &
-                                 num2char(maxsheets(1), width=2), width=15, justify='r') + '|' + &
-                        num2char(num2char(minsheets(2), width=2) + ', ' +   &
-                                 num2char(maxsheets(2), width=2), width=15, justify='r') + '|',  blankline=.false.)
-
-      ENDIF
-
-! #ifdef PERF
-!       IF (input%advanced%verbose .eq. 2) THEN
-!         CALL update_log(num2char('<<elapsed time>>', justify='c', width=30) + num2char(tictoc(1), width=15, notation='f',   &
-!                         precision=3, justify='r') + '|', blankline=.false.)
-!       ENDIF
-! #endif
-
-    END SUBROUTINE rayshooting
-
-    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
-    !===============================================================================================================================
-    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
-
-    SUBROUTINE correct4impz(ok, iter)
-
-      USE, NON_INTRINSIC :: m_fft_real
-
-      INTEGER(i32),                           INTENT(OUT) :: ok
-      INTEGER(i32),                           INTENT(IN)  :: iter
-      CHARACTER(:), ALLOCATABLE                           :: fo
-      COMPLEX(r32), ALLOCATABLE, DIMENSION(:)             :: spectrum
-      INTEGER(i32)                                        :: band, rec, i, lu, npts, ic
-      REAL(r32),    ALLOCATABLE, DIMENSION(:)             :: freq, amp, phase, respz, blob
-
-      !-----------------------------------------------------------------------------------------------------------------------------
-
-      ASSOCIATE(model => input%attenuation(1), fmax => input%coda%fmax, dt => timeseries%sp%dt)
-
-        ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
-        ! ----------------------------------------- overall filter response --------------------------------------------------------
-
-        DO band = 1, SIZE(model%lcut)
-
-          IF (model%lcut(band) .ge. fmax) EXIT
-
-          IF (band .eq. 1) THEN
-            CALL make_iir_plan(ok, 'butter', dt, [0.25_r32, MIN(model%hcut(band), fmax)], 'pass', 2, zphase = .true.)
-          ELSE
-            CALL make_iir_plan(ok, 'butter', dt, [model%lcut(band), MIN(model%hcut(band), fmax)], 'pass', 2, zphase = .true.)
-          ENDIF
-
-          CALL freqz(freq, amp, phase, dt, SIZE(timeseries%sp%time))
-
-          IF (band .eq. 1) THEN
-            respz = amp**2
-          ELSE
-            respz = respz + amp**2
-          ENDIF
-
-          CALL destroy_iir_plan()
-
-        ENDDO
-
-        band = band - 1
-
-        ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
-        ! ----------------------------------------- compensate filter response -----------------------------------------------------
-
-        IF (band .gt. 1) THEN
-
-          ! we want the composite filter reponse to look identical to that of a filter between lowest fcut and highest fcut(/fmax)
-          CALL make_iir_plan(ok, 'butter', dt, [0.25_r32, MIN(model%hcut(band), fmax)], 'pass', 2, zphase = .true.)
-
-          CALL freqz(freq, amp, phase, dt, SIZE(timeseries%sp%time))
-
-          CALL destroy_iir_plan()
-
-          npts = SIZE(timeseries%sp%time)
-
-          blob = respz
-
-          ! correct filter response for non-negligibile amplitude levels
-          DO i = 1, SIZE(respz)
-            IF (respz(i) .gt. 1.E-20) respz(i) = amp(i)**2 / respz(i)    !< **2 is because we used two-pass filters
-          ENDDO
-
-#ifdef DEBUG
-
-          fo = 'respz_' + num2char(iter) + '.txt'
-
-          OPEN(newunit = lu, file = fo, status = 'replace', form = 'formatted', access = 'sequential', action = 'write', iostat= ok)
-
-          IF (ok .ne. 0) THEN
-            CALL report_error('Error while opening file' + TRIM(fo))
-            RETURN
-          ENDIF
-
-          DO i = 1, SIZE(respz)
-            WRITE(lu, *) freq(i), blob(i), respz(i), amp(i)**2       !< blob*respz should be equal to amp**2
-          ENDDO
-
-          CLOSE(lu, iostat = ok)
-
-          IF (ok .ne. 0) THEN
-            CALL report_error('Error while closing file ' + fo)
-            RETURN
-          ENDIF
-
-#endif
-
-          CALL make_fftw_plan([npts])
-
-          ALLOCATE(spectrum(npts/2 + 1))
-
-          ! apply spectral correction function
-          DO rec = 1, SIZE(input%receiver)
-            DO ic = 1, 3
-              CALL fft(timeseries%sp%xyz(:, ic, rec), spectrum)
-              spectrum(:) = spectrum(:) * respz(:)
-              CALL ifft(timeseries%sp%xyz(:, ic, rec), spectrum)
-            ENDDO
-          ENDDO
-
-          CALL destroy_fftw_plan([npts])
-
-        ENDIF
-
-      END ASSOCIATE
-
-
-    END SUBROUTINE correct4impz
-
-    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
-    !===============================================================================================================================
-    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
-
-    SUBROUTINE lookup_coda(ok, ref, rec, band, pl, vel, time)
-
-      INTEGER(i32),                INTENT(OUT) :: ok
-      INTEGER(i32),                INTENT(IN)  :: ref, rec, band, vel, pl
-      REAL(r32),    DIMENSION(:),  INTENT(IN)  :: time
-      INTEGER(i32)                             :: totnutr, i, j, icr, src, wave, sheet, n, np, nt
-      INTEGER(i32), DIMENSION(3)               :: iuc, ivc, shot
-      REAL(r32)                                :: r, tp, ts, vs, wp, ws, gsp, vratio, pmin, pmax, tmin, tmax
-      REAL(r32),    DIMENSION(2)               :: d0
-      REAL(r32),    DIMENSION(3)               :: u, v, w, x, y, z, repi
-      REAL(r32),    DIMENSION(2,2)             :: minbounds, maxbounds
-      REAL(r32),    DIMENSION(3,2)             :: p, path, trvt, q
-
-      !-----------------------------------------------------------------------------------------------------------------------------
-
-      ok = 0
-
-      totnutr = 2 * nutr(ref) - 1                     !< total triangles in a row
-
-      minbounds(:,:) = BIG
-      maxbounds(:,:) = -BIG
-
-      vratio = 0._r32
-      n = 0
-
-     !$omp parallel do default(shared) private(i, j, iuc, ivc, u, v, w, icr, src, x, y, z, shot, repi, sheet, wave, p, path)   &
-     !$omp private(trvt, q) reduction(max: maxbounds) reduction(min: minbounds) reduction(+: vratio, n)
-      DO j = 1, nvtr(ref)
-        DO i = 1, totnutr
-
-          CALL cornr(j, i, iuc, ivc)                 !< corner indices for current triangle
-          CALL cornr2uv(iuc, ivc, ref, u, v)         !< on-fault coordinates
-
-          DO icr = 1, 3
-            w(icr) = roughness(iuc(icr), ivc(icr))
-          ENDDO
-
-          CALL uvw2xyz(pl, u, v, w, x, y, z)            !< get cartesian coordinates
-
-          DO icr = 1, 3
-            z(icr) = MAX(MIN_DEPTH, z(icr))             !< make sure we never breach the free-surface (clip roughness)
-          ENDDO
-
-          ! find shooting points above/below
-          DO icr = 1, 3
-            DO src = 1, SIZE(shooting) - 1
-              IF ( (z(icr) .ge. shooting(src)) .and. (z(icr) .le. shooting(src + 1)) ) shot(icr) = src
-            ENDDO
-          ENDDO
-
-          DO icr = 1, 3
-            repi(icr) = HYPOT(input%receiver(rec)%x - x(icr), input%receiver(rec)%y - y(icr)) / 1000._r32        !< epicentral distance (corner-receiver)
-          ENDDO
-
-          DO sheet = 1, MAXVAL(maxsheets)
-
-            DO wave = 1, 2
-
-              CALL raycorner(sheet, shooting, repi, z, shot, wave, p(:, wave), path(:, wave), trvt(:, wave), q(:, wave))
-
-              IF (ALL(trvt(:, wave) .ne. 0._r32)) THEN
-                minbounds(1, wave) = MIN(minbounds(1, wave), mean(path(:, wave)))
-                maxbounds(1, wave) = MAX(maxbounds(1, wave), mean(path(:, wave)))
-                minbounds(2, wave) = MIN(minbounds(2, wave), mean(trvt(:, wave)))
-                maxbounds(2, wave) = MAX(maxbounds(2, wave), mean(trvt(:, wave)))
-              ENDIF
-
-            ENDDO
-
-            IF (ALL(trvt .ne. 0._r32)) THEN
-              vratio = vratio + mean(path(:, 1)) / mean(trvt(:, 1)) * mean(trvt(:, 2)) / mean(path(:, 2))   !< alpha/beta
-              n      = n + 1
-            ENDIF
-
-          ENDDO
-
-        ENDDO
-      ENDDO  !< end loop over triangles
-     !$omp end parallel do
-
-      vratio = vratio / n         !< average alpha/beta ratio
-
-      coda%lopath = minbounds(1, :)
-      coda%uppath = maxbounds(1, :)
-
-      coda%lotrvt = minbounds(2, :)
-      coda%uptrvt = maxbounds(2, :)
-
-      IF (input%advanced%verbose .eq. 2) THEN
-
-        CALL update_log(num2char('<coda P>', justify='c', width=30) +    &
-                        num2char('Min trvt', width=15, justify='r')  + '|' + num2char('Max trvt', width=15, justify='r') + '|' +  &
-                        num2char('Min path', width=15, justify='r')  + '|' + num2char('Max path', width=15, justify='r') + '|' +  &
-                        num2char('Envelopes', width=15, justify='r') + '|' + num2char('<vp/vs>', width=15, justify='r')  + '|')
-
-        np = NINT( (coda%uppath(1) - coda%lopath(1)) / DCP ) + 1
-        nt = NINT( (coda%uptrvt(1) - coda%lotrvt(1)) / DCT ) + 1
-
-        CALL update_log(num2char('', width=30) +  &
-                        num2char(coda%lotrvt(1), width=15, justify='r', notation='f', precision=2) + '|' +    &
-                        num2char(coda%uptrvt(1), width=15, justify='r', notation='f', precision=2) + '|' +    &
-                        num2char(coda%lopath(1), width=15, justify='r', notation='f', precision=2) + '|' +    &
-                        num2char(coda%uppath(1), width=15, justify='r', notation='f', precision=2) + '|' +    &
-                        num2char(np*nt, width=15, justify='r') + '|' + &
-                        num2char(vratio, width=15, justify='r', notation='f', precision=2) + '|', blankline=.false.)
-
-        CALL update_log(num2char('<coda S>', justify='c', width=30) +    &
-                        num2char('Min trvt', width=15, justify='r') + '|' + num2char('Max trvt', width=15, justify='r') + '|' + &
-                        num2char('Min path', width=15, justify='r') + '|' + num2char('Max path', width=15, justify='r') + '|' + &
-                        num2char('Envelopes', width=15, justify='r') + '|' + num2char('<vp/vs>', width=15, justify='r')  + '|')
-
-        np = NINT( (coda%uppath(2) - coda%lopath(2)) / DCP ) + 1
-        nt = NINT( (coda%uptrvt(2) - coda%lotrvt(2)) / DCT ) + 1
-
-        CALL update_log(num2char('', width=30) +  &
-                        num2char(coda%lotrvt(2), width=15, justify='r', notation='f', precision=2) + '|' +    &
-                        num2char(coda%uptrvt(2), width=15, justify='r', notation='f', precision=2) + '|' +    &
-                        num2char(coda%lopath(2), width=15, justify='r', notation='f', precision=2) + '|' +    &
-                        num2char(coda%uppath(2), width=15, justify='r', notation='f', precision=2) + '|' +    &
-                        num2char(np*nt, width=15, justify='r')   + '|' + &
-                        num2char(vratio, width=15, justify='r', notation='f', precision=2) + '|', blankline=.false.)
-
-      ENDIF
-
-      IF (ALLOCATED(coda%penvelope)) DEALLOCATE(coda%penvelope, coda%pdirect)
-
-      np = NINT( (coda%uppath(1) - coda%lopath(1)) / DCP ) + 1
-      nt = NINT( (coda%uptrvt(1) - coda%lotrvt(1)) / DCT ) + 1
-
-      ALLOCATE(coda%penvelope(SIZE(time), nt, np), coda%pdirect(nt, np))
-
-      ASSOCIATE(model => input%attenuation(input%receiver(rec)%attenuation))
-
-        gsp = model%gps(band) / 6._r32
-
-        wp = 1._r32
-        ws = 0._r32
-
-!        !$omp parallel do default(shared) private(i, j, tp, ts, r, vs, d0) reduction(max: ok)
-        ! DO j = 1, np
-        !   DO i = 1, nt
-        !
-        !     tp = coda%lotrvt(1) + (i - 1) * DCT
-        !     r  = coda%lopath(1) + (j - 1) * DCP
-        !
-        !     ts = tp * vratio
-        !
-        !     vs = r / ts
-        !
-        !     IF (model%gss(band) .ge. GSS_MIN) THEN
-        !       CALL rtt(time, tp, ts, model%gpp(band), model%gps(band), gsp, model%gss(band), model%b(band), vs, wp, ws,   &
-        !                0.25_r32, d0, coda%penvelope(:, i, j), ok)
-        !
-        !       coda%pdirect(i, j) = d0(1)
-        !     ELSE
-        !       coda%penvelope(:, i, j) = 0._r32
-        !       coda%pdirect(i, j)      = 1._r32
-        !     ENDIF
-        !
-        !     ! print*, 'P ', tp, r, ts, vs, ok, SIZE(time)
-        !
-        !   ENDDO
-        ! ENDDO
-!        !$omp end parallel do
-
-        np = NINT( (coda%uppath(2) - coda%lopath(2)) / DCP ) + 1
-        nt = NINT( (coda%uptrvt(2) - coda%lotrvt(2)) / DCT ) + 1
-
-        IF (ALLOCATED(coda%senvelope)) DEALLOCATE(coda%senvelope, coda%sdirect)
-
-        ALLOCATE(coda%senvelope(SIZE(time), nt, np), coda%sdirect(nt, np))
-
-        ! wp = 0._r32
-        ! ws = 1._r32
-        wp = 1._r32
-        ws = 23.4_r32
-
-        !$omp parallel do default(shared) private(i, j, tp, ts, r, vs, d0) reduction(max: ok)
-        DO j = 1, np
-          DO i = 1, nt
-
-            ts = coda%lotrvt(2) + (i - 1) * DCT
-            r  = coda%lopath(2) + (j - 1) * DCP
-
-            tp = ts / vratio
-
-            vs = r / ts
-
-            IF (model%gss(band) .ge. GSS_MIN) THEN
-              CALL rtt(time, tp, ts, model%gpp(band), model%gps(band), gsp, model%gss(band), model%b(band), vs, wp, ws,   &
-                       0.25_r32, d0, coda%senvelope(:, i, j), ok)
-
-              coda%sdirect(i, j) = d0(2)
-            ELSE
-              coda%senvelope(:, i, j) = 0._r32
-              coda%sdirect(i, j)      = 1._r32
-            ENDIF
-
-            ! print*, 'S ', ts, r, tp, vs, ok
-
-          ENDDO
-        ENDDO
-        !$omp end parallel do
-
-      END ASSOCIATE
-
-print*, 'ok coda ', ok
-
-    END SUBROUTINE lookup_coda
-
-    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
-    !===============================================================================================================================
-    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
-
-    SUBROUTINE integration_step(ok, ref, rec, pl, vel, iter, step)
-
-      INTEGER(i32),              INTENT(OUT) :: ok
-      INTEGER(i32),              INTENT(IN)  :: ref, rec, pl, vel, iter
-      REAL(r32),                 INTENT(OUT) :: step
-      INTEGER(i32)                           :: seed, totnutr, i, j, icr, src, wtp, sheet
-      INTEGER(i32), DIMENSION(2)             :: n
-      INTEGER(i32), DIMENSION(3)             :: iuc, ivc, shot
-      REAL(r32)                              :: strike, dip, urec, vrec, wrec, taumin, taumax
-      REAL(r32),    DIMENSION(2)             :: dt
-      REAL(r32),    DIMENSION(3)             :: slip, u, v, w, x, y, z, nrl, rake, repi, rupture
-      REAL(r32),    DIMENSION(3)             :: p, path, trvt, q, tau
-
-      !-----------------------------------------------------------------------------------------------------------------------------
-
-      dt(:) = 0._r32
-      n(:)  = 0
-
-      ! set "seed" such that random numbers depend on fault plane number and iteration
-      seed = input%source%seed + (iter - 1) * SIZE(plane) + pl
-
-      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
-      ! ------------------------------------------ define RIK model on mesh nodes ------------------------------------------------
-
-      ALLOCATE(nodes(nugr(ref), nvgr(ref)))
-
-      CALL nodefun(ref, pl, vel, seed)                !< define slip, rupture time and rise time on mesh nodes
-
-      totnutr = 2 * nutr(ref) - 1                     !< total triangles in a row
-
-      ! generate fault plane roughness
-      CALL fault_roughness(ok, ref, pl, iter)
-
-      ! shoot rays between receivers and a set of sources spanning (vertically) current mesh
-      CALL rayshooting(ok, ref, pl, vel)
-
-      !$omp parallel do default(shared) private(i, j, iuc, ivc, icr, slip, u, v, w, x, y, z, nrl, strike, dip, rake, rupture)   &
-      !$omp private(urec, vrec, wrec, repi, wtp, sheet, src, shot, p, path, trvt, q, tau, taumin, taumax)   &
-      !$omp reduction(+: dt, n)
-      DO j = 1, nvtr(ref)
-        DO i = 1, totnutr
-
-          ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
-          ! ---------------------------------------- check corners have non-zero slip --------------------------------------------
-
-          CALL cornr(j, i, iuc, ivc)        !< corner indices for current triangle
-
-          DO icr = 1, 3
-            slip(icr) = SUM(nodes(iuc(icr), ivc(icr))%slip)
-          ENDDO
-
-          IF (ALL(slip .eq. 0._r32)) CYCLE          !< jump to next triangle if current has zero slip
-
-          ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
-          ! --------------------------------------------- get perturbed mechanism ------------------------------------------------
-
-          CALL cornr2uv(iuc, ivc, ref, u, v)        !< on-fault coordinates
-
-          DO icr = 1, 3
-            w(icr) = roughness(iuc(icr), ivc(icr))      !< add roughness (always zero for point-sources)
-          ENDDO
-
-          CALL uvw2xyz(pl, u, v, w, x, y, z)            !< get cartesian coordinates
-
-          DO icr = 1, 3
-            z(icr) = MAX(MIN_DEPTH, z(icr))             !< make sure we never breach the free-surface (clip roughness)
-          ENDDO
-
-          CALL normal2tri(x, y, z, nrl)
-
-          ! always have normal pointing upward (i.e. negative z direction)
-          IF (MOD(i + (j-1)*totnutr, 2) == 0) nrl(:) = -nrl(:)
-
-          strike = plane(pl)%strike !* DEG_TO_RAD
-          dip    = plane(pl)%dip    !* DEG_TO_RAD
-
-          CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%rake, u, v, rake)
-
-          CALL perturbed_mechanism(strike, dip, rake, nrl)            !< get new strike, dip, rake (all values in radians)
-
-          ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
-          ! ----------------------------------------------- corner parameters ----------------------------------------------------
-
-          DO icr = 1, 3
-            rupture(icr) = MINVAL(nodes(iuc(icr), ivc(icr))%rupture)
-          ENDDO
-
-          ! move from "x-y" to "u-t" coordinates for corners
-          u = x
-          v = y
-          w = 0._r32
-          CALL rotate(u, v, w, 0._r32, 0._r32, -strike)
-
-          ! find shooting points above/below
-          DO icr = 1, 3
-            DO src = 1, SIZE(shooting) - 1
-              IF ( (z(icr) .ge. shooting(src)) .and. (z(icr) .le. shooting(src + 1)) ) shot(icr) = src
-            ENDDO
-          ENDDO
-
-          ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
-          ! -------------------------------------- triangle contribution to ground motion ----------------------------------------
-
-          urec = input%receiver(rec)%x
-          vrec = input%receiver(rec)%y
-          wrec = 0._r32
-
-          CALL rotate(urec, vrec, wrec, 0._r32, 0._r32, -strike)       !< move to "u-t" coordinates for receiver
-
-          DO icr = 1, 3
-            repi(icr) = HYPOT(urec - u(icr), vrec - v(icr)) / 1000._r32        !< epicentral distance (corner-receiver)
-          ENDDO
-
-          ! loop over wave types
-          DO wtp = 1, 2
-
-            DO sheet = 1, maxsheets(wtp)
-
-              CALL raycorner(sheet, shooting, repi, z, shot, wtp, p, path, trvt, q)
-
-              IF (ANY(trvt .eq. 0._r32)) CYCLE       !< all corners must belong to same sheet
-
-              tau(:) = trvt(:) + rupture(:)          !< sum travel-time and rupture time
-
-              taumax = MAXVAL(tau)
-              taumin = MINVAL(tau)
-
-              dt(wtp) = dt(wtp) + (taumax - taumin) / (input%advanced%avecuts + 1)
-              n(wtp)  = n(wtp) + 1
-
-            ENDDO     !< end loop over sheets
-
-          ENDDO    !< end loop over wave types
-
-        ENDDO
-      ENDDO
-      !$omp end parallel do
-
-      CALL dealloc_nodes()
-
-      step = MAXVAL(dt / n)
-
-    END SUBROUTINE integration_step
-
-    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
-    !===============================================================================================================================
-    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
-
     SUBROUTINE write_srf(ok, pl, vel, iter)
+
+      ! Purpose:
+      !   to write finite-fault rupture properties in a SRF file v2.0 (see http://scec.usc.edu/scecpedia/Standard_Rupture_Format for
+      !   a description).
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
 
       INTEGER(i32),                           INTENT(OUT) :: ok
       INTEGER(i32),                           INTENT(IN)  :: pl, vel, iter
@@ -2806,52 +2000,846 @@ print*, 'ok coda ', ok
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    FUNCTION assert_i32(par, v1, v2, strict) RESULT(assert)
+    SUBROUTINE rayshooting(ok, ref, pl, vel)
 
       ! Purpose:
-      !   To determine if variable "par" belongs to range [v1, v2]. Square brackets are replaced by round brackets if "strict=.true."
+      !   to compute a set of ray-related quantities (ray parameter, horizontal distance, traveltime, ray amplitude) for a set of
+      !   point-like sources covering fault plane "pl" embedded in velocity model "vel". These quantities refer to direct P- and S-
+      !   waves.
       !
       ! Revisions:
       !     Date                    Description of change
       !     ====                    =====================
-      !   18/12/20                  original version
+      !   08/03/21                  original version
       !
 
-      INTEGER(i32), DIMENSION(:),           INTENT(IN) :: par
-      INTEGER(i32),               OPTIONAL, INTENT(IN) :: v1, v2
-      LOGICAL,                    OPTIONAL, INTENT(IN) :: strict
-      LOGICAL                                          :: flag, assert
+      INTEGER(i32),                           INTENT(OUT) :: ok
+      INTEGER(i32),                           INTENT(IN) :: ref, pl, vel
+      CHARACTER(:), ALLOCATABLE                          :: fo
+      INTEGER(i32)                                       :: iface, i, j, wavetype, rec, sheets, totnutr, icr, layers, lu
+      INTEGER(i32),              DIMENSION(3)            :: iuc, ivc
+      REAL(r32)                                          :: zmin, zmax, delta, vtop, vbottom, vs, dz, zo, alpha, beta, rho, rmax
+      REAL(r32),                              PARAMETER  :: GAP = 10._r32
+      REAL(r32),                 DIMENSION(3)            :: u, v, w, x, y, z
+      REAL(r32),    ALLOCATABLE, DIMENSION(:)            :: distance
+      REAL(r32),    ALLOCATABLE, DIMENSION(:,:)          :: velocity
+      REAL(r64),                 DIMENSION(1)            :: tictoc
+
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
-#include "assert_incl.f90"
+      ok = 0
 
-    END FUNCTION assert_i32
+      IF (ALLOCATED(shooting)) DEALLOCATE(shooting)
+      IF (ALLOCATED(wkbj)) DEALLOCATE(wkbj)
+
+      delta = MAXVAL(ABS(roughness)) * COS(plane(pl)%dip)! * DEG_TO_RAD)
+
+      w = [0._r32, 0._r32, 0._r32]
+
+      CALL cornr(1, 1, iuc, ivc)                !< corner indices for first triangle first row
+      CALL cornr2uv(iuc, ivc, ref, u, v)        !< on-fault coordinates
+      CALL uvw2xyz(pl, u, v, w, x, y, z)        !< get cartesian coordinates
+
+      zmin = MINVAL(z)
+
+      CALL cornr(nvtr(ref), 1, iuc, ivc)        !< corner indices for first triangle last row
+      CALL cornr2uv(iuc, ivc, ref, u, v)        !< on-fault coordinates
+      CALL uvw2xyz(pl, u, v, w, x, y, z)        !< get cartesian coordinates
+
+      zmax = MAXVAL(z)
+
+      ASSOCIATE(model => input%velocity(vel))
+
+        vtop    = vinterp(model%depth, model%vs, model%vsgrad, zmin)        !< vs at upper edge
+        vbottom = vinterp(model%depth, model%vs, model%vsgrad, zmax)        !< vs at lower edge
+
+        vs = MIN(vtop, vbottom)     !< min shear wave speed over current mesh
+
+        dz = vs / input%coda%fmax / input%advanced%pmw        !< desired spacing between shooting points
+        ! dz = vs / input%coda%fmax
+
+        ! add max deviation from planarity
+        zmin = MAX(MIN_DEPTH, zmin - delta)                   !< don't go too close free-surface (i.e. above MIN_DEPTH)
+        zmax = zmax + delta
+
+        ALLOCATE(distance(SIZE(model%depth)))
+
+        ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+        ! ---------------------------------------------- define shooting points ----------------------------------------------------
+
+        ! handle shallowest shooting point
+        distance = ABS(zmin - model%depth)
+        iface    = MINLOC(distance, DIM=1)
+
+        ! shooting points cannot coincide with velocity discontinuities
+        IF (distance(iface) .lt. GAP) zmin = MAX(MIN_DEPTH, model%depth(iface) - GAP*2)   !< move it just above interface if too close
+
+        shooting = [zmin]
+
+        zo = MIN(zmin + dz, zmax)            !< move to following source depth (can be directly "zmax" if very close to "zmin")
+
+        DO
+
+          distance = ABS(zo - model%depth)
+          iface    = MINLOC(distance, DIM=1)
+
+          IF (distance(iface) .lt. GAP) zo = model%depth(iface) + GAP*2        !< move source just below interface
+
+          shooting = [shooting, zo]        !< append shooting point
+
+          IF (zo .ge. zmax) EXIT           !< we have covered depth interval as needed
+
+          zo = zo + dz
+
+        ENDDO
+
+      END ASSOCIATE
+
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+      ! -------------------------------------------------- max s/r distance --------------------------------------------------------
+
+      totnutr = 2 * nutr(ref) - 1                     !< total triangles in a row
+
+      rmax = 0._r32
+
+      !$omp parallel do default(shared) private(i, j, iuc, ivc, u, v, w, x, y, z, rec) reduction(max: rmax)
+      DO j = 1, nvtr(ref)
+        DO i = 1, totnutr
+
+          CALL cornr(j, i, iuc, ivc)                 !< corner indices for current triangle
+          CALL cornr2uv(iuc, ivc, ref, u, v)         !< on-fault coordinates
+
+          DO icr = 1, 3
+            w(icr) = roughness(iuc(icr), ivc(icr))
+          ENDDO
+
+          CALL uvw2xyz(pl, u, v, w, x, y, z)            !< get cartesian coordinates
+
+          ! compute max source-receiver distance
+          DO icr = 1, 3
+            DO rec = 1, SIZE(input%receiver)
+              rmax = MAX(rmax, HYPOT(x(icr) - input%receiver(rec)%x, y(icr) - input%receiver(rec)%y))
+            ENDDO
+          ENDDO
+
+        ENDDO
+      ENDDO
+      !$omp end parallel do
+
+      IF (input%advanced%verbose .eq. 2) THEN
+
+        zmin = BIG
+        zmax = -BIG
+
+        DO i = 2, SIZE(shooting)
+          zo   = shooting(i) - shooting(i - 1)
+          zmin = MIN(zmin, zo)
+          zmax = MAX(zmax, zo)
+        ENDDO
+
+        CALL update_log(num2char('<ray shooting>', justify='c', width=30) + num2char('Points', width=15, justify='r') + '|' +  &
+                        num2char('Rmax', width=15, justify='r') + '|' +  &
+                        num2char('Zmin', width=15, justify='r') + '|' + num2char('Zmax', width=15, justify='r') + '|' +  &
+                        num2char('Avg Dz', width=15, justify='r') + '|')
+
+        CALL update_log(num2char('', width=30, justify='c')  +  &
+                        num2char(SIZE(shooting), width=15, justify='r') + '|' + &
+                        num2char(rmax*1.E-03_r32, width=15, notation='f', precision=3, justify='r') + '|' + &
+                        num2char(MINVAL(shooting)*1.E-03_r32, width=15, notation='f', precision=3, justify='r') + '|' + &
+                        num2char(MAXVAL(shooting)*1.E-03_r32, width=15, notation='f', precision=3, justify='r') + '|' +  &
+                        ! num2char(num2char(zmin, notation='f', width=6, precision=2) + ', ' +   &
+                        !          num2char(zmax, notation='f', width=6, precision=2), width=15, justify='r') + '|',blankline=.false.)
+                        num2char(mean([zmin, zmax])*1.E-03_r32, notation='f', width=15, precision=3, justify='r') + '|',    &
+                        blankline=.false.)
+
+      ENDIF
+
+      rmax = 1.2 * rmax / 1000._r32            !< slightly increase maximum distance
+
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+      ! --------------------------------------------- prepare velocity model -------------------------------------------------------
+
+      ASSOCIATE(model => input%velocity(vel))
+
+        layers = SIZE(model%depth)
+
+        ALLOCATE(velocity(4, 2*layers))
+
+        DO i = 1, layers
+
+          IF (i .gt. 1) THEN
+
+            zo = model%depth(i) - GAP
+
+            alpha = vinterp(model%depth, model%vp, model%vpgrad, zo)
+            beta  = vinterp(model%depth, model%vs, model%vsgrad, zo)
+            rho   = vinterp(model%depth, model%rho, model%rhograd, zo)
+
+            velocity(:, (i - 1)*2) = [zo, alpha, beta, rho] / 1000._r32         !< slightly above interface
+
+          ENDIF
+
+          zo = model%depth(i) + GAP
+
+          IF (i .eq. 1) zo = 0._r32
+
+          alpha = vinterp(model%depth, model%vp, model%vpgrad, zo)
+          beta  = vinterp(model%depth, model%vs, model%vsgrad, zo)
+          rho   = vinterp(model%depth, model%rho, model%rhograd, zo)
+
+          velocity(:, (i - 1)*2 + 1) = [zo, alpha, beta, rho]  / 1000._r32      !< slightly below interface
+
+        ENDDO
+
+        zo = 100000._r32
+
+        alpha = vinterp(model%depth, model%vp, model%vpgrad, zo)
+        beta  = vinterp(model%depth, model%vs, model%vsgrad, zo)
+        rho   = vinterp(model%depth, model%rho, model%rhograd, zo)
+
+        velocity(:, 2*layers) = [zo, alpha, beta, rho] / 1000._r32
+
+      END ASSOCIATE
+
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+      ! ----------------------------------------------------- shoot rays -----------------------------------------------------------
+
+#ifdef DEBUG
+      fo = 'spred_' + num2char(ref) + '_' + num2char(pl) + '_' + num2char(vel) + '.txt'
+
+      OPEN(newunit = lu, file = TRIM(fo), status = 'unknown', form = 'formatted', access = 'sequential', action = 'write',  &
+           iostat = ok)
+
+      IF (ok .ne. 0) THEN
+        CALL report_error('Error while opening file' + TRIM(fo))
+        RETURN
+      ENDIF
+#endif
+
+      ALLOCATE(wkbj(SIZE(shooting), 2))
+
+#ifdef PERF
+      CALL watch_start(tictoc(1), COMM)
+#endif
+
+      DO wavetype = 1, 2
+
+        maxsheets(wavetype) = 0
+        minsheets(wavetype) = HUGE(0)
+
+        DO i = 1, SIZE(shooting)
+
+          CALL spred(ok, velocity, rmax, shooting(i) / 1000._r32, i, wavetype, lu, sheets)
+
+          maxsheets(wavetype) = MAX(maxsheets(wavetype), sheets)     !< max number of sheets for each wave type
+          minsheets(wavetype) = MIN(minsheets(wavetype), sheets)
+
+        ENDDO
+
+      ENDDO
+
+#ifdef PERF
+      CALL watch_stop(tictoc(1), COMM)
+#endif
+
+#ifdef DEBUG
+      CLOSE(lu, iostat = ok)
+
+      IF (ok .ne. 0) THEN
+        CALL report_error('Error while closing file ' + fo)
+        RETURN
+      ENDIF
+#endif
+
+      IF (input%advanced%verbose .eq. 2) THEN
+
+        CALL update_log(num2char('<sheets (min, max)>', justify='c', width=30) +       &
+                        num2char('P-wave', width=15, justify='r') + '|' + num2char('S-wave', width=15, justify='r') + '|')
+
+        CALL update_log(num2char('', width=30, justify='c')  +  &
+                        num2char(num2char(minsheets(1), width=2) + ', ' +   &
+                                 num2char(maxsheets(1), width=2), width=15, justify='r') + '|' + &
+                        num2char(num2char(minsheets(2), width=2) + ', ' +   &
+                                 num2char(maxsheets(2), width=2), width=15, justify='r') + '|',  blankline=.false.)
+
+      ENDIF
+
+! #ifdef PERF
+!       IF (input%advanced%verbose .eq. 2) THEN
+!         CALL update_log(num2char('<<elapsed time>>', justify='c', width=30) + num2char(tictoc(1), width=15, notation='f',   &
+!                         precision=3, justify='r') + '|', blankline=.false.)
+!       ENDIF
+! #endif
+
+    END SUBROUTINE rayshooting
 
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
     !===============================================================================================================================
     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
 
-    FUNCTION assert_r32(par, v1, v2, strict) RESULT(assert)
+    SUBROUTINE correct4impz(ok, iter)
 
       ! Purpose:
-      !   To determine if variable "par" belongs to range [v1, v2]. Square brackets are replaced by round brackets if "strict=.true."
+      !   to correct the amplitude of synthetic timeseries by removing the total impulse response of multiple bandpass filters used
+      !   to compute synthetic seismograms with frequency-dependent scattering properties.
       !
       ! Revisions:
       !     Date                    Description of change
       !     ====                    =====================
-      !   18/12/20                  original version
+      !   08/03/21                  original version
       !
 
-      REAL(r32), DIMENSION(:),           INTENT(IN) :: par
-      REAL(r32),               OPTIONAL, INTENT(IN) :: v1, v2
-      LOGICAL,                 OPTIONAL, INTENT(IN) :: strict
-      LOGICAL                                       :: flag, assert
+      USE, NON_INTRINSIC :: m_fft_real
+
+      INTEGER(i32),                           INTENT(OUT) :: ok
+      INTEGER(i32),                           INTENT(IN)  :: iter
+      CHARACTER(:), ALLOCATABLE                           :: fo
+      COMPLEX(r32), ALLOCATABLE, DIMENSION(:)             :: spectrum
+      INTEGER(i32)                                        :: band, rec, i, lu, npts, ic
+      REAL(r32),    ALLOCATABLE, DIMENSION(:)             :: freq, amp, phase, respz, blob
 
       !-----------------------------------------------------------------------------------------------------------------------------
 
-#include "assert_incl.f90"
+      ASSOCIATE(model => input%attenuation(1), fmax => input%coda%fmax, dt => timeseries%sp%dt)
 
-    END FUNCTION assert_r32
+        ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+        ! ----------------------------------------- overall filter response --------------------------------------------------------
+
+        DO band = 1, SIZE(model%lcut)
+
+          IF (model%lcut(band) .ge. fmax) EXIT
+
+          IF (band .eq. 1) THEN
+            CALL make_iir_plan(ok, 'butter', dt, [0.25_r32, MIN(model%hcut(band), fmax)], 'pass', 2, zphase = .true.)
+          ELSE
+            CALL make_iir_plan(ok, 'butter', dt, [model%lcut(band), MIN(model%hcut(band), fmax)], 'pass', 2, zphase = .true.)
+          ENDIF
+
+          CALL freqz(freq, amp, phase, dt, SIZE(timeseries%sp%time))
+
+          IF (band .eq. 1) THEN
+            respz = amp**2
+          ELSE
+            respz = respz + amp**2
+          ENDIF
+
+          CALL destroy_iir_plan()
+
+        ENDDO
+
+        band = band - 1
+
+        ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+        ! ----------------------------------------- compensate filter response -----------------------------------------------------
+
+        IF (band .gt. 1) THEN
+
+          ! we want the composite filter reponse to look identical to that of a filter between lowest fcut and highest fcut(/fmax)
+          CALL make_iir_plan(ok, 'butter', dt, [0.25_r32, MIN(model%hcut(band), fmax)], 'pass', 2, zphase = .true.)
+
+          CALL freqz(freq, amp, phase, dt, SIZE(timeseries%sp%time))
+
+          CALL destroy_iir_plan()
+
+          npts = SIZE(timeseries%sp%time)
+
+          blob = respz
+
+          ! correct filter response for non-negligibile amplitude levels
+          DO i = 1, SIZE(respz)
+            IF (respz(i) .gt. 1.E-20) respz(i) = amp(i)**2 / respz(i)    !< **2 is because we used two-pass filters
+          ENDDO
+
+#ifdef DEBUG
+
+          fo = 'respz_' + num2char(iter) + '.txt'
+
+          OPEN(newunit = lu, file = fo, status = 'replace', form = 'formatted', access = 'sequential', action = 'write', iostat= ok)
+
+          IF (ok .ne. 0) THEN
+            CALL report_error('Error while opening file' + TRIM(fo))
+            RETURN
+          ENDIF
+
+          DO i = 1, SIZE(respz)
+            WRITE(lu, *) freq(i), blob(i), respz(i), amp(i)**2       !< blob*respz should be equal to amp**2
+          ENDDO
+
+          CLOSE(lu, iostat = ok)
+
+          IF (ok .ne. 0) THEN
+            CALL report_error('Error while closing file ' + fo)
+            RETURN
+          ENDIF
+
+#endif
+
+          CALL make_fftw_plan([npts])
+
+          ALLOCATE(spectrum(npts/2 + 1))
+
+          ! apply spectral correction function
+          DO rec = 1, SIZE(input%receiver)
+            DO ic = 1, 3
+              CALL fft(timeseries%sp%xyz(:, ic, rec), spectrum)
+              spectrum(:) = spectrum(:) * respz(:)
+              CALL ifft(timeseries%sp%xyz(:, ic, rec), spectrum)
+            ENDDO
+          ENDDO
+
+          CALL destroy_fftw_plan([npts])
+
+        ENDIF
+
+      END ASSOCIATE
+
+
+    END SUBROUTINE correct4impz
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    SUBROUTINE lookup_coda(ok, ref, rec, band, pl, vel, time)
+
+      ! Purpose:
+      !   to define a lookup table of coda envelopes for mesh refinement "ref", receiver "rec", frequency band "band", fault plane
+      !   "pl" and velocity model "vel". Envelopes are computed at time values given by "time" and stored in module variable "coda".
+      !   This subroutine computes also the amplitude of direct wave(s) for scaling purposes in "solve_isochron_integral".
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !   15/03/21                  compute P- and S-coda at once
+      !
+
+      INTEGER(i32),                INTENT(OUT) :: ok
+      INTEGER(i32),                INTENT(IN)  :: ref, rec, band, vel, pl
+      REAL(r32),    DIMENSION(:),  INTENT(IN)  :: time
+      INTEGER(i32)                             :: totnutr, i, j, icr, src, wave, sheet, n, np, nt
+      INTEGER(i32), DIMENSION(3)               :: iuc, ivc, shot
+      REAL(r32)                                :: r, tp, ts, vs, wp, ws, gsp, vratio, pmin, pmax, tmin, tmax
+      REAL(r32),    DIMENSION(2)               :: d0
+      REAL(r32),    DIMENSION(3)               :: u, v, w, x, y, z, repi
+      REAL(r32),    DIMENSION(2,2)             :: minbounds, maxbounds
+      REAL(r32),    DIMENSION(3,2)             :: p, path, trvt, q
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      ok = 0
+
+      totnutr = 2 * nutr(ref) - 1                     !< total triangles in a row
+
+      minbounds(:,:) = BIG
+      maxbounds(:,:) = -BIG
+
+      vratio = 0._r32
+      n      = 0
+
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+      ! ---------------------------------- min/max path and traveltime over all triangles ------------------------------------------
+
+     !$omp parallel do default(shared) private(i, j, iuc, ivc, u, v, w, icr, src, x, y, z, shot, repi, sheet, wave, p, path)   &
+     !$omp private(trvt, q) reduction(max: maxbounds) reduction(min: minbounds) reduction(+: vratio, n)
+      DO j = 1, nvtr(ref)
+        DO i = 1, totnutr
+
+          CALL cornr(j, i, iuc, ivc)                 !< corner indices for current triangle
+          CALL cornr2uv(iuc, ivc, ref, u, v)         !< on-fault coordinates
+
+          DO icr = 1, 3
+            w(icr) = roughness(iuc(icr), ivc(icr))
+          ENDDO
+
+          CALL uvw2xyz(pl, u, v, w, x, y, z)            !< get cartesian coordinates
+
+          DO icr = 1, 3
+            z(icr) = MAX(MIN_DEPTH, z(icr))             !< make sure we never breach the free-surface (clip roughness)
+          ENDDO
+
+          ! find shooting points above/below
+          DO icr = 1, 3
+            DO src = 1, SIZE(shooting) - 1
+              IF ( (z(icr) .ge. shooting(src)) .and. (z(icr) .le. shooting(src + 1)) ) shot(icr) = src
+            ENDDO
+          ENDDO
+
+          DO icr = 1, 3
+            repi(icr) = HYPOT(input%receiver(rec)%x - x(icr), input%receiver(rec)%y - y(icr)) / 1000._r32        !< epicentral distance (corner-receiver)
+          ENDDO
+
+          DO sheet = 1, MAXVAL(maxsheets)
+
+            DO wave = 1, 2
+
+              CALL raycorner(sheet, shooting, repi, z, shot, wave, p(:, wave), path(:, wave), trvt(:, wave), q(:, wave))
+
+              IF (ALL(trvt(:, wave) .ne. 0._r32)) THEN
+                minbounds(1, wave) = MIN(minbounds(1, wave), mean(path(:, wave)))
+                maxbounds(1, wave) = MAX(maxbounds(1, wave), mean(path(:, wave)))
+                minbounds(2, wave) = MIN(minbounds(2, wave), mean(trvt(:, wave)))
+                maxbounds(2, wave) = MAX(maxbounds(2, wave), mean(trvt(:, wave)))
+              ENDIF
+
+            ENDDO
+
+            IF (ALL(trvt .ne. 0._r32)) THEN
+              vratio = vratio + mean(path(:, 1)) / mean(trvt(:, 1)) * mean(trvt(:, 2)) / mean(path(:, 2))   !< alpha/beta
+              n      = n + 1
+            ENDIF
+
+          ENDDO
+
+        ENDDO
+      ENDDO  !< end loop over triangles
+     !$omp end parallel do
+
+      vratio = vratio / n         !< average Vp/Vs ratio
+
+      coda%lopath = minbounds(1, :)
+      coda%uppath = maxbounds(1, :)
+
+      coda%lotrvt = minbounds(2, :)
+      coda%uptrvt = maxbounds(2, :)
+
+      IF (input%advanced%verbose .eq. 2) THEN
+
+        ! CALL update_log(num2char('<coda P>', justify='c', width=30) +    &
+        !                 num2char('Min trvt', width=15, justify='r')  + '|' + num2char('Max trvt', width=15, justify='r') + '|' +  &
+        !                 num2char('Min path', width=15, justify='r')  + '|' + num2char('Max path', width=15, justify='r') + '|' +  &
+        !                 num2char('Envelopes', width=15, justify='r') + '|' + num2char('<vp/vs>', width=15, justify='r')  + '|')
+        !
+        ! np = NINT( (coda%uppath(1) - coda%lopath(1)) / DCP ) + 1
+        ! nt = NINT( (coda%uptrvt(1) - coda%lotrvt(1)) / DCT ) + 1
+        !
+        ! CALL update_log(num2char('', width=30) +  &
+        !                 num2char(coda%lotrvt(1), width=15, justify='r', notation='f', precision=2) + '|' +    &
+        !                 num2char(coda%uptrvt(1), width=15, justify='r', notation='f', precision=2) + '|' +    &
+        !                 num2char(coda%lopath(1), width=15, justify='r', notation='f', precision=2) + '|' +    &
+        !                 num2char(coda%uppath(1), width=15, justify='r', notation='f', precision=2) + '|' +    &
+        !                 num2char(np*nt, width=15, justify='r') + '|' + &
+        !                 num2char(vratio, width=15, justify='r', notation='f', precision=2) + '|', blankline=.false.)
+
+        CALL update_log(num2char('<coda S>', justify='c', width=30) +    &
+                        num2char('Min trvt', width=15, justify='r') + '|' + num2char('Max trvt', width=15, justify='r') + '|' + &
+                        num2char('Min path', width=15, justify='r') + '|' + num2char('Max path', width=15, justify='r') + '|' + &
+                        num2char('Envelopes', width=15, justify='r') + '|' + num2char('<vp/vs>', width=15, justify='r') + '|')
+
+        np = NINT( (coda%uppath(2) - coda%lopath(2)) / DCP ) + 1
+        nt = NINT( (coda%uptrvt(2) - coda%lotrvt(2)) / DCT ) + 1
+
+        CALL update_log(num2char('', width=30) +  &
+                        num2char(coda%lotrvt(2), width=15, justify='r', notation='f', precision=2) + '|' +    &
+                        num2char(coda%uptrvt(2), width=15, justify='r', notation='f', precision=2) + '|' +    &
+                        num2char(coda%lopath(2), width=15, justify='r', notation='f', precision=2) + '|' +    &
+                        num2char(coda%uppath(2), width=15, justify='r', notation='f', precision=2) + '|' +    &
+                        num2char(np*nt, width=15, justify='r')   + '|' + &
+                        num2char(vratio, width=15, justify='r', notation='f', precision=2) + '|', blankline=.false.)
+
+      ENDIF
+
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+      ! -------------------------------------------- compute direct and coda waves -------------------------------------------------
+
+
+      ! IF (ALLOCATED(coda%penvelope)) DEALLOCATE(coda%penvelope, coda%pdirect)
+      !
+      ! np = NINT( (coda%uppath(1) - coda%lopath(1)) / DCP ) + 1
+      ! nt = NINT( (coda%uptrvt(1) - coda%lotrvt(1)) / DCT ) + 1
+      !
+      ! ALLOCATE(coda%penvelope(SIZE(time), nt, np), coda%pdirect(nt, np))
+
+      ASSOCIATE(model => input%attenuation(input%receiver(rec)%attenuation))
+
+        gsp = model%gps(band) / 6._r32
+
+        ! wp = 1._r32
+        ! ws = 0._r32
+        !
+        ! !$omp parallel do default(shared) private(i, j, tp, ts, r, vs, d0) reduction(max: ok)
+        ! DO j = 1, np
+        !   DO i = 1, nt
+        !
+        !     tp = coda%lotrvt(1) + (i - 1) * DCT
+        !     r  = coda%lopath(1) + (j - 1) * DCP
+        !
+        !     ts = tp * vratio
+        !
+        !     vs = r / ts
+        !
+        !     IF (model%gss(band) .ge. GSS_MIN) THEN
+        !       CALL rtt(time, tp, ts, model%gpp(band), model%gps(band), gsp, model%gss(band), model%b(band), vs, wp, ws,   &
+        !                0.25_r32, d0, coda%penvelope(:, i, j), ok)
+        !
+        !       coda%pdirect(i, j) = d0(1)
+        !     ELSE
+        !       coda%penvelope(:, i, j) = 0._r32
+        !       coda%pdirect(i, j)      = 1._r32
+        !     ENDIF
+        !
+        !     ! print*, 'P ', tp, r, ts, vs, ok, SIZE(time)
+        !
+        !   ENDDO
+        ! ENDDO
+        ! !$omp end parallel do
+
+        np = NINT( (coda%uppath(2) - coda%lopath(2)) / DCP ) + 1
+        nt = NINT( (coda%uptrvt(2) - coda%lotrvt(2)) / DCT ) + 1
+
+        IF (ALLOCATED(coda%senvelope)) DEALLOCATE(coda%senvelope, coda%sdirect)
+
+        ALLOCATE(coda%senvelope(SIZE(time), nt, np), coda%sdirect(nt, np))
+
+        ! wp = 0._r32
+        ! ws = 1._r32
+        wp = 1._r32               !< generic Ep/Es for double-couple in Poisson solids
+        ws = 23.4_r32
+
+        !$omp parallel do default(shared) private(i, j, tp, ts, r, vs, d0) reduction(max: ok)
+        DO j = 1, np
+          DO i = 1, nt
+
+            ts = coda%lotrvt(2) + (i - 1) * DCT
+            r  = coda%lopath(2) + (j - 1) * DCP
+
+            tp = ts / vratio
+
+            vs = r / ts
+
+            IF (model%gss(band) .ge. GSS_MIN) THEN
+              CALL rtt(time, tp, ts, model%gpp(band), model%gps(band), gsp, model%gss(band), model%b(band), vs, wp, ws,   &
+                       0.25_r32, d0, coda%senvelope(:, i, j), ok)
+
+              coda%sdirect(i, j) = d0(2)
+            ELSE
+              coda%senvelope(:, i, j) = 0._r32
+              coda%sdirect(i, j)      = 1._r32
+            ENDIF
+
+            ! print*, 'S ', ts, r, tp, vs, ok
+
+          ENDDO
+        ENDDO
+        !$omp end parallel do
+
+      END ASSOCIATE
+
+print*, 'ok coda ', ok
+
+    END SUBROUTINE lookup_coda
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+    SUBROUTINE integration_step(ok, ref, rec, pl, vel, iter, step)
+
+      ! Purpose:
+      !   to define the integration time-step "step" such that the desired number of (average) cuts per triangle are obtained. Value
+      !   is searched for mesh refinement "ref", receiver "rec", fault plane "pl", velocity model "vel" and iteration "iter".
+      !
+      ! Revisions:
+      !     Date                    Description of change
+      !     ====                    =====================
+      !   08/03/21                  original version
+      !
+
+      INTEGER(i32),              INTENT(OUT) :: ok
+      INTEGER(i32),              INTENT(IN)  :: ref, rec, pl, vel, iter
+      REAL(r32),                 INTENT(OUT) :: step
+      INTEGER(i32)                           :: seed, totnutr, i, j, icr, src, wtp, sheet
+      INTEGER(i32), DIMENSION(2)             :: n
+      INTEGER(i32), DIMENSION(3)             :: iuc, ivc, shot
+      REAL(r32)                              :: strike, dip, urec, vrec, wrec, taumin, taumax
+      REAL(r32),    DIMENSION(2)             :: dt
+      REAL(r32),    DIMENSION(3)             :: slip, u, v, w, x, y, z, nrl, rake, repi, rupture
+      REAL(r32),    DIMENSION(3)             :: p, path, trvt, q, tau
+
+      !-----------------------------------------------------------------------------------------------------------------------------
+
+      ok = 0
+
+      dt(:) = 0._r32
+      n(:)  = 0
+
+      ! set "seed" such that random numbers depend on fault plane number and iteration
+      seed = input%source%seed + (iter - 1) * SIZE(plane) + pl
+
+      ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
+      ! ------------------------------------------ define RIK model on mesh nodes ------------------------------------------------
+
+      ALLOCATE(nodes(nugr(ref), nvgr(ref)))
+
+      CALL nodefun(ref, pl, vel, seed)                !< define slip, rupture time and rise time on mesh nodes
+
+      totnutr = 2 * nutr(ref) - 1                     !< total triangles in a row
+
+      ! generate fault plane roughness
+      CALL fault_roughness(ok, ref, pl, iter)
+
+      ! shoot rays between receivers and a set of sources spanning (vertically) current mesh
+      CALL rayshooting(ok, ref, pl, vel)
+
+      !$omp parallel do default(shared) private(i, j, iuc, ivc, icr, slip, u, v, w, x, y, z, nrl, strike, dip, rake, rupture)   &
+      !$omp private(urec, vrec, wrec, repi, wtp, sheet, src, shot, p, path, trvt, q, tau, taumin, taumax)   &
+      !$omp reduction(+: dt, n)
+      DO j = 1, nvtr(ref)
+        DO i = 1, totnutr
+
+          ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+          ! ---------------------------------------- check corners have non-zero slip --------------------------------------------
+
+          CALL cornr(j, i, iuc, ivc)        !< corner indices for current triangle
+
+          DO icr = 1, 3
+            slip(icr) = SUM(nodes(iuc(icr), ivc(icr))%slip)
+          ENDDO
+
+          IF (ALL(slip .eq. 0._r32)) CYCLE          !< jump to next triangle if current has zero slip
+
+          ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+          ! --------------------------------------------- get perturbed mechanism ------------------------------------------------
+
+          CALL cornr2uv(iuc, ivc, ref, u, v)        !< on-fault coordinates
+
+          DO icr = 1, 3
+            w(icr) = roughness(iuc(icr), ivc(icr))      !< add roughness (always zero for point-sources)
+          ENDDO
+
+          CALL uvw2xyz(pl, u, v, w, x, y, z)            !< get cartesian coordinates
+
+          DO icr = 1, 3
+            z(icr) = MAX(MIN_DEPTH, z(icr))             !< make sure we never breach the free-surface (clip roughness)
+          ENDDO
+
+          CALL normal2tri(x, y, z, nrl)
+
+          ! always have normal pointing upward (i.e. negative z direction)
+          IF (MOD(i + (j-1)*totnutr, 2) == 0) nrl(:) = -nrl(:)
+
+          strike = plane(pl)%strike !* DEG_TO_RAD
+          dip    = plane(pl)%dip    !* DEG_TO_RAD
+
+          CALL interpolate(plane(pl)%u, plane(pl)%v, plane(pl)%rake, u, v, rake)
+
+          CALL perturbed_mechanism(strike, dip, rake, nrl)            !< get new strike, dip, rake (all values in radians)
+
+          ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+          ! ----------------------------------------------- corner parameters ----------------------------------------------------
+
+          DO icr = 1, 3
+            rupture(icr) = MINVAL(nodes(iuc(icr), ivc(icr))%rupture)
+          ENDDO
+
+          ! move from "x-y" to "u-t" coordinates for corners
+          u = x
+          v = y
+          w = 0._r32
+          CALL rotate(u, v, w, 0._r32, 0._r32, -strike)
+
+          ! find shooting points above/below
+          DO icr = 1, 3
+            DO src = 1, SIZE(shooting) - 1
+              IF ( (z(icr) .ge. shooting(src)) .and. (z(icr) .le. shooting(src + 1)) ) shot(icr) = src
+            ENDDO
+          ENDDO
+
+          ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
+          ! -------------------------------------- triangle contribution to ground motion ----------------------------------------
+
+          urec = input%receiver(rec)%x
+          vrec = input%receiver(rec)%y
+          wrec = 0._r32
+
+          CALL rotate(urec, vrec, wrec, 0._r32, 0._r32, -strike)       !< move to "u-t" coordinates for receiver
+
+          DO icr = 1, 3
+            repi(icr) = HYPOT(urec - u(icr), vrec - v(icr)) / 1000._r32        !< epicentral distance (corner-receiver)
+          ENDDO
+
+          ! loop over wave types
+          DO wtp = 1, 2
+
+            DO sheet = 1, maxsheets(wtp)
+
+              CALL raycorner(sheet, shooting, repi, z, shot, wtp, p, path, trvt, q)
+
+              IF (ANY(trvt .eq. 0._r32)) CYCLE       !< all corners must belong to same sheet
+
+              tau(:) = trvt(:) + rupture(:)          !< sum travel-time and rupture time
+
+              taumax = MAXVAL(tau)
+              taumin = MINVAL(tau)
+
+              dt(wtp) = dt(wtp) + (taumax - taumin) / (input%advanced%avecuts + 1)
+              n(wtp)  = n(wtp) + 1
+
+            ENDDO     !< end loop over sheets
+
+          ENDDO    !< end loop over wave types
+
+        ENDDO
+      ENDDO
+      !$omp end parallel do
+
+      CALL dealloc_nodes()
+
+      step = MAXVAL(dt / n)
+
+    END SUBROUTINE integration_step
+
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+    !===============================================================================================================================
+    ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+
+!     FUNCTION assert_i32(par, v1, v2, strict) RESULT(assert)
+!
+!       ! Purpose:
+!       !   To determine if variable "par" belongs to range [v1, v2]. Square brackets are replaced by round brackets if "strict=.true."
+!       !
+!       ! Revisions:
+!       !     Date                    Description of change
+!       !     ====                    =====================
+!       !   18/12/20                  original version
+!       !
+!
+!       INTEGER(i32), DIMENSION(:),           INTENT(IN) :: par
+!       INTEGER(i32),               OPTIONAL, INTENT(IN) :: v1, v2
+!       LOGICAL,                    OPTIONAL, INTENT(IN) :: strict
+!       LOGICAL                                          :: flag, assert
+!
+!       !-----------------------------------------------------------------------------------------------------------------------------
+!
+! #include "assert_incl.f90"
+!
+!     END FUNCTION assert_i32
+!
+!     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+!     !===============================================================================================================================
+!     ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- *
+!
+!     FUNCTION assert_r32(par, v1, v2, strict) RESULT(assert)
+!
+!       ! Purpose:
+!       !   To determine if variable "par" belongs to range [v1, v2]. Square brackets are replaced by round brackets if "strict=.true."
+!       !
+!       ! Revisions:
+!       !     Date                    Description of change
+!       !     ====                    =====================
+!       !   18/12/20                  original version
+!       !
+!
+!       REAL(r32), DIMENSION(:),           INTENT(IN) :: par
+!       REAL(r32),               OPTIONAL, INTENT(IN) :: v1, v2
+!       LOGICAL,                 OPTIONAL, INTENT(IN) :: strict
+!       LOGICAL                                       :: flag, assert
+!
+!       !-----------------------------------------------------------------------------------------------------------------------------
+!
+! #include "assert_incl.f90"
+!
+!     END FUNCTION assert_r32
 
 END MODULE m_isochron

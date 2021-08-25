@@ -16,8 +16,7 @@ MODULE m_toolbox
   PRIVATE
 
   PUBLIC :: input
-  PUBLIC :: read_input_file, missing_arg, watch_start, watch_stop, geo2utm, utm2geo, split_task
-
+  PUBLIC :: read_input_file, missing_arg, watch_start, watch_stop, geo2utm, utm2geo, split_task, assert
 
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
 

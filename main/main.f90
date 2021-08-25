@@ -81,7 +81,7 @@ PROGRAM main
   ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --
   ! ------------------------------------------------- load input time-series  ------------------------------------------------------
 
-  ! CALL read_lp(ok, rank, ntasks)
+  CALL read_lp(ok, rank, ntasks)
 
 #ifdef MPI
   IF (ok .ne. 0) CALL mpi_abort(mpi_comm_world, ok, ierr)
@@ -94,25 +94,23 @@ PROGRAM main
 
   nrecs = SIZE(input%receiver)
 
-  timeseries%lp%dt = 0.5_r32 / 4
-
-  npts = NINT(80._r32 / timeseries%lp%dt) + 1
-
-  ALLOCATE(timeseries%lp%time(npts), timeseries%lp%xyz(npts, 3, nrecs))
-
-  DO i = 1, npts
-    timeseries%lp%time(i) = (i - 1) * timeseries%lp%dt
-  ENDDO
+  ! timeseries%lp%dt = 0.5_r32 / 4
+  !
+  ! npts = NINT(80._r32 / timeseries%lp%dt) + 1
+  !
+  ! ALLOCATE(timeseries%lp%time(npts), timeseries%lp%xyz(npts, 3, nrecs))
+  !
+  ! DO i = 1, npts
+  !   timeseries%lp%time(i) = (i - 1) * timeseries%lp%dt
+  ! ENDDO
 
   ! Nyquist frequency of high-frequency timeseries is twice maximum target frequency
   timeseries%bb%dt = 0.5_r32 / (input%coda%fmax * 2)
   timeseries%sp%dt = 0.5_r32 / (input%coda%fmax * 2)
   timeseries%cd%dt = 0.5_r32 / (input%coda%fmax * 2)
 
-  ! npts = SIZE(timeseries%lp%time)
-  !
-  ! npts = NINT(timeseries%lp%time(npts) / timeseries%sp%dt) + 1
-  npts = NINT(80._r32 / timeseries%sp%dt) + 1
+  npts = NINT(timeseries%lp%time(SIZE(timeseries%lp%time)) / timeseries%sp%dt) + 1
+  ! npts = NINT(80._r32 / timeseries%sp%dt) + 1
 
   ALLOCATE(timeseries%bb%xyz(npts, 3, nrecs))
   ALLOCATE(timeseries%sp%xyz(npts, 3, nrecs))

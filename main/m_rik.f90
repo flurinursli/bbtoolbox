@@ -728,7 +728,8 @@ MODULE m_rik
 
           it1 = CEILING(rupture / dt) + 1
 
-          it2 = MAX(npts, it1 + NINT(5._r32 * rise / dt) + 1)      !< compute up to 5*rise but stay within size of mrf
+          ! it2 = MAX(npts, it1 + NINT(5._r32 * rise / dt) + 1)      !< compute up to 5*rise but stay within size of mrf
+          it2 = MIN(npts, it1 + NINT(5._r32 * rise / dt) + 1)      !< compute up to 5*rise but stay within size of mrf
 
           imax = MAX(imax, it2)                                    !< keep track of max time sample
 
