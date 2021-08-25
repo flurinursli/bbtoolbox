@@ -1340,7 +1340,7 @@ MODULE m_rtt
       direct(1) = SQRT(v * EXP(-bi * tp))
       direct(2) = SQRT(b * EXP(-bi * ts))
 
-      ip = NINT( (tp - tau) / dt) + 1
+      ip = NINT((tp - tau) / dt) + 1                !< "ip" can be negative if "tp" is very small
 
       n = NINT(2._r32 * tau / dt) + 1
 
@@ -1348,7 +1348,7 @@ MODULE m_rtt
         em(i) = 0._r32
       ENDDO
 
-      DO i = ip - n/2, ip
+      DO i = MAX(1, ip - n/2), ip                                         !< prevent negative index
         em(i) = em(i) * SIN(pi * REAL(i - ip + n/2, r32) / n)**2          !< hann window
       ENDDO
 
