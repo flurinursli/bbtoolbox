@@ -3,12 +3,12 @@ FC = mpif90
 C++ = mpic++
 
 # optimization flags for GCC (add "-march=native" if compute node eqv. compile node)
-OPT = -g -std=f2008 -fcheck=all -fbacktrace
-#OPT = -O3 -funroll-loops -std=f2008 -march=native
+#OPT = -g -fcheck=all -std=f2008 -fbacktrace
+OPT = -O3 -funroll-loops -std=f2008 -march=native 
 OMP = -fopenmp
 
 # optimization flags for INTEL (add "-xHost" if compute node eqv. compile node)
-#OPT = -O3 -xHost
+#OPT = -O3 -xHost -check all
 #OMP = -qopenmp
 
 # flags for lapack, fftw, etc. libraries: these are system-dependent

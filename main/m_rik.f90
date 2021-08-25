@@ -726,6 +726,9 @@ MODULE m_rik
           rupture = nodes(iu, iv)%rupture(src) - tau(icr)
           rise    = nodes(iu, iv)%rise(src)
 
+          ! neglect subsources having zero slip (and rise-time) to avoid NaN in "mrf"
+          IF (slip .eq. 0._r32) CYCLE         
+
           it1 = CEILING(rupture / dt) + 1
 
           ! it2 = MAX(npts, it1 + NINT(5._r32 * rise / dt) + 1)      !< compute up to 5*rise but stay within size of mrf

@@ -1,5 +1,6 @@
 MODULE m_toolbox
 
+  USE                :: omp_lib
   USE, INTRINSIC     :: iso_c_binding
   USE, NON_INTRINSIC :: m_precisions
   USE, NON_INTRINSIC :: m_logfile

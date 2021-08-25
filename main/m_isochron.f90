@@ -26,7 +26,7 @@ MODULE m_isochron
   !   08/03/21                  original version
   !
 
-
+  USE                :: omp_lib
   USE, NON_INTRINSIC :: m_precisions
   USE, NON_INTRINSIC :: m_interpolation_r32
   USE, NON_INTRINSIC :: m_compgeo
@@ -168,8 +168,6 @@ MODULE m_isochron
         CASE(2)
           weight(1) = 0                 !< neglect P-waves contribution
       END SELECT
-
-print*, 'weight ', weight
 
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! ---------------------------------------- lookup table free-surface coefficients --------------------------------------------
@@ -348,14 +346,13 @@ print*, 'weight ', weight
         !$omp private(sr, cr, tictoc, rupture, alpha, beta, rho, mu, ic, src, shot, mrf, urec, vrec, wrec, repi)     &
         !$omp private(rtri, itri, wtp, velloc, srfvel, scattering, sheet, p, path, trvt, q, tau, taumin, taumax, it1)   &
         !$omp private(it2, attenuation, it, tur, tui, tv, a0, ipc, itc, shift)   &
-
         !$omp private(fxpfzs, fzpfxs, fp, fs, dx, dy, dr, cpsi, spsi, sloloc, pn, signp, sthf, cthf, rn, rv, ru, bn, cn, bu, cu)  &
         !$omp private(bv, cv, stho, ctho, ir, itheta, iphi, rvec, thvec, phvec, g)     &
-
         !$omp private(icut, g31, g21, g23, ga, gb, tau31, tau21, tau23, dtau, c, t, du, dv, p13, p12, p32, dl)  &
-
-        !$omp reduction(+: m0, rseis, iseis, ostopwatch, ncuts, tricross, noslip, ctri)   &
-        !$omp collapse(2)
+#ifdef DEBUG
+        !$omp reduction(+: ctri) &
+#endif
+        !$omp reduction(+: m0, rseis, iseis, ostopwatch, ncuts, tricross, noslip) collapse(2)
         DO j = 1, nvtr(ref)
           DO i = 1, totnutr
 
@@ -1630,8 +1627,8 @@ print*, 'weight ', weight
 
         INQUIRE(lu, POS=offset)
 
-        !$omp parallel do ordered default(shared) private(i, j, iuc, ivc, slip, u, v, w, x, y, z, nrl, strike, dip, rake, icr)   &
-        !$omp private(rupture, beta, rho, mrf, lon, lat, nt) reduction(+: m0) collapse(2)
+!        !$omp parallel do ordered default(shared) private(i, j, iuc, ivc, slip, u, v, w, x, y, z, nrl, strike, dip, rake, icr)   &
+!        !$omp private(rupture, beta, rho, mrf, lon, lat, nt) reduction(+: m0) collapse(2)
         DO j = 1, nvtr(ref)
           DO i = 1, totnutr
 
@@ -1701,7 +1698,7 @@ print*, 'weight ', weight
             ! all values are referred to triangle (subfault) center. Note that only one thread at a time will first find the next
             ! position in the file, then append a first point block and then a second one. The following thread will be asked to
             ! find the next position in the file and then write. This implies that subfaults will be written in any order.
-            !$omp ordered
+!            !$omp ordered
             INQUIRE(lu, POS=offset)
 
             WRITE(lu, POS=offset) mean(lon), mean(lat), mean(z)*1.E-03_r32, strike, dip, area, mean(rupture), dt,    &
@@ -1711,11 +1708,11 @@ print*, 'weight ', weight
             DO it = 1, nt
               WRITE(lu) mrf(it) * 1.E+02_r32             !< append MRF values
             ENDDO
-            !$omp end ordered
+!            !$omp end ordered
 
           ENDDO
         ENDDO
-        !$omp end parallel do
+!        !$omp end parallel do
 
         CALL dealloc_nodes()
 

@@ -18,13 +18,13 @@ MODULE m_rtt
   !   11/01/21                  added mpi directives
   !
 
+  ! USE                :: omp_lib
   USE, INTRINSIC     :: iso_c_binding
   USE, INTRINSIC     :: iso_fortran_env, stdout => output_unit
   USE, NON_INTRINSIC :: m_precisions
   USE, NON_INTRINSIC :: m_fft_real
   USE, NON_INTRINSIC :: m_interpolation_r64
   USE, NON_INTRINSIC :: m_llsq_r64
-  USE                :: omp_lib
 #ifdef MPI
   USE, NON_INTRINSIC :: mpi
 #endif

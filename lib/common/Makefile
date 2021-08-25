@@ -8,7 +8,7 @@ F90_OBJ = m_precisions.o m_stat.o m_colors.o m_strings.o m_parser.o m_logfile.o
 common: dirs $(LIB_NAME)
 
 $(F90_OBJ) : %.o : %.f90
-	$(FC) $(OPT) -fopenmp -cpp -c -o $@ $<
+	$(FC) $(OPT) $(OMP) -cpp -c -o $@ $<
 
 $(LIB_NAME): $(F90_OBJ)
 	ar qc $@ $(F90_OBJ)
