@@ -386,9 +386,15 @@ MODULE m_isochron
 
             CALL uvw2xyz(pl, u, v, w, x, y, z)            !< get cartesian coordinates
 
-            DO icr = 1, 3
-              z(icr) = MAX(MIN_DEPTH, z(icr))             !< make sure we never breach the free-surface (clip roughness)
-            ENDDO
+            ! this makes triangle degenerate (all "z" = MIN_DEPTH) if all "z" are above MIN_DEPTH
+            ! DO icr = 1, 3
+            !   z(icr) = MAX(MIN_DEPTH, z(icr))             !< make sure we never breach the free-surface (clip roughness)
+            ! ENDDO
+
+            IF (ANY(z .lt. MIN_DEPTH)) THEN
+              w(:) = 0._r32                          !< simply set roughness to zero and recompute x, y, z
+              CALL uvw2xyz(pl, u, v, w, x, y, z)
+            ENDIF
 
             CALL normal2tri(x, y, z, nrl)
 

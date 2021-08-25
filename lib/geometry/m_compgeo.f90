@@ -1,6 +1,6 @@
 MODULE m_compgeo
 
-  USE                :: omp_lib
+  ! USE                :: omp_lib
   USE, NON_INTRINSIC :: m_precisions
 
   IMPLICIT none
