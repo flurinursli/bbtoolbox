@@ -1482,9 +1482,15 @@ MODULE m_isochron
 
             CALL uvw2xyz(pl, u, v, w, x, y, z)            !< get cartesian coordinates
 
-            DO icr = 1, 3
-              z(icr) = MAX(MIN_DEPTH, z(icr))             !< make sure we never breach the free-surface (clip roughness)
-            ENDDO
+            ! this makes triangle degenerate (all "z" = MIN_DEPTH) if all "z" are above MIN_DEPTH
+            ! DO icr = 1, 3
+            !   z(icr) = MAX(MIN_DEPTH, z(icr))             !< make sure we never breach the free-surface (clip roughness)
+            ! ENDDO
+
+            IF (ANY(z .lt. MIN_DEPTH)) THEN
+              w(:) = 0._r32                          !< simply set roughness to zero and recompute x, y, z
+              CALL uvw2xyz(pl, u, v, w, x, y, z)
+            ENDIF
 
             !$omp ordered
             WRITE(lu) x, y, z, slip, rise, rupture         !< values at each corner
@@ -1655,9 +1661,15 @@ MODULE m_isochron
 
             CALL uvw2xyz(pl, u, v, w, x, y, z)            !< get cartesian coordinates (m)
 
-            DO icr = 1, 3
-              z(icr) = MAX(MIN_DEPTH, z(icr))             !< make sure we never breach the free-surface (clip roughness)
-            ENDDO
+            ! this makes triangle degenerate (all "z" = MIN_DEPTH) if all "z" are above MIN_DEPTH
+            ! DO icr = 1, 3
+            !   z(icr) = MAX(MIN_DEPTH, z(icr))             !< make sure we never breach the free-surface (clip roughness)
+            ! ENDDO
+
+            IF (ANY(z .lt. MIN_DEPTH)) THEN
+              w(:) = 0._r32                          !< simply set roughness to zero and recompute x, y, z
+              CALL uvw2xyz(pl, u, v, w, x, y, z)
+            ENDIF
 
             CALL normal2tri(x, y, z, nrl)
 
@@ -1819,9 +1831,15 @@ MODULE m_isochron
 
             CALL uvw2xyz(pl, u, v, w, x, y, z)            !< get cartesian coordinates (m)
 
-            DO icr = 1, 3
-              z(icr) = MAX(MIN_DEPTH, z(icr))             !< make sure we never breach the free-surface (clip roughness)
-            ENDDO
+            ! this makes triangle degenerate (all "z" = MIN_DEPTH) if all "z" are above MIN_DEPTH
+            ! DO icr = 1, 3
+            !   z(icr) = MAX(MIN_DEPTH, z(icr))             !< make sure we never breach the free-surface (clip roughness)
+            ! ENDDO
+
+            IF (ANY(z .lt. MIN_DEPTH)) THEN
+              w(:) = 0._r32                          !< simply set roughness to zero and recompute x, y, z
+              CALL uvw2xyz(pl, u, v, w, x, y, z)
+            ENDIF
 
             CALL normal2tri(x, y, z, nrl)
 
@@ -2444,8 +2462,8 @@ MODULE m_isochron
       ! --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * --- * ---
       ! ---------------------------------- min/max path and traveltime over all triangles ------------------------------------------
 
-     !$omp parallel do default(shared) private(i, j, iuc, ivc, u, v, w, icr, src, x, y, z, shot, repi, sheet, wave, p, path)   &
-     !$omp private(trvt, q) reduction(max: maxbounds) reduction(min: minbounds) reduction(+: vratio, n)
+      !$omp parallel do default(shared) private(i, j, iuc, ivc, u, v, w, icr, src, x, y, z, shot, repi, sheet, wave, p, path)   &
+      !$omp private(trvt, q) reduction(max: maxbounds) reduction(min: minbounds) reduction(+: vratio, n)
       DO j = 1, nvtr(ref)
         DO i = 1, totnutr
 
@@ -2458,9 +2476,15 @@ MODULE m_isochron
 
           CALL uvw2xyz(pl, u, v, w, x, y, z)            !< get cartesian coordinates
 
-          DO icr = 1, 3
-            z(icr) = MAX(MIN_DEPTH, z(icr))             !< make sure we never breach the free-surface (clip roughness)
-          ENDDO
+          ! this makes triangle degenerate (all "z" = MIN_DEPTH) if all "z" are above MIN_DEPTH
+          ! DO icr = 1, 3
+          !   z(icr) = MAX(MIN_DEPTH, z(icr))             !< make sure we never breach the free-surface (clip roughness)
+          ! ENDDO
+
+          IF (ANY(z .lt. MIN_DEPTH)) THEN
+            w(:) = 0._r32                          !< simply set roughness to zero and recompute x, y, z
+            CALL uvw2xyz(pl, u, v, w, x, y, z)
+          ENDIF
 
           ! find shooting points above/below
           DO icr = 1, 3
@@ -2600,7 +2624,9 @@ MODULE m_isochron
         wp = 1._r32               !< generic Ep/Es for double-couple in Poisson solids
         ws = 23.4_r32
 
-        !$omp parallel do default(shared) private(i, j, tp, ts, r, vs, d0) reduction(max: ok)
+        ! parallelization here creates problems to "rtt", not sure why (variables "alpha" and "beta" seems overwritten inside "rtt")
+        ! As a solution, I commented parallel loop here and enabled parallelization inside "rtt" -> performance penalty
+        !$omp parallel do default(shared) private(i, j, tp, ts, r, vs, d0) reduction(max: ok) collapse(2)
         DO j = 1, np
           DO i = 1, nt
 

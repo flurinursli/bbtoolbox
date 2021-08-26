@@ -3,7 +3,7 @@
 # rupture and source are mutually exclusive
 
 # set coda parameters (coherency parameters are optional)
-coda fmax = 10. matching frequency = 1.5 bandwidth = 0.5 seed = 7592003  samples = 1  +
+coda fmax = 2. matching frequency = 1.5 bandwidth = 0.5 seed = 7592003  samples = 1  +
 # coherency
 # model = 'hv' a = 0.736 b = 2.78 ak = 765.87 f0 = 1.09  alpha = 2.5e-04
 model = 'lw' alpha = 2.5e-04
@@ -65,6 +65,7 @@ layer vs = 3198               vp = 5536               rho = 2626                
 # note: these properties are the same for the whole model
 # tip: to specify no scattering/attenuation, give a single frequency band (e.g. frequency=[1,30]) and set other fields to zero (i.e. gss = [0.], etc.)
 # first model
+#attenuation gpp = [0.] gps = [0.] gss = [0.] b = [0.] frequency = [1,12]
 attenuation gpp = [0.002] gps = [0.006] gss = [0.012] b = [0.005] frequency = [1,12]
 #attenuation gpp = [0.001, 0.002] gps = [0.003, 0.006] gss = [0.006, 0.012] b = [0.01, 0.003] frequency = [1,2; 2,12]
 #attenuation gpp = [0.005, 0.003, 0.0001] gps = [0.01, 0.009, 0.004] gss = [0.02, 0.01, 0.005] b = [0.188, 0.14, 0.08] frequency = [1,2; 2,4; 4,12]
